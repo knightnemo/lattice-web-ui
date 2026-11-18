@@ -1,7 +1,9 @@
 # Pair trusted devices with Remote Workspace
 
-The owner signs in from a Mac using the server's access token and opens
-**Devices → Pair a device**. Scan the QR code from the phone, check the displayed
+The owner can open the [private Tailscale owner page](../tailscale-owner/README.md)
+and select **Pair a device**. For recovery or deployments without the owner
+page, sign in with the server access token and open **Devices → Pair a device**.
+Scan the QR code from the phone, check the displayed
 workspace hostname, name the device, and select **Connect this device**. Copying
 the pairing link gives the same flow on a computer without a camera. The invite
 works once and expires after two minutes. Anyone who obtains the unused link

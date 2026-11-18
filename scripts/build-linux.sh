@@ -33,6 +33,9 @@ fi
 if [[ -d "$root/device-pairing" ]]; then
   cp -R "$root/device-pairing" "$kit/device-pairing"
 fi
+if [[ -d "$root/tailscale-owner" ]]; then
+  cp -R "$root/tailscale-owner" "$kit/tailscale-owner"
+fi
 for file in LICENSE NOTICE THIRD_PARTY_NOTICES.md; do
   cp "$source_dir/$file" "$kit/"
 done
