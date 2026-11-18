@@ -50,7 +50,7 @@ async function readAddress() {
     address = await readFile(addressFile(), "utf8");
   } catch (error) {
     if (error.code === "ENOENT") {
-      throw new PluginError("Run Remote Workspace: Set workspace address… first.");
+      throw new PluginError("Run Lattice-web-ui: Set workspace address… first.");
     }
     throw new PluginError("Could not read the workspace address.");
   }

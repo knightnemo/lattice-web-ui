@@ -1,6 +1,6 @@
 schema = 1
 id = "io.github.knightnemo.lattice-remote"
-name = "Remote Workspace"
+name = "Lattice-web-ui"
 version = "0.4.0"
 api = 1
 license = "MIT"
@@ -11,7 +11,7 @@ main = "main.mjs"
 [[commands]]
 id = "configure"
 title = "Set workspace address…"
-description = "Save the HTTPS address of a Lattice Remote host."
+description = "Save the HTTPS address of a Lattice-web-ui workspace."
 input = { kind = "text", placeholder = "https://your-machine.example.ts.net:8443" }
 
 [[commands]]

@@ -1,4 +1,4 @@
-# Remote Workspace for Lattice
+# Lattice-web-ui
 
 A Lattice plugin that opens a Linux-hosted workspace. Open the same HTTPS
 address from the Mac plugin or a phone browser. The Linux companion supports
@@ -9,11 +9,11 @@ gateway with an email allowlist.
 
 Use a macOS Lattice build with **Settings → Plugins** (Plugin API 1).
 Choose **Install from folder…** and select this repository's `plugin/` directory.
-Enable **Remote Workspace**, then run **Remote Workspace: Set workspace address…**
+Enable **Lattice-web-ui**, then run **Lattice-web-ui: Set workspace address…**
 from the command palette. Enter the HTTPS workspace origin supplied by your
 deployment.
 
-**Remote Workspace: Open remote workspace** opens the saved address in your
+**Lattice-web-ui: Open remote workspace** opens the saved address in your
 default browser. Sign in with your allowed account for the account gateway.
 For Tailscale access, enter the workspace access token on the login page.
 For QR pairing, the owner signs in first and authorizes each device.
@@ -22,7 +22,8 @@ network, project or secret grants. The browser keeps the authentication cookie.
 On a phone, open the same address directly.
 
 `dist/remote-workspace-0.4.0.zip` is the corresponding package for **Install from
-URL…** when hosted at an HTTPS URL. Its checksum is in `dist/SHA256SUMS`.
+URL…** when hosted at an HTTPS URL. The 0.4.0 package displays **Remote Workspace**
+in Lattice. Its checksum is in `dist/SHA256SUMS`.
 
 ## Pair a phone or another computer
 
@@ -39,9 +40,15 @@ bootstrap. An ordinary browser can reach the public HTTPS entrance. Only listed
 accounts can read or edit workspace data, including through the API and terminal.
 See [account gateway setup](account-gateway/README.md) for the service and OAuth configuration.
 
-## Use Remote Workspace on iPhone Duo
+## Use Lattice-web-ui on iPhone Duo
 
-Open the workspace HTTPS address in Safari. The outer display shows a full-width
+Open the workspace HTTPS address in Safari and pair the device. To install it
+as a web app, use **Install** inside the workspace, or use Safari's
+**Share → Add to Home Screen** and enable **Open as Web App** if shown.
+Safari 17.2 and later copy the pairing cookies when the app is added.
+On desktop, use your browser's corresponding web app install command.
+
+The outer display shows a full-width
 editor. Unfold to see the editor and PDF side by side, with your draft and cursor
 position intact. When Safari is in a narrow Split View window, the editor uses
 the single-pane layout. The mobile toolbar can open the PDF or project files

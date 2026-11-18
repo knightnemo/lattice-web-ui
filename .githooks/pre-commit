@@ -1,0 +1,13 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+git diff --cached --check
+snapshot="$(mktemp -d)"
+trap 'rm -rf "$snapshot"' EXIT
+git archive "$(git write-tree)" | tar -xf - -C "$snapshot"
+
+cd "$snapshot"
+for script in scripts/*.sh; do
+  bash -n "$script"
+done
+node --test test/*.test.mjs
