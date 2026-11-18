@@ -15,9 +15,8 @@ deployment.
 
 **Lattice-web-ui: Open remote workspace** opens the saved address in your
 default browser. Sign in with your allowed account for the account gateway.
-With the private Tailscale owner page, the configured owner can authorize
-devices using their Tailscale identity. Browsers open the public editor after
-pairing once. The server access token remains available for recovery.
+For Tailscale access, enter the workspace access token on the login page.
+For QR pairing, the owner signs in first and authorizes each device.
 The plugin remembers the HTTPS origin in its own data folder and has no
 network, project or secret grants. The browser keeps the authentication cookie.
 On a phone, open the same address directly.
@@ -33,11 +32,6 @@ code. The invite works once and expires in two minutes. Later, the owner can
 separately revoke that device from the same menu. The QR deployment uses an
 ordinary HTTPS origin. See [trusted-device pairing](device-pairing/README.md)
 to prepare the companion and ingress.
-
-Open the [private Tailscale owner page](tailscale-owner/README.md) from a
-connected Mac to view, pair, or revoke devices using your Tailscale login.
-Use the public editor URL on paired devices, including phones without
-Tailscale.
 
 ## Sign in from any device
 
