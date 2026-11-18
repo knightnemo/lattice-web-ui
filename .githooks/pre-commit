@@ -6,6 +6,14 @@ snapshot="$(mktemp -d)"
 trap 'rm -rf "$snapshot"' EXIT
 git archive "$(git write-tree)" | tar -xf - -C "$snapshot"
 
+# The commit supplies repository and author overrides that must not affect
+# Git commands in test fixtures.
+while IFS= read -r variable; do
+  unset "$variable"
+done < <(git rev-parse --local-env-vars)
+unset GIT_AUTHOR_NAME GIT_AUTHOR_EMAIL GIT_AUTHOR_DATE
+unset GIT_COMMITTER_NAME GIT_COMMITTER_EMAIL GIT_COMMITTER_DATE
+
 cd "$snapshot"
 for script in scripts/*.sh; do
   bash -n "$script"

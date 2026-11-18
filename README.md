@@ -122,3 +122,31 @@ The source kit is made from the pinned Git commit, so local environment files,
 account state and build caches are excluded. The Mac plugin reuses Lattice's
 MIT-licensed Plugin API 1 SDK. The companion source and bundled third-party
 materials carry their original licences and notices.
+
+## Development and releases
+
+The local commit hook checks the staged patch and runs the plugin tests.
+Enable it in a new clone with `git config core.hooksPath .githooks`.
+
+1. Describe the requested behavior and acceptance criteria in an issue. The
+   repository owner can add `agent-ready` to request one bounded implementation
+   attempt. The workflow proposes changes to the plugin, tests, or documentation
+   and opens a PR for review.
+2. PR CI runs deterministic checks. Packaging-sensitive changes also exercise
+   the release archive. The advisory AI review runs separately and reports what
+   it reviewed on the exact PR head. Keep decisions and verification on the PR.
+3. Bump the plugin version before releasing. An approved `vX.Y.Z` tag builds
+   the plugin archive and pinned companion source kit, then publishes a GitHub
+   prerelease. Promote the existing prerelease after verification. Keep the
+   published artifacts from the previous release for rollback.
+
+The Agent workflows use separate GitHub Environments, `agent-implementation`
+and `agent-review`, each limited to `main`. Configure a project-scoped
+`OPENAI_API_KEY` in each environment to enable model calls. Local checks,
+PR CI, and release builds use no model key.
+
+The companion source is pinned to an immutable commit in the
+`companion/0.4.0` snapshot branch. Record the upstream source revision when
+importing a new snapshot. Keep the packaged source and the deployable host
+build distinct. A GitHub release publishes the package. The 5090 service is
+updated through its own deployment process.

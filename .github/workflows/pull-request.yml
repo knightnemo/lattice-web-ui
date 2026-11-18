@@ -1,0 +1,158 @@
+name: PR verification
+
+on:
+  pull_request:
+    branches: [main]
+    types: [opened, synchronize, reopened, ready_for_review, labeled, unlabeled]
+  workflow_dispatch:
+    inputs:
+      pr_number:
+        description: PR number
+        required: true
+        type: string
+      head_sha:
+        description: Exact PR head commit
+        required: true
+        type: string
+
+permissions: {}
+
+concurrency:
+  group: verify-${{ github.event_name }}-${{ github.event.pull_request.number || inputs.pr_number }}
+  cancel-in-progress: true
+
+jobs:
+  plan:
+    if: github.event_name == 'pull_request' || github.ref == format('refs/heads/{0}', github.event.repository.default_branch)
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    permissions:
+      contents: read
+      pull-requests: read
+    outputs:
+      head: ${{ steps.plan.outputs.head }}
+      number: ${{ steps.plan.outputs.number }}
+      packaging: ${{ steps.plan.outputs.packaging }}
+      companion_sha: ${{ steps.plan.outputs.companion_sha }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          ref: ${{ github.event.pull_request.base.sha || github.sha }}
+          persist-credentials: false
+      - id: plan
+        env:
+          GH_TOKEN: ${{ github.token }}
+          PR_NUMBER: ${{ github.event.pull_request.number || inputs.pr_number }}
+          PR_HEAD_SHA: ${{ github.event.pull_request.head.sha || inputs.head_sha }}
+          DEFAULT_BRANCH: ${{ github.event.repository.default_branch }}
+          COMPANION_REF: ${{ vars.LATTICE_COMPANION_REF }}
+        run: node automation/pr-ci.mjs plan
+
+  verify:
+    name: Verify
+    if: always() && needs.plan.result != 'skipped'
+    needs: plan
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    permissions:
+      contents: read
+    steps:
+      - name: Require valid plan
+        env:
+          PLAN_RESULT: ${{ needs.plan.result }}
+        run: test "$PLAN_RESULT" = success
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          ref: refs/pull/${{ needs.plan.outputs.number }}/head
+          path: proposal
+          persist-credentials: false
+      - name: Verify exact PR commit
+        working-directory: proposal
+        env:
+          EXPECTED_HEAD: ${{ needs.plan.outputs.head }}
+        run: test "$(git rev-parse HEAD)" = "$EXPECTED_HEAD"
+      - name: Fetch pinned companion snapshot
+        if: needs.plan.outputs.companion_sha != ''
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          ref: ${{ needs.plan.outputs.companion_sha }}
+          path: companion
+          persist-credentials: false
+      - name: Run portable tests and syntax checks
+        working-directory: proposal
+        run: |
+          mkdir -p "$RUNNER_TEMP/lattice-pr"
+          git show --check --format= HEAD
+          bash -n scripts/package.sh
+          bash -n scripts/build-linux.sh
+          node --test test/*.test.mjs | tee "$RUNNER_TEMP/lattice-pr/tests.tap"
+        shell: bash
+      - name: Check plugin archive
+        if: needs.plan.outputs.packaging == 'true'
+        working-directory: proposal
+        run: |
+          node scripts/pack-plugin.mjs plugin "$RUNNER_TEMP/lattice-plugin-pr.zip"
+          unzip -t "$RUNNER_TEMP/lattice-plugin-pr.zip"
+      - name: Check release source kit
+        if: needs.plan.outputs.companion_sha != ''
+        working-directory: proposal
+        run: |
+          bash scripts/package.sh "$GITHUB_WORKSPACE/companion" "$RUNNER_TEMP/lattice-pack"
+          cd "$RUNNER_TEMP/lattice-pack"
+          sha256sum --check SHA256SUMS
+          for archive in lattice-remote-source-*.tar.gz; do tar -tzf "$archive" > /dev/null; done
+      - name: Record checks
+        if: always()
+        env:
+          HEAD_SHA: ${{ needs.plan.outputs.head }}
+          PACKAGING: ${{ needs.plan.outputs.packaging }}
+          COMPANION_SHA: ${{ needs.plan.outputs.companion_sha }}
+        run: |
+          mkdir -p "$RUNNER_TEMP/lattice-pr"
+          {
+            printf 'head=%s\n' "$HEAD_SHA"
+            printf 'plugin_packaging_selected=%s\n' "$PACKAGING"
+            printf 'companion=%s\n' "$COMPANION_SHA"
+          } >> "$RUNNER_TEMP/lattice-pr/metadata.txt"
+      - name: Upload verification evidence
+        if: always()
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7
+        with:
+          name: pr-verification
+          path: ${{ runner.temp }}/lattice-pr/*
+          if-no-files-found: warn
+          retention-days: 14
+
+  publish:
+    name: Publish dispatch check on PR head
+    if: always() && github.event_name == 'workflow_dispatch' && needs.plan.result == 'success'
+    needs: [plan, verify]
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    permissions:
+      checks: write
+      contents: read
+      pull-requests: read
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          ref: ${{ github.sha }}
+          persist-credentials: false
+      - env:
+          GH_TOKEN: ${{ github.token }}
+          PR_NUMBER: ${{ needs.plan.outputs.number }}
+          PR_HEAD_SHA: ${{ needs.plan.outputs.head }}
+          DEFAULT_BRANCH: ${{ github.event.repository.default_branch }}
+          VERIFY_RESULT: ${{ needs.verify.result }}
+        run: node automation/pr-ci.mjs publish
+
+  review:
+    if: github.event_name == 'workflow_dispatch' && needs.plan.result == 'success'
+    needs: plan
+    uses: ./.github/workflows/pr-review.yml
+    permissions:
+      contents: read
+      pull-requests: write
+    with:
+      pr_number: ${{ needs.plan.outputs.number }}
+      head_sha: ${{ needs.plan.outputs.head }}

@@ -1,0 +1,199 @@
+name: Release
+
+on:
+  push:
+    branches: [main]
+    tags: ['v*']
+  workflow_dispatch:
+    inputs:
+      action:
+        description: Verify the default branch package or promote a published prerelease
+        required: true
+        default: verify
+        type: choice
+        options: [verify, promote]
+      tag:
+        description: Published prerelease to promote (vX.Y.Z)
+        type: string
+
+permissions: {}
+
+defaults:
+  run:
+    shell: bash
+
+concurrency:
+  group: ${{ (github.ref_type == 'tag' || github.event_name == 'workflow_dispatch') && 'release' || 'release-notes' }}
+  cancel-in-progress: false
+
+jobs:
+  draft-notes:
+    name: Draft release notes
+    if: github.event_name == 'push' && github.ref_type == 'branch' && github.ref_name == github.event.repository.default_branch
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+      - name: Summarize changes since the last stable release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          last_stable="$(gh release list --exclude-drafts --exclude-pre-releases --limit 1 --json tagName --jq '.[0].tagName // ""')"
+          bash automation/release-notes.sh "$GITHUB_SHA" "$last_stable" >> "$GITHUB_STEP_SUMMARY"
+
+  build:
+    name: Build and verify release packages
+    if: (github.event_name == 'push' && github.ref_type == 'tag') || (github.event_name == 'workflow_dispatch' && inputs.action == 'verify')
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    permissions:
+      contents: read
+    outputs:
+      commit: ${{ steps.target.outputs.commit }}
+      tag: ${{ steps.target.outputs.tag }}
+      manifest_digest: ${{ steps.pack.outputs.manifest_digest }}
+      artifact: ${{ steps.pack.outputs.artifact }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          ref: ${{ github.event.repository.default_branch }}
+          fetch-depth: 0
+          persist-credentials: false
+      - name: Verify target and select immutable source
+        id: target
+        env:
+          DEFAULT_BRANCH: ${{ github.event.repository.default_branch }}
+        run: |
+          if [[ "$GITHUB_REF_TYPE" == tag ]]; then
+            tag="$GITHUB_REF_NAME"
+            commit="$(bash automation/release-target.sh "$tag" "$GITHUB_SHA")"
+          else
+            test "$GITHUB_REF" = "refs/heads/$DEFAULT_BRANCH"
+            commit="$(git rev-parse --verify "$GITHUB_SHA^{commit}")"
+            git merge-base --is-ancestor "$commit" "refs/remotes/origin/$DEFAULT_BRANCH"
+          fi
+          git checkout --detach "$commit"
+          version="$(node automation/release-package.mjs version plugin/lattice-plugin.toml)"
+          if [[ "$GITHUB_REF_TYPE" == tag ]]; then
+            if [[ "$tag" != "v$version" ]]; then
+              echo "The tag and plugin manifest version must match." >&2
+              exit 1
+            fi
+          else
+            tag="v$version"
+          fi
+          printf 'commit=%s\ntag=%s\n' "$commit" "$tag" >> "$GITHUB_OUTPUT"
+      - name: Test and package the plugin and pinned source kit
+        id: pack
+        env:
+          RELEASE_COMMIT: ${{ steps.target.outputs.commit }}
+          RELEASE_TAG: ${{ steps.target.outputs.tag }}
+        run: |
+          node --test test/*.test.mjs
+          out="$RUNNER_TEMP/lattice-pack"
+          bash scripts/package.sh "$PWD" "$out"
+          version="${RELEASE_TAG#v}"
+          unzip -tqq "$out/remote-workspace-$version.zip"
+          root="lattice-remote-source-$version"
+          tar -xOf "$out/$root.tar.gz" "$root/build-linux.sh" >/dev/null
+          tar -xOf "$out/$root.tar.gz" "$root/source/server/Cargo.lock" >/dev/null
+          tar -xOf "$out/$root.tar.gz" "$root/source-revision.txt" |
+            cmp - <(jq -r .originalCommit automation/release-source.json)
+          digest="$(node automation/release-package.mjs seal "$out" "$RELEASE_TAG" "$RELEASE_COMMIT")"
+          files="$(node automation/release-package.mjs verify "$out" "$RELEASE_TAG" "$RELEASE_COMMIT" "$digest")"
+          printf 'manifest_digest=%s\nartifact=release-%s-%s\n' "$digest" "$GITHUB_RUN_ID" "$GITHUB_RUN_ATTEMPT" >> "$GITHUB_OUTPUT"
+          printf '## Verified %s packages\n\n' "$RELEASE_TAG" >> "$GITHUB_STEP_SUMMARY"
+          while IFS= read -r file; do
+            printf -- '- `%s`\n' "$file" >> "$GITHUB_STEP_SUMMARY"
+          done <<< "$files"
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7
+        with:
+          name: ${{ steps.pack.outputs.artifact }}
+          path: ${{ runner.temp }}/lattice-pack
+          if-no-files-found: error
+          retention-days: 14
+
+  publish-prerelease:
+    name: Publish verified prerelease
+    if: github.event_name == 'push' && github.ref_type == 'tag'
+    needs: build
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          ref: ${{ github.event.repository.default_branch }}
+          fetch-depth: 0
+          persist-credentials: false
+      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8
+        with:
+          name: ${{ needs.build.outputs.artifact }}
+          path: ${{ runner.temp }}/lattice-pack
+      - name: Verify and publish the exact build artifact
+        env:
+          GH_TOKEN: ${{ github.token }}
+          DEFAULT_BRANCH: ${{ github.event.repository.default_branch }}
+          RELEASE_TAG: ${{ needs.build.outputs.tag }}
+          RELEASE_COMMIT: ${{ needs.build.outputs.commit }}
+          MANIFEST_DIGEST: ${{ needs.build.outputs.manifest_digest }}
+        run: |
+          test "$RELEASE_TAG" = "$GITHUB_REF_NAME"
+          test "$(bash automation/release-target.sh "$RELEASE_TAG" "$GITHUB_SHA")" = "$RELEASE_COMMIT"
+          out="$RUNNER_TEMP/lattice-pack"
+          files="$(node automation/release-package.mjs verify "$out" "$RELEASE_TAG" "$RELEASE_COMMIT" "$MANIFEST_DIGEST")"
+          packages=()
+          while IFS= read -r file; do packages+=("$out/$file"); done <<< "$files"
+          last_stable="$(gh release list --exclude-drafts --exclude-pre-releases --limit 1 --json tagName --jq '.[0].tagName // ""')"
+          notes="$RUNNER_TEMP/release-notes.md"
+          bash automation/release-notes.sh "$RELEASE_COMMIT" "$last_stable" > "$notes"
+          printf '\nBuild verification: %s/%s/actions/runs/%s\n\n<!-- manifest-sha256:%s -->\n' "$GITHUB_SERVER_URL" "$GITHUB_REPOSITORY" "$GITHUB_RUN_ID" "$MANIFEST_DIGEST" >> "$notes"
+          gh release create "$RELEASE_TAG" "${packages[@]}" --verify-tag --prerelease --latest=false --title "$RELEASE_TAG" --notes-file "$notes"
+
+  promote:
+    name: Promote verified prerelease to stable
+    if: github.event_name == 'workflow_dispatch' && inputs.action == 'promote'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    permissions:
+      contents: write
+    steps:
+      - name: Require owner approval from the default branch
+        env:
+          DEFAULT_BRANCH: ${{ github.event.repository.default_branch }}
+          OWNER: ${{ github.repository_owner }}
+          TRIGGERING_ACTOR: ${{ github.triggering_actor }}
+        run: |
+          test "$GITHUB_REF" = "refs/heads/$DEFAULT_BRANCH"
+          test "$GITHUB_ACTOR" = "$OWNER"
+          test "$TRIGGERING_ACTOR" = "$OWNER"
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          ref: ${{ github.event.repository.default_branch }}
+          fetch-depth: 0
+          persist-credentials: false
+      - name: Verify the published prerelease and promote without rebuilding
+        env:
+          GH_TOKEN: ${{ github.token }}
+          DEFAULT_BRANCH: ${{ github.event.repository.default_branch }}
+          RELEASE_TAG: ${{ inputs.tag }}
+        run: |
+          commit="$(bash automation/release-target.sh "$RELEASE_TAG")"
+          release="$(gh release view "$RELEASE_TAG" --json tagName,isDraft,isPrerelease,body)"
+          jq -e --arg tag "$RELEASE_TAG" '.tagName == $tag and .isDraft == false and .isPrerelease == true' <<< "$release" >/dev/null
+          digest="$(jq -r .body <<< "$release" | sed -nE 's/^<!-- manifest-sha256:([0-9a-f]{64}) -->$/\1/p')"
+          out="$RUNNER_TEMP/published-release"
+          version="${RELEASE_TAG#v}"
+          gh release download "$RELEASE_TAG" --dir "$out" \
+            --pattern "remote-workspace-$version.zip" \
+            --pattern "lattice-remote-source-$version.tar.gz" \
+            --pattern "SHA256SUMS-$RELEASE_TAG.txt" \
+            --pattern "release-$RELEASE_TAG.json"
+          node automation/release-package.mjs verify "$out" "$RELEASE_TAG" "$commit" "$digest"
+          gh release edit "$RELEASE_TAG" --prerelease=false --latest

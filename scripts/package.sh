@@ -3,14 +3,11 @@ set -euo pipefail
 
 root="$(cd "$(dirname "$0")/.." && pwd)"
 source_checkout="${1:-$root/../lattice-integrated}"
-revision=7664d1ab46f63dbaccc7e9aa4deea2561da174d0
-version=0.4.0
-out="$root/dist"
-
-if ! git -C "$source_checkout" cat-file -e "$revision^{commit}"; then
-  printf '%s\n' "Missing headless source commit $revision in $source_checkout." >&2
-  exit 1
-fi
+out="${2:-$root/dist}"
+release_package="$root/automation/release-package.mjs"
+version="$(node "$release_package" version "$root/plugin/lattice-plugin.toml")"
+source_pin="$(node "$release_package" source "$source_checkout")"
+read -r revision original < <(printf '%s\n' "$source_pin" | paste -sd ' ' -)
 
 mkdir -p "$out"
 stage="$(mktemp -d)"
@@ -24,7 +21,7 @@ cp -R "$root/account-gateway" "$kit/account-gateway"
 cp -R "$root/device-pairing" "$kit/device-pairing"
 mkdir -p "$kit/test"
 cp "$root/test/account-gateway.test.mjs" "$kit/test/"
-printf '%s\n' "$revision" > "$kit/source-revision.txt"
+printf '%s\n' "$original" > "$kit/source-revision.txt"
 
 node "$root/scripts/pack-plugin.mjs" "$root/plugin" "$out/remote-workspace-$version.zip"
 COPYFILE_DISABLE=1 tar --no-xattrs -czf "$out/lattice-remote-source-$version.tar.gz" -C "$stage" "lattice-remote-source-$version"
