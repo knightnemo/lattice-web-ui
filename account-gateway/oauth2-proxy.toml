@@ -1,0 +1,18 @@
+# Configure the public redirect URL, the account allowlist path, and secrets
+# with the service environment variables listed in account-gateway.md.
+provider = "oidc"
+oidc_issuer_url = "https://accounts.google.com"
+scope = "openid email profile"
+code_challenge_method = "S256"
+insecure_oidc_allow_unverified_email = false
+insecure_oidc_skip_nonce = false
+reverse_proxy = true
+http_address = "127.0.0.1:4180"
+upstreams = ["static://202"]
+cookie_name = "__Host-lattice_oidc"
+cookie_path = "/"
+cookie_secure = true
+cookie_httponly = true
+cookie_samesite = "lax"
+cookie_expire = "8h"
+request_logging = false

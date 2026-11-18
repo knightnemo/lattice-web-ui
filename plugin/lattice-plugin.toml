@@ -1,17 +1,17 @@
 schema = 1
 id = "io.github.knightnemo.lattice-remote"
 name = "Remote Workspace"
-version = "0.2.0"
+version = "0.3.0"
 api = 1
 license = "MIT"
-description = "Open your private Lattice workspace served by a Linux host."
+description = "Open your Lattice workspace through Tailscale or HTTPS account sign-in."
 runtime = "node"
 main = "main.mjs"
 
 [[commands]]
 id = "configure"
 title = "Set workspace address…"
-description = "Save the private HTTPS address of a Lattice Remote host."
+description = "Save the HTTPS address of a Lattice Remote host."
 input = { kind = "text", placeholder = "https://your-machine.example.ts.net:8443" }
 
 [[commands]]

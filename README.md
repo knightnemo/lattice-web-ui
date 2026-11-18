@@ -1,25 +1,33 @@
 # Remote Workspace for Lattice
 
-A Lattice plugin that opens a private Linux-hosted Lattice workspace. The same HTTPS
-address opens on a Mac with the plugin, or from the browser on a phone connected
-to the authorized Tailscale network.
+A Lattice plugin that opens a Linux-hosted workspace. Open the same HTTPS
+address from the Mac plugin or a phone browser. The Linux companion supports
+private Tailscale access and an HTTPS account gateway with an email allowlist.
 
 ## Install the Mac plugin
 
 Use a macOS Lattice build with **Settings → Plugins** (Plugin API 1).
 Choose **Install from folder…** and select this repository's `plugin/` directory.
 Enable **Remote Workspace**, then run **Remote Workspace: Set workspace address…**
-from the command palette. Enter the workspace origin shown by Tailscale Serve,
-such as `https://your-machine.example.ts.net:8443`.
+from the command palette. Enter the HTTPS workspace origin shown by Tailscale
+Serve or configured for the account gateway.
 
 **Remote Workspace: Open remote workspace** opens the saved address in your
-default browser. Enter the workspace access token on the server's login page.
+default browser. Sign in with your allowed account for the account gateway.
+For Tailscale access, enter the workspace access token on the login page.
 The plugin remembers the HTTPS origin in its own data folder and has no
 network, project or secret grants. The browser keeps the authentication cookie.
 On a phone, open the same address directly.
 
-`dist/remote-workspace-0.2.0.zip` is the corresponding package for **Install from
+`dist/remote-workspace-0.3.0.zip` is the corresponding package for **Install from
 URL…** when hosted at an HTTPS URL. Its checksum is in `dist/SHA256SUMS`.
+
+## Sign in from any device
+
+The account gateway uses Caddy, OAuth2 Proxy, and the companion's session
+bootstrap. An ordinary browser can reach the public HTTPS entrance. Only listed
+accounts can read or edit workspace data, including through the API and terminal.
+See [account gateway setup](account-gateway/README.md) for the service and OAuth configuration.
 
 ## Use Remote Workspace on iPhone Duo
 
@@ -30,7 +38,7 @@ the single-pane layout. The mobile toolbar can open the PDF or project files
 directly.
 
 The layout is served by the Linux companion. To upgrade an existing server,
-build the 0.2.0 source kit and rerun the companion installer with your existing
+build the current source kit and rerun the companion installer with your existing
 workspace and service settings. The Mac plugin keeps using the same URL.
 
 ## Run the Linux companion
@@ -42,11 +50,12 @@ the existing systemd/Tailscale installer, and the optional Codex runtime tooling
 
 On the Linux host, install Node 22, pnpm 10.13.1, Rust (see
 `source/rust-toolchain.toml`), a C/C++ toolchain, Python 3, and LaTeX with
-`latexmk`. Join the authorized tailnet. Extract the source kit and build it:
+`latexmk`. For Tailscale access, join the authorized tailnet on the host.
+Extract the source kit and build it:
 
 ```bash
-tar -xzf lattice-remote-source-0.2.0.tar.gz
-cd lattice-remote-source-0.2.0
+tar -xzf lattice-remote-source-0.3.0.tar.gz
+cd lattice-remote-source-0.3.0
 ./build-linux.sh
 tar -xzf "lattice-remote-host-$(uname -m).tar.gz"
 cd lattice-remote-host
