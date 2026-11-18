@@ -29,8 +29,13 @@ in Lattice. Its checksum is in `dist/SHA256SUMS`.
 
 From the owner's workspace, open **Devices → Pair a device** and scan the QR
 code. The invite works once and expires in two minutes. Later, the owner can
-separately revoke that device from the same menu. The QR deployment uses an
-ordinary HTTPS origin. See [trusted-device pairing](device-pairing/README.md)
+separately revoke that device from the same menu. An already paired browser
+resumes after a companion restart using its saved device credential. Use the
+same browser profile or installed web app. For a new browser, scan a fresh QR
+code from an active owner session. Owners who signed in with their server
+access token need to enter it again after restarting the companion.
+
+The QR deployment uses an ordinary HTTPS origin. See [trusted-device pairing](device-pairing/README.md)
 to prepare the companion and ingress.
 
 ## Sign in from any device
