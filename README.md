@@ -6,7 +6,8 @@ Run a Lattice workspace on a Linux host. Edit LaTeX and preview the PDF from a b
 
 Open the workspace's HTTPS address. If the workspace uses device pairing, ask
 the owner for a QR code or a pairing link. Each invite can be used once and
-expires after two minutes. After pairing, bookmark the workspace address.
+expires after two minutes. Bookmark the address and keep using the same
+browser profile or installed web app. The pairing survives a server restart.
 On iPhone, use Safari's **Share → Add to Home Screen** to open it like an app.
 
 If you use Lattice on your Mac, you can add a shortcut inside the app.
@@ -54,6 +55,7 @@ python3 scripts/install-headless-service.py \
 
 Open the HTTPS address shown by `tailscale serve status`. For the token-based
 sign-in, use the private `access-token` file in the companion's data directory.
+If you sign in with this token, sign in again after the companion restarts.
 
 If the editor needs to be reachable without Tailscale, choose one of these setups.
 
