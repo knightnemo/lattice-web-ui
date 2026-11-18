@@ -1,87 +1,50 @@
 # Lattice-web-ui
 
-A Lattice plugin that opens a Linux-hosted workspace. Open the same HTTPS
-address from the Mac plugin or a phone browser. The Linux companion supports
-private Tailscale access, QR pairing for trusted devices, and an HTTPS account
-gateway with an email allowlist.
+Run a Lattice workspace on a Linux host. Edit LaTeX and preview the PDF from a browser on your computer or phone.
 
-## Install the Mac plugin
+## Open a workspace
 
-Use a macOS Lattice build with **Settings → Plugins** (Plugin API 1).
-Choose **Install from folder…** and select this repository's `plugin/` directory.
-Enable **Lattice-web-ui**, then run **Lattice-web-ui: Set workspace address…**
-from the command palette. Enter the HTTPS workspace origin supplied by your
-deployment.
+Open the workspace's HTTPS address. If the workspace uses device pairing, ask
+the owner for a QR code or a pairing link. Each invite can be used once and
+expires after two minutes. After pairing, bookmark the workspace address.
+On iPhone, use Safari's **Share → Add to Home Screen** to open it like an app.
 
-**Lattice-web-ui: Open remote workspace** opens the saved address in your
-default browser. Sign in with your allowed account for the account gateway.
-For Tailscale access, enter the workspace access token on the login page.
-For QR pairing, the owner signs in first and authorizes each device.
-The plugin remembers the HTTPS origin in its own data folder and has no
-network, project or secret grants. The browser keeps the authentication cookie.
-On a phone, open the same address directly.
+If you use Lattice on your Mac, you can add a shortcut inside the app.
 
-`dist/remote-workspace-0.4.0.zip` is the corresponding package for **Install from
-URL…** when hosted at an HTTPS URL. The 0.4.0 package displays **Remote Workspace**
-in Lattice. Its checksum is in `dist/SHA256SUMS`.
+1. In **Settings → Plugins**, choose **Install from folder…** and select this
+   repository's `plugin/` folder. Enable **Lattice-web-ui**.
+2. In the command palette, run **Lattice-web-ui: Set workspace address…** and
+   enter the same HTTPS address you opened in the browser.
+3. Run **Lattice-web-ui: Open remote workspace** to open it in your browser.
 
-## Pair a phone or another computer
+A release ZIP also works with **Install from URL…**. [Release downloads](https://github.com/knightnemo/lattice-web-ui/releases)
 
-From the owner's workspace, open **Devices → Pair a device** and scan the QR
-code. The invite works once and expires in two minutes. Later, the owner can
-separately revoke that device from the same menu. The QR deployment uses an
-ordinary HTTPS origin. See [trusted-device pairing](device-pairing/README.md)
-to prepare the companion and ingress.
+## Run your own workspace
 
-## Sign in from any device
+You need a Linux host and an existing Lattice project. Install Node 22,
+pnpm 10.13.1, the Rust toolchain pinned in the kit, a C/C++ toolchain, Python 3,
+and LaTeX with `latexmk`.
 
-The account gateway uses Caddy, OAuth2 Proxy, and the companion's session
-bootstrap. An ordinary browser can reach the public HTTPS entrance. Only listed
-accounts can read or edit workspace data, including through the API and terminal.
-See [account gateway setup](account-gateway/README.md) for the service and OAuth configuration.
+Download `lattice-remote-source-X.Y.Z.tar.gz` from [Releases](https://github.com/knightnemo/lattice-web-ui/releases).
+If there is no release yet, run `bash scripts/package.sh "$PWD"` in a full clone
+to create the kit in `dist/`.
 
-## Use Lattice-web-ui on iPhone Duo
+On the Linux host, replace `X.Y.Z` with the version you downloaded or built.
 
-Open the workspace HTTPS address in Safari and pair the device. To install it
-as a web app, use **Install** inside the workspace, or use Safari's
-**Share → Add to Home Screen** and enable **Open as Web App** if shown.
-Safari 17.2 and later copy the pairing cookies when the app is added.
-On desktop, use your browser's corresponding web app install command.
-
-The outer display shows a full-width
-editor. Unfold to see the editor and PDF side by side, with your draft and cursor
-position intact. When Safari is in a narrow Split View window, the editor uses
-the single-pane layout. The mobile toolbar can open the PDF or project files
-directly.
-
-The layout is served by the Linux companion. To upgrade an existing server,
-build the current source kit and rerun the companion installer with your existing
-workspace and service settings. The Mac plugin keeps using the same URL.
-
-## Run the Linux companion
-
-The companion runs independently of the Mac and uses the previously integrated
-headless Lattice implementation. It supports editing, LaTeX builds, PDF preview,
-and the CLI. The versioned source kit includes the pinned server and web source,
-the existing systemd/Tailscale installer, and the optional Codex runtime tooling.
-
-On the Linux host, install Node 22, pnpm 10.13.1, Rust (see
-`source/rust-toolchain.toml`), a C/C++ toolchain, Python 3, and LaTeX with
-`latexmk`. For Tailscale access, join the authorized tailnet on the host.
-Extract the source kit and build it:
-
-```bash
-tar -xzf lattice-remote-source-0.4.0.tar.gz
-cd lattice-remote-source-0.4.0
+```sh
+version=X.Y.Z
+tar -xzf "lattice-remote-source-$version.tar.gz"
+cd "lattice-remote-source-$version"
 ./build-linux.sh
 tar -xzf "lattice-remote-host-$(uname -m).tar.gz"
 cd lattice-remote-host
 ```
 
-Choose an existing Linux directory that holds only the projects you want to
-serve. For example, with a project already at **~/lattice-workspaces/paper**:
+For a private workspace on Tailscale, join the host to your tailnet and set up
+[Tailscale operator access and the user service](https://github.com/knightnemo/lattice-web-ui/blob/6fe84151f216df4057797a5e24982b4613c64868/docs/private-headless-deployment.md).
+From the extracted host kit, point the installer at an existing project.
 
-```bash
+```sh
 python3 scripts/install-headless-service.py \
   --binary ./lattice-server --assets ./web \
   --workspace-root "$HOME/lattice-workspaces" \
@@ -89,66 +52,22 @@ python3 scripts/install-headless-service.py \
   --port 18482 --https-port 8443 --tailscale
 ```
 
-Use the HTTPS address shown by `tailscale serve status`. The installer creates
-the access token in the service's data directory with private file permissions.
-Its default path is `~/.local/share/lattice-headless/access-token`. Enter it in
-the workspace sign-in form on each new browser. `lattice-server capabilities`
-lists the supported operations, including those available through its
-`invoke` CLI.
+Open the HTTPS address shown by `tailscale serve status`. For the token-based
+sign-in, use the private `access-token` file in the companion's data directory.
 
-The existing installer requires a Tailscale operator and systemd user lingering
-for a 24/7 deployment. It keeps the server bound to loopback and sets up
-private Tailscale Serve. See `docs/private-headless-deployment.md` in the built host kit for exact
-requirements and checks. It is under `source/docs/` in the source kit.
+If the editor needs to be reachable without Tailscale, choose one of these setups.
 
-## Add Codex
+- [Device pairing](device-pairing/README.md) gives the owner a QR code or pairing link to share. Paired browsers can reconnect after the server restarts, and the owner can revoke access.
+- [Account sign-in](account-gateway/README.md) gives approved email addresses access through an OAuth gateway.
 
-The Linux host kit includes `scripts/prepare-headless-agent.mjs` and
-`docs/headless-agent.md`, which is also under `source/docs/` in the source kit. Use a prepared Synara runtime matching
-`scripts/synara-runtime.json`. The guide covers the supported Linux kernel,
-Codex's device login in a dedicated provider home, and the second private HTTPS
-port for the Agent. The installer accepts the runtime and origin options in its
-deployment guide. Start the Agent from the remote web workspace, then review and
-apply its staged changes there. The plugin never handles provider credentials.
+For the optional Codex runtime, see `docs/headless-agent.md` in the built host
+kit. [Agent setup](https://github.com/knightnemo/lattice-web-ui/blob/6fe84151f216df4057797a5e24982b4613c64868/docs/headless-agent.md)
 
-## Build the two release artifacts
+## Contribute
 
-```bash
-node --test test/plugin.test.mjs
-./scripts/package.sh /path/to/lattice-integrated
-```
+Run `node --test test/*.test.mjs` before opening a PR. See the
+[release guide](docs/releases.md)
+for packaging, verification, and publishing.
 
-The source kit is made from the pinned Git commit, so local environment files,
-account state and build caches are excluded. The Mac plugin reuses Lattice's
-MIT-licensed Plugin API 1 SDK. The companion source and bundled third-party
-materials carry their original licences and notices.
-
-## Development and releases
-
-The local commit hook checks the staged patch and runs the plugin tests.
-Enable it in a new clone with `git config core.hooksPath .githooks`.
-
-1. Describe the requested behavior and acceptance criteria in an issue. The
-   repository owner can add `agent-ready` to request one bounded implementation
-   attempt. The workflow proposes changes to the plugin, tests, or documentation
-   and opens a PR for review.
-2. PR CI runs deterministic checks. Packaging-sensitive changes also exercise
-   the release archive. The advisory AI review runs separately and reports what
-   it reviewed on the exact PR head. Keep decisions and verification on the PR.
-3. Bump the plugin version before releasing. An approved `vX.Y.Z` tag builds
-   the plugin archive and pinned companion source kit, then publishes a GitHub
-   prerelease. Promote the existing prerelease after verification. Keep the
-   published artifacts from the previous release for rollback.
-
-Issue implementation uses a project-scoped `OPENAI_API_KEY` in the
-`agent-implementation` GitHub Environment, limited to `main`. This
-repository uses native Codex PR review with `LATTICE_REVIEW_PROVIDER=codex`.
-With a separate GitHub Actions reviewer, configure the `agent-review`
-environment and its own key. Local checks, PR CI, and release builds use no
-model key.
-
-The companion source is pinned to an immutable commit in the
-`companion/0.4.0` snapshot branch. Record the upstream source revision when
-importing a new snapshot. Keep the packaged source and the deployable host
-build distinct. A GitHub release publishes the package. The 5090 service is
-updated through its own deployment process.
+The [Mac plugin is MIT-licensed](https://github.com/knightnemo/lattice-web-ui/blob/main/plugin/LICENSE).
+The companion archive includes the original source licenses and notices.
