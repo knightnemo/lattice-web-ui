@@ -1,0 +1,33 @@
+name: Queue trusted PR verification
+
+on:
+  pull_request_target:
+    branches: [main]
+    types: [opened, synchronize, reopened, ready_for_review, labeled, unlabeled]
+
+permissions: {}
+
+jobs:
+  queue:
+    if: >-
+      github.repository == 'knightnemo/lattice-web-ui'
+      && github.ref == 'refs/heads/main'
+      && github.event.pull_request.base.repo.full_name == github.repository
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    permissions:
+      actions: write
+    steps:
+      # No checkout or pull request code in this job. Untrusted event data
+      # supplies only the validated PR number and commit SHA.
+      - name: Dispatch the main-branch verifier
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+          PR_NUMBER: ${{ github.event.pull_request.number }}
+          PR_HEAD: ${{ github.event.pull_request.head.sha }}
+        run: |
+          [[ "$PR_NUMBER" =~ ^[1-9][0-9]{0,8}$ ]]
+          [[ "$PR_HEAD" =~ ^[0-9a-f]{40}$ ]]
+          gh workflow run pull-request.yml --repo "$GITHUB_REPOSITORY" --ref main \
+            -f "pr_number=$PR_NUMBER" -f "head_sha=$PR_HEAD"

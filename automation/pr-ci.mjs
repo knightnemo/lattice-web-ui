@@ -2,7 +2,10 @@ import { appendFile } from "node:fs/promises";
 import { pathToFileURL } from "node:url";
 import { currentPull, githubApi, parsePullRequest, pullFiles } from "./pr-github.mjs";
 
-export const checkName = "Verify";
+export const checkName = "Lattice CI passed";
+const trustedRepository = "knightnemo/lattice-web-ui";
+const trustedBranch = "main";
+const trustedRef = `refs/heads/${trustedBranch}`;
 const packagePaths = /^(?:plugin\/|scripts\/|account-gateway\/|device-pairing\/|automation\/|test\/|\.github\/|companion(?:\/|\.)|README\.md$)/;
 
 export function needsPackaging(files, labels, complete) {
@@ -11,11 +14,28 @@ export function needsPackaging(files, labels, complete) {
       typeof path === "string" && packagePaths.test(path)));
 }
 
+async function requireCurrentMain(api, env) {
+  if (env.GITHUB_REPOSITORY !== trustedRepository || env.GITHUB_REF !== trustedRef ||
+      !/^[0-9a-f]{40}$/.test(env.GITHUB_SHA ?? "")) {
+    throw new Error("Verification requires the trusted main workflow.");
+  }
+  const ref = await api(`/git/ref/heads/${trustedBranch}`);
+  if (ref.object?.type !== "commit" || ref.object.sha !== env.GITHUB_SHA) {
+    throw new Error("Main changed since dispatch. Retry verification from current main.");
+  }
+}
+
+async function currentGatePull(api, request) {
+  const pull = await currentPull(api, request, trustedBranch);
+  return pull?.base.repo?.full_name === trustedRepository ? pull : null;
+}
+
 async function plan(api, request, env) {
-  const pull = await currentPull(api, request, env.DEFAULT_BRANCH);
+  await requireCurrentMain(api, env);
+  const pull = await currentGatePull(api, request);
   if (!pull) throw new Error("PR is closed, has changed head, or targets another branch.");
   const { files, complete } = await pullFiles(api, request.number, pull.changed_files);
-  if (!(await currentPull(api, request, env.DEFAULT_BRANCH))) {
+  if (!(await currentGatePull(api, request))) {
     throw new Error("PR changed while planning.");
   }
   const packaging = needsPackaging(files, pull.labels, complete);
@@ -44,8 +64,9 @@ async function plan(api, request, env) {
   await appendFile(env.GITHUB_STEP_SUMMARY, `### Test plan\n\n${summary}\n`);
 }
 
-async function publish(api, request, env) {
-  if (!(await currentPull(api, request, env.DEFAULT_BRANCH))) {
+export async function publish(api, request, env) {
+  await requireCurrentMain(api, env);
+  if (!(await currentGatePull(api, request))) {
     console.log("PR changed or closed. The dispatch result was not published.");
     return;
   }

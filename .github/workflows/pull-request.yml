@@ -1,9 +1,6 @@
 name: PR verification
 
 on:
-  pull_request:
-    branches: [main]
-    types: [opened, synchronize, reopened, ready_for_review, labeled, unlabeled]
   workflow_dispatch:
     inputs:
       pr_number:
@@ -18,12 +15,12 @@ on:
 permissions: {}
 
 concurrency:
-  group: verify-${{ github.event_name }}-${{ github.event.pull_request.number || inputs.pr_number }}
+  group: verify-${{ inputs.pr_number }}-${{ inputs.head_sha }}
   cancel-in-progress: true
 
 jobs:
   plan:
-    if: github.event_name == 'pull_request' || github.ref == format('refs/heads/{0}', github.event.repository.default_branch)
+    if: github.repository == 'knightnemo/lattice-web-ui' && github.ref == 'refs/heads/main'
     runs-on: ubuntu-24.04
     timeout-minutes: 5
     permissions:
@@ -37,19 +34,18 @@ jobs:
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
         with:
-          ref: ${{ github.event.pull_request.base.sha || github.sha }}
+          ref: ${{ github.sha }}
           persist-credentials: false
       - id: plan
         env:
           GH_TOKEN: ${{ github.token }}
-          PR_NUMBER: ${{ github.event.pull_request.number || inputs.pr_number }}
-          PR_HEAD_SHA: ${{ github.event.pull_request.head.sha || inputs.head_sha }}
-          DEFAULT_BRANCH: ${{ github.event.repository.default_branch }}
+          PR_NUMBER: ${{ inputs.pr_number }}
+          PR_HEAD_SHA: ${{ inputs.head_sha }}
           COMPANION_REF: ${{ vars.LATTICE_COMPANION_REF }}
         run: node automation/pr-ci.mjs plan
 
   verify:
-    name: Verify
+    name: Verify tests and packages
     if: always() && needs.plan.result != 'skipped'
     needs: plan
     runs-on: ubuntu-24.04
@@ -124,8 +120,8 @@ jobs:
           retention-days: 14
 
   publish:
-    name: Publish dispatch check on PR head
-    if: always() && github.event_name == 'workflow_dispatch' && needs.plan.result == 'success'
+    name: Publish required check on PR head
+    if: always() && !cancelled() && needs.plan.result == 'success'
     needs: [plan, verify]
     runs-on: ubuntu-24.04
     timeout-minutes: 5
@@ -142,12 +138,11 @@ jobs:
           GH_TOKEN: ${{ github.token }}
           PR_NUMBER: ${{ needs.plan.outputs.number }}
           PR_HEAD_SHA: ${{ needs.plan.outputs.head }}
-          DEFAULT_BRANCH: ${{ github.event.repository.default_branch }}
           VERIFY_RESULT: ${{ needs.verify.result }}
         run: node automation/pr-ci.mjs publish
 
   review:
-    if: github.event_name == 'workflow_dispatch' && needs.plan.result == 'success'
+    if: needs.plan.result == 'success'
     needs: plan
     uses: ./.github/workflows/pr-review.yml
     permissions:

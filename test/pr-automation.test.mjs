@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-import { needsPackaging } from "../automation/pr-ci.mjs";
+import { needsPackaging, publish } from "../automation/pr-ci.mjs";
 import { currentPull, githubApi, parsePullRequest, pullFiles } from "../automation/pr-github.mjs";
 import { formatReview, prepareReview, validateFindings } from "../automation/pr-review.mjs";
 
@@ -38,6 +38,41 @@ test("paginates bounded file metadata and selects packaging for incomplete data 
   assert.equal(needsPackaging(files, [{ name: "full-ci" }], true), true);
   assert.equal(needsPackaging([proposal], [], true), true);
   assert.equal(needsPackaging([{ filename: "notes.md", previous_filename: "scripts/pack-plugin.mjs" }], [], true), true);
+});
+
+test("the required CI result belongs to current main and the exact open PR head", async () => {
+  const repo = "knightnemo/lattice-web-ui";
+  const base = "b".repeat(40);
+  const env = {
+    GITHUB_REPOSITORY: repo, GITHUB_REF: "refs/heads/main", GITHUB_SHA: base,
+    GITHUB_RUN_ID: "17", VERIFY_RESULT: "success",
+  };
+  const checks = [];
+  const pull = {
+    state: "open", head: { sha: head }, base: { ref: "main", repo: { full_name: repo } },
+  };
+  const api = (current = pull, currentBase = base) => async (path, options) => {
+    if (path === "/git/ref/heads/main") return { object: { type: "commit", sha: currentBase } };
+    if (path === "/pulls/2") return current;
+    assert.equal(path, "/check-runs");
+    assert.equal(options.method, "POST");
+    checks.push(options.body);
+  };
+
+  await publish(api(), headRequest, env);
+  assert.deepEqual(
+    checks.map(({ name, head_sha, conclusion }) => [name, head_sha, conclusion]),
+    [["Lattice CI passed", head, "success"]],
+  );
+  await assert.rejects(publish(api(), headRequest, { ...env, GITHUB_REF: "refs/tags/v0.4.0" }),
+    /trusted main/);
+  await assert.rejects(publish(api(pull, head), headRequest, env), /Main changed/);
+  await publish(api({ ...pull, head: { sha: base } }), headRequest, env);
+  await publish(api({ ...pull, base: { ...pull.base, repo: { full_name: "other/repo" } } }),
+    headRequest, env);
+  assert.equal(checks.length, 1);
+  await publish(api(), headRequest, { ...env, VERIFY_RESULT: "skipped" });
+  assert.equal(checks[1].conclusion, "failure");
 });
 
 test("GitHub API errors are bounded to status codes and prohibit redirects", async () => {
