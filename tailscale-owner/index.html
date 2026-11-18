@@ -1,0 +1,40 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width,initial-scale=1">
+    <title>Devices · Lattice-web-ui</title>
+    <link rel="stylesheet" href="/owner.css">
+    <script src="/owner.js" defer></script>
+  </head>
+  <body>
+    <main>
+      <header>
+        <h1>Workspace devices</h1>
+        <a id="workspace" href="{{PUBLIC_ORIGIN}}/">Open workspace</a>
+      </header>
+      <p>Signed in with Tailscale.</p>
+      <section aria-labelledby="pair-heading">
+        <h2 id="pair-heading">Pair a device</h2>
+        <p>On a new device, scan the code or open its pairing link. Once paired, open the workspace directly.</p>
+        <button id="pair" type="button">Show QR code</button>
+        <div id="invitation" hidden>
+          <canvas id="qr" role="img" aria-label="Device pairing QR code"></canvas>
+          <div class="actions">
+            <button id="copy" type="button">Copy pairing link</button>
+            <a id="invite-link" target="_blank" rel="noopener noreferrer">Open pairing link</a>
+          </div>
+          <p id="expiry"></p>
+        </div>
+      </section>
+      <section aria-labelledby="device-heading">
+        <header>
+          <h2 id="device-heading">Paired devices</h2>
+          <button id="refresh" type="button">Refresh</button>
+        </header>
+        <ul id="devices"></ul>
+      </section>
+      <p id="status" role="status"></p>
+    </main>
+  </body>
+</html>

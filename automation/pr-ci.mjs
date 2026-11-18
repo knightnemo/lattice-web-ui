@@ -6,7 +6,7 @@ export const checkName = "Lattice CI passed";
 const trustedRepository = "knightnemo/lattice-web-ui";
 const trustedBranch = "main";
 const trustedRef = `refs/heads/${trustedBranch}`;
-const packagePaths = /^(?:plugin\/|scripts\/|account-gateway\/|device-pairing\/|automation\/|test\/|\.github\/|companion(?:\/|\.)|README\.md$)/;
+const packagePaths = /^(?:plugin\/|scripts\/|account-gateway\/|device-pairing\/|tailscale-owner\/|automation\/|test\/|\.github\/|companion(?:\/|\.)|README\.md$)/;
 
 export function needsPackaging(files, labels, complete) {
   return !complete || labels.some(({ name }) => name === "full-ci") ||
