@@ -140,10 +140,12 @@ Enable it in a new clone with `git config core.hooksPath .githooks`.
    prerelease. Promote the existing prerelease after verification. Keep the
    published artifacts from the previous release for rollback.
 
-The Agent workflows use separate GitHub Environments, `agent-implementation`
-and `agent-review`, each limited to `main`. Configure a project-scoped
-`OPENAI_API_KEY` in each environment to enable model calls. Local checks,
-PR CI, and release builds use no model key.
+Issue implementation uses a project-scoped `OPENAI_API_KEY` in the
+`agent-implementation` GitHub Environment, limited to `main`. This
+repository uses native Codex PR review with `LATTICE_REVIEW_PROVIDER=codex`.
+With a separate GitHub Actions reviewer, configure the `agent-review`
+environment and its own key. Local checks, PR CI, and release builds use no
+model key.
 
 The companion source is pinned to an immutable commit in the
 `companion/0.4.0` snapshot branch. Record the upstream source revision when
