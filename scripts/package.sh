@@ -3,7 +3,7 @@ set -euo pipefail
 
 root="$(cd "$(dirname "$0")/.." && pwd)"
 source_checkout="${1:-$root/../lattice-integrated}"
-revision=9133b64b2b59d6bd1bf5a4c425c084f610150f20
+revision=7664d1ab46f63dbaccc7e9aa4deea2561da174d0
 version=0.4.0
 out="$root/dist"
 
