@@ -1,0 +1,351 @@
+import { act, cleanup, fireEvent, render, screen } from "@testing-library/react";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import type { ComponentProps } from "react";
+import { ProjectFindDialog, type ProjectFindHit } from "./project-find-dialog";
+import { activateAppLocale } from "../i18n";
+
+type FindProps = ComponentProps<typeof ProjectFindDialog>;
+
+const fileHit = (path: string, line: number, overrides: Partial<ProjectFindHit> = {}): ProjectFindHit => ({
+  kind: "file",
+  path,
+  title: path.split("/").at(-1)!,
+  snippet: "A distinctive latent alignment objective.",
+  line,
+  fileKind: "tex",
+  ...overrides,
+});
+
+function renderFind(overrides: Partial<FindProps> = {}) {
+  const props: FindProps = {
+    open: true,
+    busy: false,
+    error: null,
+    hits: [],
+    onClose: vi.fn(),
+    onSearch: vi.fn(),
+    onOpenHit: vi.fn(),
+    ...overrides,
+  };
+  const view = render(<ProjectFindDialog {...props} />);
+  const input = () => screen.getByRole("searchbox", { name: /^(?:Find in project|全局搜索)$/ });
+  return {
+    ...view,
+    props,
+    input,
+    rerenderWith: (next: Partial<FindProps>) => view.rerender(<ProjectFindDialog {...Object.assign(props, next)} />),
+    /** Types a query and lets the debounce fire. */
+    search: (query: string) => {
+      fireEvent.change(input(), { target: { value: query } });
+      act(() => vi.advanceTimersByTime(180));
+    },
+  };
+}
+
+describe("ProjectFindDialog", () => {
+  beforeEach(() => {
+    vi.useFakeTimers();
+  });
+
+  afterEach(async () => {
+    cleanup();
+    vi.useRealTimers();
+    await activateAppLocale("en");
+  });
+
+  it("updates the panel title and search label when switching to Chinese", async () => {
+    vi.useRealTimers();
+    renderFind();
+    expect(screen.getByText("Find in project")).toBeInTheDocument();
+    await act(() => activateAppLocale("zh-CN"));
+    expect(screen.getByText("全局搜索")).toBeInTheDocument();
+    expect(screen.getByRole("dialog", { name: "全局搜索" })).toBeInTheDocument();
+    expect(screen.getByRole("searchbox", { name: "全局搜索" })).toBeInTheDocument();
+    expect(screen.queryByText("Find in project")).not.toBeInTheDocument();
+  });
+
+  it("shows its placeholder, counts, empty state, and close label in Chinese", async () => {
+    vi.useRealTimers();
+    await activateAppLocale("zh-CN");
+    vi.useFakeTimers();
+    const { search, rerenderWith } = renderFind({
+      hits: [fileHit("main.tex", 3), fileHit("intro.tex", 8), { kind: "paper", path: "p", title: "Attention", snippet: "", line: null }],
+    });
+    expect(screen.getByPlaceholderText("搜索文件和论文…")).toBeInTheDocument();
+    expect(screen.queryByText("显示：")).not.toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "关闭 全局搜索" })).toBeInTheDocument();
+    search("image");
+    expect(screen.getByText("2 处 · 1 篇论文")).toBeInTheDocument();
+    rerenderWith({ hits: [] });
+    search("zzq");
+    expect(screen.getByText("没找到“zzq”")).toBeInTheDocument();
+    expect(screen.queryByText("换个更短或不同的词试试")).not.toBeInTheDocument();
+    expect(screen.getAllByRole("button", { name: "清空" })).toHaveLength(2);
+  });
+
+  it("lists file hits by name, folder and line beside paper hits, and opens the selected file line", () => {
+    const { props, search } = renderFind({
+      hits: [
+        fileHit("sections/method.tex", 2),
+        { kind: "paper", path: "paper-1", title: "Latent alignment", snippet: "A related paper." },
+      ],
+    });
+
+    search("alignment");
+    expect(screen.getByRole("status")).toHaveTextContent("1 hit · 1 paper");
+    expect(screen.getByTitle("sections/method.tex:2")).toHaveTextContent("method.texsections2");
+    expect(screen.getByRole("button", { name: "Open paper result: Latent alignment" })).toBeInTheDocument();
+    fireEvent.click(screen.getByTitle("sections/method.tex:2"));
+    expect(props.onOpenHit).toHaveBeenCalledWith("sections/method.tex", 2);
+  });
+
+  it("keeps one current hit, which a real pointer move takes and the arrows scroll into view", () => {
+    const { props, input, search } = renderFind({ hits: [fileHit("a.tex", 1), fileHit("b.tex", 2), fileHit("c.tex", 3)] });
+    search("x");
+    const [a, b, c] = ["a.tex:1", "b.tex:2", "c.tex:3"].map((title) => screen.getByTitle(title));
+    expect(a).toHaveAttribute("data-highlighted");
+    fireEvent.mouseMove(c, { clientX: 10, clientY: 10 });
+    expect(c).toHaveAttribute("data-highlighted");
+    expect(a).not.toHaveAttribute("data-highlighted");
+    // The list scrolling under a resting pointer is not a move.
+    fireEvent.keyDown(input(), { key: "ArrowUp" });
+    fireEvent.mouseMove(c, { clientX: 10, clientY: 10 });
+    expect(b).toHaveAttribute("data-highlighted");
+    const reveal = vi.spyOn(Element.prototype, "scrollIntoView");
+    fireEvent.keyDown(input(), { key: "ArrowDown" });
+    act(() => vi.advanceTimersByTime(20));
+    expect(reveal).toHaveBeenCalledWith({ block: "nearest" });
+    expect(reveal.mock.contexts.at(-1)).toBe(c);
+    fireEvent.keyDown(input(), { key: "Enter" });
+    expect(props.onOpenHit).toHaveBeenCalledWith("c.tex", 3);
+  });
+
+  it("shows a useful zero-result state and clears back to the search field", () => {
+    const { props, input } = renderFind();
+
+    fireEvent.change(input(), { target: { value: "missing theorem" } });
+    expect(screen.getByRole("status")).toHaveTextContent("Searching…");
+
+    act(() => vi.advanceTimersByTime(180));
+    expect(props.onSearch).toHaveBeenLastCalledWith("missing theorem");
+    expect(screen.getByRole("status")).toHaveTextContent("0 hits");
+    expect(screen.getByText("No results for “missing theorem”")).toBeInTheDocument();
+
+    fireEvent.click(screen.getByText("Clear search"));
+    expect(input()).toHaveValue("");
+    expect(input()).toHaveFocus();
+    expect(screen.getByRole("status")).toBeEmptyDOMElement();
+  });
+
+  it("announces failures without presenting them as successful zero-result searches", () => {
+    const { search, rerenderWith } = renderFind();
+
+    search("missing theorem");
+    rerenderWith({ error: "The search index could not be read." });
+
+    expect(screen.getByRole("status")).toHaveTextContent("Search failed.");
+    expect(screen.getByRole("alert")).toHaveTextContent("The search index could not be read.");
+    expect(screen.queryByText(/No results for/)).not.toBeInTheDocument();
+  });
+
+  it("does not open stale results while a new query is pending", () => {
+    const { props, input } = renderFind({ hits: [fileHit("sections/old.tex", 4)] });
+
+    fireEvent.change(input(), { target: { value: "new query" } });
+    fireEvent.keyDown(input(), { key: "Enter" });
+    fireEvent.keyDown(input(), { key: "F3" });
+
+    expect(screen.queryByText("sections/old.tex:4")).not.toBeInTheDocument();
+    expect(props.onOpenHit).not.toHaveBeenCalled();
+  });
+
+  it("counts matches by paper key, not title, while listing each match", async () => {
+    const vit = "An Image is Worth 16x16 Words";
+    const vitHit = (path: string, snippet: string, line?: number) => ({ kind: "paper", path, title: vit, snippet, line });
+    const { search } = renderFind({
+      hits: [
+        fileHit("main.tex", 1), fileHit("main.tex", 4), fileHit("notes.md", 2),
+        vitHit(".research/papers/2010.11929/paper.md", vit),
+        vitHit(".research/papers/2010.11929/paper.md", "image patches", 12),
+        vitHit(".research/papers/2010.11929/blog.md", "image recognition", 3),
+        vitHit(".research/papers/vit-published/paper.md", "image classification", 8),
+      ],
+    });
+
+    search("image");
+    expect(screen.getByRole("status")).toHaveTextContent("3 hits · 2 papers");
+    expect(screen.getAllByRole("button", { name: `Open paper result: ${vit}` })).toHaveLength(4);
+
+    await act(() => activateAppLocale("zh-CN"));
+    expect(screen.getByRole("status")).toHaveTextContent("3 处 · 2 篇论文");
+  });
+
+  it("opens paper results by click and keyboard", () => {
+    const path = ".research/papers/1706.03762/blog.md";
+    const { props, input, search } = renderFind({
+      hits: [{ kind: "paper", path, title: "Attention Is All You Need", snippet: "A residual stream explanation.", line: 12 }],
+    });
+
+    search("residual stream");
+    fireEvent.click(screen.getByRole("button", { name: "Open paper result: Attention Is All You Need" }));
+    expect(props.onOpenHit).toHaveBeenLastCalledWith(path, 12);
+
+    fireEvent.keyDown(input(), { key: "Enter" });
+    expect(props.onOpenHit).toHaveBeenLastCalledWith(path, 12);
+    expect(props.onOpenHit).toHaveBeenCalledTimes(2);
+    expect(screen.queryByText(/indexed full-text index/)).not.toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "Open hit" })).not.toBeInTheDocument();
+  });
+
+  it("does not open a result when Enter commits a Chinese IME candidate", () => {
+    const { props, input, search } = renderFind({
+      hits: [fileHit("references.bib", 2, { snippet: "Chen, Alice", fileKind: "bib" })],
+    });
+
+    search("陈");
+    fireEvent.compositionStart(input());
+    fireEvent.compositionEnd(input());
+    fireEvent.keyDown(input(), { key: "Enter", code: "Enter", keyCode: 13, isComposing: false });
+
+    expect(props.onOpenHit).not.toHaveBeenCalled();
+    expect(input()).toBeInTheDocument();
+  });
+
+  it("keeps the dialog open when Escape dismisses an IME candidate window", () => {
+    const { props, input } = renderFind();
+
+    fireEvent.compositionStart(input());
+    fireEvent.keyDown(input(), { key: "Escape", code: "Escape", keyCode: 229, isComposing: true });
+    fireEvent.compositionEnd(input());
+    fireEvent.keyDown(input(), { key: "Escape", code: "Escape", keyCode: 27, isComposing: false });
+    expect(props.onClose).not.toHaveBeenCalled();
+
+    act(() => vi.advanceTimersByTime(0));
+    fireEvent.keyDown(input(), { key: "Escape", code: "Escape", keyCode: 27 });
+    expect(props.onClose).toHaveBeenCalledOnce();
+  });
+
+  // Reopening keeps the last query, selected, and runs it again. Until that
+  // search answers, results that arrived while the dialog was closed stay
+  // hidden and Enter opens nothing.
+  it("reruns the kept query after reopening without showing late results", () => {
+    const { props, input, search, rerenderWith } = renderFind();
+
+    search("late result");
+    fireEvent.click(screen.getByRole("button", { name: "Close Find in project" }));
+
+    const lateHits = [fileHit("sections/late.tex", 8, { snippet: "A result from the closed request." })];
+    rerenderWith({ open: false, hits: lateHits });
+    vi.mocked(props.onSearch).mockClear();
+    rerenderWith({ open: true });
+
+    expect(input()).toHaveValue("late result");
+    expect(screen.queryByText("sections/late.tex:8")).not.toBeInTheDocument();
+    fireEvent.keyDown(input(), { key: "Enter" });
+    expect(props.onOpenHit).not.toHaveBeenCalled();
+    act(() => vi.advanceTimersByTime(200));
+    expect(props.onSearch).toHaveBeenLastCalledWith("late result");
+  });
+
+  // Selected so typing replaces the kept query instead of appending to it.
+  it("selects the kept query when reopened", () => {
+    const { input, search, rerenderWith } = renderFind();
+
+    search("attention");
+    rerenderWith({ open: false });
+    rerenderWith({ open: true });
+    act(() => vi.advanceTimersByTime(50));
+
+    const field = input() as HTMLInputElement;
+    expect(field).toHaveValue("attention");
+    expect([field.selectionStart, field.selectionEnd]).toEqual([0, "attention".length]);
+  });
+
+  it.each([
+    ["ArrowDown then Enter opens the second hit", ["ArrowDown", "Enter"], "b.tex"],
+    ["ArrowDown stops at the last hit", ["ArrowDown", "ArrowDown", "Enter"], "b.tex"],
+    ["ArrowUp stops at the first hit", ["ArrowUp", "Enter"], "a.tex"],
+    ["F3 steps forward and opens", ["F3"], "b.tex"],
+    ["Shift-F3 wraps backwards and opens", ["Shift+F3"], "b.tex"],
+  ])("navigates hits from the keyboard: %s", (_case, keys, expected) => {
+    const { props, input, search } = renderFind({ hits: [fileHit("a.tex", 1), fileHit("b.tex", 2)] });
+
+    search("alignment");
+    for (const key of keys) {
+      fireEvent.keyDown(input(), key === "Shift+F3" ? { key: "F3", shiftKey: true } : { key });
+    }
+    expect(props.onOpenHit).toHaveBeenLastCalledWith(expected, expected === "a.tex" ? 1 : 2);
+  });
+
+  describe("result scope", () => {
+    const paperHit = (key: string, title: string, line: number | null = null): ProjectFindHit => ({
+      kind: "paper", path: `.research/papers/${key}/paper.md`, title, snippet: `${title} alignment`, line,
+    });
+    const hits = [
+      fileHit("a.tex", 1),
+      paperHit("2010.11929", "Vision Transformer", 4),
+      paperHit("2010.11929", "Vision Transformer", 9),
+      paperHit("1706.03762", "Attention"),
+    ];
+    const tab = (name: RegExp) => screen.getByRole("tab", { name });
+
+    it("says what an empty search covers, and names the scope a filter of what it shows", () => {
+      renderFind();
+      expect(screen.getByRole("searchbox")).toHaveAttribute("placeholder", "Search files and papers…");
+      expect(screen.queryByText("Show:")).not.toBeInTheDocument();
+      expect(screen.getByRole("tablist", { name: "Show results from" })).toBeInTheDocument();
+      fireEvent.click(tab(/^Papers/));
+      expect(screen.getByRole("searchbox")).toHaveAttribute("placeholder", "Search files and papers…");
+    });
+
+    it("counts every scope on its tab and filters without searching again", () => {
+      const { props, search } = renderFind({ hits });
+      search("alignment");
+      const searches = vi.mocked(props.onSearch).mock.calls.length;
+      // Two papers, though one matched twice.
+      expect(tab(/^All/)).toHaveTextContent("All3");
+      expect(tab(/^Files/)).toHaveTextContent("Files1");
+      expect(tab(/^Papers/)).toHaveTextContent("Papers2");
+
+      fireEvent.click(tab(/^Papers/));
+      expect(props.onSearch).toHaveBeenCalledTimes(searches);
+      expect(screen.queryByTitle("a.tex:1")).not.toBeInTheDocument();
+      expect(screen.getAllByRole("button", { name: /^Open paper result/ })).toHaveLength(3);
+      expect(screen.getByRole("status")).toHaveTextContent("2 papers");
+
+      fireEvent.click(tab(/^Files/));
+      expect(screen.getByTitle("a.tex:1")).toBeInTheDocument();
+      expect(screen.queryByRole("button", { name: /^Open paper result/ })).not.toBeInTheDocument();
+      expect(screen.getByRole("status")).toHaveTextContent("1 hit");
+    });
+
+    it("steps F3 and Enter through the shown scope only, from its first hit", () => {
+      const { props, input, search } = renderFind({ hits });
+      search("alignment");
+      fireEvent.keyDown(input(), { key: "ArrowDown" });
+      fireEvent.click(tab(/^Papers/));
+      fireEvent.keyDown(input(), { key: "Enter" });
+      expect(props.onOpenHit).toHaveBeenLastCalledWith(".research/papers/2010.11929/paper.md", 4);
+      fireEvent.keyDown(input(), { key: "F3", shiftKey: true });
+      expect(props.onOpenHit).toHaveBeenLastCalledWith(".research/papers/1706.03762/paper.md", undefined);
+    });
+
+    it("offers the other scope's results when the shown one has none", () => {
+      const { search } = renderFind({ hits: [fileHit("a.tex", 1)] });
+      search("alignment");
+      fireEvent.click(tab(/^Papers/));
+      expect(screen.getByText("No papers match “alignment”")).toBeInTheDocument();
+      fireEvent.click(screen.getByRole("button", { name: "Show all results" }));
+      expect(tab(/^All/)).toHaveAttribute("aria-selected", "true");
+      expect(screen.getByTitle("a.tex:1")).toBeInTheDocument();
+    });
+
+    it("keeps the scope across reopening", () => {
+      const { rerenderWith } = renderFind();
+      fireEvent.click(tab(/^Files/));
+      rerenderWith({ open: false });
+      rerenderWith({ open: true });
+      expect(tab(/^Files/)).toHaveAttribute("aria-selected", "true");
+    });
+  });
+});

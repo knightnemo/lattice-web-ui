@@ -1,0 +1,3 @@
+# Keep the chooser focused while still allowing reports that do not fit one of
+# the structured forms. GitHub adds the security-policy entry automatically.
+blank_issues_enabled: true

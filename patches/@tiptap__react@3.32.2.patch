@@ -1,0 +1,130 @@
+diff --git a/dist/index.cjs b/dist/index.cjs
+index 2b9f6448394eb40b3d6b143977f85e07e97c2d15..fb12fec52a9504e3cca0045686faabee1864188b 100644
+--- a/dist/index.cjs
++++ b/dist/index.cjs
+@@ -111,10 +111,21 @@ function createContentComponent() {
+ 		* Adds a new NodeView Renderer to the editor.
+ 		*/
+ 		setRenderer(id, renderer) {
++			// Lattice patch: only first mounts are batched into a microtask (the
++			// upstream fix for update-depth errors when many node views mount at
++			// once). A re-render of an already-mounted node view notifies React in
++			// the same task, as @tiptap/react 3.23 did. Deferring it lets React's
++			// controlled-input restore reset an input rendered from node attrs to
++			// its previous value first, which jumps the caret and breaks IME.
++			const isMounted = Object.prototype.hasOwnProperty.call(renderers, id);
+ 			renderers = {
+ 				...renderers,
+ 				[id]: react_dom.default.createPortal(renderer.reactElement, renderer.element, id)
+ 			};
++			if (isMounted) {
++				subscribers.forEach((subscriber) => subscriber());
++				return;
++			}
+ 			notifySubscribers();
+ 		},
+ 		/**
+@@ -802,6 +813,13 @@ function ReactMarkViewRenderer(component, options = {}) {
+ */
+ function captureDOMSelection(element) {
+ 	var _element$ownerDocumen;
++	// Lattice patch: reading the selection forces a synchronous style and
++	// layout pass, and every node view with content runs this as its content
++	// attaches: opening a document with 150 code blocks forced 150 of them. A
++	// caret worth keeping lives in the focused editor, so outside it the
++	// move keeps its old behavior and the reads are skipped.
++	const active = element.ownerDocument.activeElement;
++	if (!element.isConnected || !active || !active.contains(element)) return null;
+ 	const root = element.getRootNode();
+ 	const selection = typeof root.getSelection === "function" ? root.getSelection() : (_element$ownerDocumen = element.ownerDocument) === null || _element$ownerDocumen === void 0 || (_element$ownerDocumen = _element$ownerDocumen.defaultView) === null || _element$ownerDocumen === void 0 ? void 0 : _element$ownerDocumen.getSelection();
+ 	if (!selection || selection.rangeCount === 0) return null;
+diff --git a/dist/index.js b/dist/index.js
+index c1e6896f3ef8c9ec4d4d9d3271ca1f1ece276d09..790d09dc2b1b978f6534dd364c40da52e52690d6 100644
+--- a/dist/index.js
++++ b/dist/index.js
+@@ -87,10 +87,21 @@ function createContentComponent() {
+ 		* Adds a new NodeView Renderer to the editor.
+ 		*/
+ 		setRenderer(id, renderer) {
++			// Lattice patch: only first mounts are batched into a microtask (the
++			// upstream fix for update-depth errors when many node views mount at
++			// once). A re-render of an already-mounted node view notifies React in
++			// the same task, as @tiptap/react 3.23 did. Deferring it lets React's
++			// controlled-input restore reset an input rendered from node attrs to
++			// its previous value first, which jumps the caret and breaks IME.
++			const isMounted = Object.prototype.hasOwnProperty.call(renderers, id);
+ 			renderers = {
+ 				...renderers,
+ 				[id]: ReactDOM.createPortal(renderer.reactElement, renderer.element, id)
+ 			};
++			if (isMounted) {
++				subscribers.forEach((subscriber) => subscriber());
++				return;
++			}
+ 			notifySubscribers();
+ 		},
+ 		/**
+@@ -778,6 +789,13 @@ function ReactMarkViewRenderer(component, options = {}) {
+ */
+ function captureDOMSelection(element) {
+ 	var _element$ownerDocumen;
++	// Lattice patch: reading the selection forces a synchronous style and
++	// layout pass, and every node view with content runs this as its content
++	// attaches: opening a document with 150 code blocks forced 150 of them. A
++	// caret worth keeping lives in the focused editor, so outside it the
++	// move keeps its old behavior and the reads are skipped.
++	const active = element.ownerDocument.activeElement;
++	if (!element.isConnected || !active || !active.contains(element)) return null;
+ 	const root = element.getRootNode();
+ 	const selection = typeof root.getSelection === "function" ? root.getSelection() : (_element$ownerDocumen = element.ownerDocument) === null || _element$ownerDocumen === void 0 || (_element$ownerDocumen = _element$ownerDocumen.defaultView) === null || _element$ownerDocumen === void 0 ? void 0 : _element$ownerDocumen.getSelection();
+ 	if (!selection || selection.rangeCount === 0) return null;
+diff --git a/src/EditorContent.tsx b/src/EditorContent.tsx
+index cedf56dba1088d0370a03cbe27b4457612a7634d..dbde9af34a2fc57a402681233b547223ada82488 100644
+--- a/src/EditorContent.tsx
++++ b/src/EditorContent.tsx
+@@ -83,11 +83,24 @@ export function createContentComponent(): ContentComponent {
+      * Adds a new NodeView Renderer to the editor.
+      */
+     setRenderer(id: string, renderer: ReactRenderer) {
++      // Lattice patch: only first mounts are batched into a microtask (the
++      // upstream fix for update-depth errors when many node views mount at
++      // once). A re-render of an already-mounted node view notifies React in
++      // the same task, as @tiptap/react 3.23 did. Deferring it lets React's
++      // controlled-input restore reset an input rendered from node attrs to
++      // its previous value first, which jumps the caret and breaks IME.
++      const isMounted = Object.prototype.hasOwnProperty.call(renderers, id)
++
+       renderers = {
+         ...renderers,
+         [id]: ReactDOM.createPortal(renderer.reactElement, renderer.element, id),
+       }
+ 
++      if (isMounted) {
++        subscribers.forEach(subscriber => subscriber())
++        return
++      }
++
+       notifySubscribers()
+     },
+     /**
+diff --git a/src/captureDOMSelection.ts b/src/captureDOMSelection.ts
+index c74ec5c3151a9d3693e057779ce68eebe2531985..c88420bb44215436ce80e0187fae093b283d7ee4 100644
+--- a/src/captureDOMSelection.ts
++++ b/src/captureDOMSelection.ts
+@@ -5,6 +5,16 @@ type SelectionRoot = Node & { getSelection?: () => Selection | null }
+  * Browsers drop the selection when an element moves, so restore it after the move.
+  */
+ export function captureDOMSelection(element: HTMLElement): (() => void) | null {
++  // Lattice patch: reading the selection forces a synchronous style and
++  // layout pass, and every node view with content runs this as its content
++  // attaches: opening a document with 150 code blocks forced 150 of them. A
++  // caret worth keeping lives in the focused editor, so outside it the
++  // move keeps its old behavior and the reads are skipped.
++  const active = element.ownerDocument.activeElement
++  if (!element.isConnected || !active || !active.contains(element)) {
++    return null
++  }
++
+   const root = element.getRootNode() as SelectionRoot
+   const selection =
+     typeof root.getSelection === 'function'

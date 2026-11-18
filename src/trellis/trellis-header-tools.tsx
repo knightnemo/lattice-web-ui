@@ -1,0 +1,260 @@
+/**
+ * A document panel's header tools: Build on a .tex file (it builds the
+ * project and brings the PDF up), Edit / Split / Preview on the active
+ * Markdown, HTML or .bib file (whose Preview is its reference list), and on the active Paper Blog / Paper beside its own
+ * Edit / Split / Preview (a Paper is Markdown too).
+ *
+ * The modes are icons, each named in its tooltip and to assistive technology;
+ * a header with room to spare names them beside their icons too (see the
+ * header's data-tools="named" in trellis.css).
+ *
+ * Every document view's tools share one grid cell in its panel's header (see
+ * trellis.css), and the Trellis patch measures that cell for the panel's
+ * minimum. So a view whose tools are not live right now — an unselected tab,
+ * a Paper with only one of its two texts, a document whose state is still
+ * loading — keeps the same tools laid out, inert and invisible. The cell is
+ * then as wide as the widest tools any of the panel's documents can show,
+ * whichever tab is selected and whatever kind of document it holds, so tabs
+ * never change width and never run under the header's actions.
+ */
+import { useId, useRef, useState, useSyncExternalStore, type ReactNode } from "react";
+import { useLingui } from "@lingui/react/macro";
+import { useView } from "@danfessler/trellis-react";
+import { Columns2, Eye, FileText, Newspaper, PenLine, Play } from "lucide-react";
+import { cn } from "@/lib/utils";
+import { SegmentedControl } from "../components/ui/segmented-control";
+import { InfinityLoader } from "../components/ui/activity-icons";
+import { HoverCard, HoverCardContent, HoverCardTrigger } from "../components/ui/hover-card";
+import { documentTools, useTrellisApp, type TrellisController, type TrellisViewMode } from "./trellis-controller";
+import type { BuildOutcome } from "../app/use-build-pipeline";
+import { buildHeadline } from "../build/build-result-text";
+import { formatSeconds } from "../i18n";
+import { BuildSequence } from "./trellis-build-sequence";
+
+/**
+ * When each build outcome was first shown. Its flourish belongs to the moment
+ * the build ends, so a panel that remounts later (switching tabs or panels)
+ * shows the finished check without celebrating it a second time. Every build
+ * produces a new outcome object, so a WeakMap keyed by it forgets on its own.
+ */
+const outcomeShownAt = new WeakMap<BuildOutcome, number>();
+const FLOURISH_WINDOW_MS = 900;
+function isFreshOutcome(outcome: BuildOutcome | null): boolean {
+  if (!outcome) return false;
+  const now = performance.now();
+  const shown = outcomeShownAt.get(outcome);
+  if (shown === undefined) {
+    outcomeShownAt.set(outcome, now);
+    return true;
+  }
+  return now - shown < FLOURISH_WINDOW_MS;
+}
+
+/** Six short rays in the mark's two threads, thrown off a check that has just drawn itself. */
+const BURST = Array.from({ length: 6 }, (_, index) => {
+  const angle = (index * 60 - 90) * (Math.PI / 180);
+  const at = (radius: number) => `${(12 + Math.cos(angle) * radius).toFixed(2)} ${(12 + Math.sin(angle) * radius).toFixed(2)}`;
+  // eslint-disable-next-line lingui/no-unlocalized-strings -- SVG path data
+  return { d: `M${at(14)}L${at(18)}`, thread: index % 2 ? "warp" : "weft" };
+});
+
+/**
+ * The build's result, drawn on the 24-unit icon grid of the lucide icons
+ * beside it. A fresh clean success draws its check and throws a small burst;
+ * a fresh failure draws its cross and shakes once. A success with warnings is
+ * still a check, with a warning-colored dot set beside it like a footnote
+ * mark: it draws its check and the dot settles in, without the burst a clean
+ * build earns. Afterwards all of them rest.
+ */
+function BuildStatusGlyph({ status, warned, fresh }: { status: "succeeded" | "failed"; warned: boolean; fresh: boolean }) {
+  return (
+    <svg
+      className="trellis-build-status"
+      data-status={status}
+      data-fresh={fresh || undefined}
+      width={13}
+      height={13}
+      viewBox="0 0 24 24"
+      fill="none"
+      stroke="currentColor"
+      strokeWidth={2.5}
+      strokeLinecap="round"
+      strokeLinejoin="round"
+      aria-hidden="true"
+    >
+      {status === "succeeded"
+        ? <path className="trellis-build-stroke" pathLength={1} d="M20 6 9 17l-5-5" />
+        : <>
+          <path className="trellis-build-stroke" pathLength={1} d="M18 6 6 18" />
+          <path className="trellis-build-stroke" pathLength={1} d="m6 6 12 12" />
+        </>}
+      {warned && <circle className="trellis-build-pip" cx={20.5} cy={18} r={3.5} stroke="none" />}
+      {fresh && status === "succeeded" && !warned && (
+        <g className="trellis-build-burst" strokeWidth={2}>
+          {BURST.map(({ d, thread }) => <path key={d} d={d} data-thread={thread} />)}
+        </g>
+      )}
+    </svg>
+  );
+}
+
+/** "just now", "3 minutes ago": how long before `now` a build finished. */
+function buildAge(finishedAt: number, now: number, justNow: string, locale: string): string {
+  const seconds = Math.max(0, (now - finishedAt) / 1000);
+  if (seconds < 45) return justNow;
+  const format = new Intl.RelativeTimeFormat(locale, { numeric: "auto" });
+  if (seconds < 3600) return format.format(-Math.round(seconds / 60), "minute");
+  if (seconds < 86_400) return format.format(-Math.round(seconds / 3600), "hour");
+  return format.format(-Math.round(seconds / 86_400), "day");
+}
+
+/** Tools that hold their place in the header without being seen or reached. */
+function Reserve({ children }: { children: ReactNode }) {
+  return <span className="trellis-tools-reserve" inert aria-hidden="true">{children}</span>;
+}
+
+export function FileHeaderTools({ controller }: { controller: TrellisController }) {
+  const { t, i18n } = useLingui();
+  const view = useView<{ key: string }>();
+  const key = view.params.key;
+  const active = useTrellisApp(controller, (state) => state.activeKey === key);
+  const tools = useSyncExternalStore(controller.docTools.subscribe, controller.docTools.get);
+  const which = documentTools(controller.bridge?.tabKind(key) ?? "file", key);
+  const resultId = useId();
+  // The build's age is read when the writer reaches the button, by pointer or
+  // by focus, so neither the tip nor the description is older than that.
+  const [reachedAt, setReachedAt] = useState(Date.now);
+  // The Build card. A press shuts it, as it shuts a tooltip, and it stays
+  // shut until the pointer leaves: pressing Build is for building, and a card
+  // laid over the editor on every press (⌘S's too, with the pointer resting
+  // there) would be in the way. Hovering again shows the build filling in.
+  const [cardOpen, setCardOpen] = useState(false);
+  const pressedRef = useRef(false);
+  if (which === "build") {
+    // Gray and labelled Build while idle; a running build shows a spinner in
+    // place of the play icon, and another press queues a fresh build. Once it
+    // ends the button reports it: a green check and the build's time, or a red
+    // cross and "Failed", until the next build starts. The zh-CN label for
+    // Build (构建) also reads as "building", so an unchanged label after a
+    // build read as one that never finished.
+    const { building, lastBuild } = tools;
+    const seconds = lastBuild?.status === "succeeded" ? formatSeconds(lastBuild.seconds) : null;
+    // Warnings never turn a build into a failure; they only mark its check.
+    const warned = lastBuild?.status === "succeeded" && lastBuild.counts.error + lastBuild.counts.warning > 0;
+    const headline = building
+      ? t`Building…`
+      : lastBuild ? buildHeadline(lastBuild.status === "succeeded", lastBuild.counts, lastBuild.status === "failed" && lastBuild.wrotePdf) : null;
+    // What happened is followed by which document, how long the compile took
+    // and how long ago it ended.
+    const facts = !building && lastBuild
+      ? [lastBuild.rootDocument, seconds, buildAge(lastBuild.finishedAt, reachedAt, t`just now`, i18n.locale)]
+        .filter((fact): fact is string => Boolean(fact))
+      : [];
+    const reach = () => setReachedAt(Date.now());
+    const button = (live: boolean) => {
+      const state = !live ? "idle" : building ? "building" : lastBuild?.status ?? "idle";
+      const fresh = state !== "idle" && state !== "building" && !lastBuild?.quiet && isFreshOutcome(lastBuild);
+      const labels = { build: t`Build`, failed: t`Failed`, time: seconds ?? "" };
+      const shown = state === "succeeded" ? "time" : state === "failed" ? "failed" : "build";
+      return (
+        <button
+          type="button"
+          className={cn("trellis-build-button", state !== "idle" && `is-${state}`, live && warned && "has-warnings", fresh && "is-fresh")}
+          aria-label={t`Build`}
+          aria-describedby={live && headline ? resultId : undefined}
+          aria-busy={state === "building" || undefined}
+          onPointerEnter={live ? reach : undefined}
+          onFocus={live ? reach : undefined}
+          onPointerDown={live ? () => { pressedRef.current = true; setCardOpen(false); } : undefined}
+          onPointerLeave={live ? () => { pressedRef.current = false; } : undefined}
+          onClick={live ? (event) => controller.bridge?.build(key, { clean: event.shiftKey, beside: view.panelId }) : undefined}
+        >
+          {/* What it shows, centred over a hidden sizer as wide as its widest
+              state (a 13 px glyph and the longest label, a time up to 999.9 s
+              included), so the button and the header's measured tools keep
+              one width whatever it shows, and every state reads centred. */}
+          <span className="trellis-build-face">
+            {state === "building" ? <InfinityLoader size={13} />
+              : state === "succeeded" || state === "failed" ? <BuildStatusGlyph status={state} warned={warned} fresh={fresh} />
+                : <Play size={11} fill="currentColor" />}
+            <span className="trellis-build-label"><span>{labels[shown]}</span></span>
+          </span>
+          <span className="trellis-build-sizer" aria-hidden="true">
+            <span className="trellis-build-sizer-glyph" />
+            <span className="trellis-build-sizer-labels">
+              {[...Object.values(labels), formatSeconds(999.9)].map((label, index) => <span key={index}>{label}</span>)}
+            </span>
+          </span>
+          {live && headline && <span id={resultId} className="sr-only">{[headline, ...facts].join(" · ")}</span>}
+        </button>
+      );
+    };
+    if (!active) return <Reserve>{button(false)}</Reserve>;
+    // The card gives the same result as the description, pass by pass, then
+    // how to build again (the only place ⇧-click's clean rebuild is told);
+    // before any build, only that. It is one card in every state, so the
+    // first build does not remount the button under the press that started it.
+    const place = !building && lastBuild
+      ? [lastBuild.rootDocument, buildAge(lastBuild.finishedAt, reachedAt, t`just now`, i18n.locale)].filter(Boolean).join(" · ")
+      : null;
+    return (
+      <HoverCard open={cardOpen} onOpenChange={(open) => setCardOpen(open && !pressedRef.current)} openDelay={280} closeDelay={120}>
+        <HoverCardTrigger asChild>{button(true)}</HoverCardTrigger>
+        <HoverCardContent align="end" className="trellis-build-card">
+          <BuildSequence
+            building={building}
+            progress={tools.buildProgress}
+            outcome={building ? null : lastBuild}
+            place={place}
+            hint={t`⌘S · ⇧-click for a clean rebuild`}
+            onProblem={() => controller.bridge?.nextBuildProblem()}
+          />
+        </HoverCardContent>
+      </HoverCard>
+    );
+  }
+  if (which === null) return null;
+  // Edit, Split and Preview: a Markdown, HTML or .bib file's, and a Paper's beside its Blog/Paper switch.
+  // Each mode's tooltip is its own word: the header folds the switch to
+  // icons when short of room, and the icon then needs its name.
+  const modeItems = [
+    { value: "source" as const, label: <><PenLine size={14} /><span className="trellis-mode-name">{t`Edit`}</span></>, title: t`Edit` },
+    { value: "split" as const, label: <><Columns2 size={14} /><span className="trellis-mode-name">{t`Split`}</span></>, title: t`Split` },
+    { value: "pdf" as const, label: <><Eye size={14} /><span className="trellis-mode-name">{t`Preview`}</span></>, title: t`Preview` },
+  ];
+  const modes = active && tools.viewModes ? (
+    <SegmentedControl<TrellisViewMode>
+      value={tools.viewMode}
+      onChange={(mode) => controller.bridge?.setViewMode(mode)}
+      ariaLabel={t`Document view`}
+      className="trellis-view-switcher"
+      items={modeItems}
+    />
+  ) : <Reserve><SegmentedControl<TrellisViewMode> value="source" onChange={() => {}} ariaLabel="" className="trellis-view-switcher" items={modeItems} /></Reserve>;
+  if (which === "views") return modes;
+  const items = [
+    { value: "blog" as const, label: <><Newspaper size={14} /><span className="trellis-mode-name">{t`Blog`}</span></>, title: t`Blog` },
+    { value: "fulltext" as const, label: <><FileText size={14} /><span className="trellis-mode-name">{t`Paper`}</span></>, title: t`Paper` },
+  ];
+  // A Paper with only its full text or only its blog has nothing to switch
+  // between, but keeps the switch's room like any other Paper. Short of
+  // room (data-tools="icon"), the switch gives way before the modes; the
+  // panel menu repeats both.
+  const content = !active || !tools.paperViews || !tools.paperView
+    ? <Reserve><SegmentedControl<"blog" | "fulltext"> value="blog" onChange={() => {}} ariaLabel="" className="trellis-view-switcher" items={items} /></Reserve>
+    : (
+      <SegmentedControl<"blog" | "fulltext">
+        value={tools.paperView}
+        onChange={(paperView) => controller.bridge?.setPaperView(paperView)}
+        ariaLabel={t`Paper content`}
+        className="trellis-view-switcher"
+        items={items}
+      />
+    );
+  return (
+    <span className="trellis-paper-tools">
+      <span className="trellis-paper-content">{content}</span>
+      {modes}
+    </span>
+  );
+}

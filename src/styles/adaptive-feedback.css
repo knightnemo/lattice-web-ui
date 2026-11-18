@@ -1,0 +1,130 @@
+@media (max-width: 680px) {
+  .settings-body { grid-template-columns: var(--settings-nav-width-compact) minmax(0, 1fr); }
+  /* The narrow column keeps the caption size, so fewer labels wrap. */
+  .settings-nav-group > button {
+    height: auto;
+    min-height: var(--control-height-default);
+    padding-block: var(--space-2);
+    font-size: var(--type-caption-size);
+    line-height: var(--type-caption-line-height);
+  }
+  /* Labels wrap here at their spaces. A single word wider than the column
+     ("Acknowledgements") hyphenates instead of pushing the nav sideways; an
+     engine without hyphenation for the language ends it in an ellipsis, and
+     the full label shows on hover. The inherited break-word would otherwise
+     split it mid-word with no mark. */
+  .settings-nav-group > button > span { min-width: 0; overflow: hidden; overflow-wrap: normal; text-overflow: ellipsis; hyphens: auto; }
+  /* The narrow page's inset is less than the floating close needs, so a page
+     action keeps clear of the close's corner. */
+  .settings-section .ui-settings-section-header-actions {
+    margin-inline-end: calc(var(--space-5) + var(--control-size-icon) + var(--space-2) - var(--settings-content-padding-inline-compact));
+  }
+  .settings-section {
+    padding: var(--settings-content-padding-top-compact)
+      var(--settings-content-padding-inline-compact)
+      var(--settings-content-padding-bottom-compact);
+  }
+}
+
+/* The single owner of the reduced-motion policy.
+ *
+ * This rule is `!important` and universal, so it already overrides every
+ * component's own motion. Both entry points load this file through the shared
+ * `App.css` entry, so the policy is always in effect.
+ *
+ * Do NOT add a local `prefers-reduced-motion` block to a component
+ * stylesheet. Those blocks cannot win against this one, so they are dead on
+ * arrival, and they rot: the last set of them still named `.mention-menu`,
+ * a component that had already been deleted. `popup-motion.test.ts` fails
+ * the build if one reappears. */
+@media (prefers-reduced-motion: reduce) {
+  *, *::before, *::after { animation-duration: .01ms !important; transition-duration: .01ms !important; scroll-behavior: auto !important; }
+  .paper-import-track > span::after, .welcome-content > :not(.busy-label) { animation: none; }
+  .overleaf-channel-connecting::before, .overleaf-channel-dot { animation: none; }
+  .paper-import-track > span { transition: none; }
+  /* Ambient loops rest on their invisible or finished frame. `html` lifts these
+     past the components' own single-class rules, whatever order they load in. */
+  html .lattice-mark-glint, html .welcome-lattice-trail, html .welcome-lattice-pulse,
+  html .welcome-lattice-ring, html .welcome-lattice-bloom, html .empty-illustration-typing > g,
+  html .loading-sheen::after,
+  html .bibliography-audit-mark[data-mark="checking"] > .bibliography-audit-ring { animation: none; }
+  /* The build result lands whole: its cross and its warning dot do not wait their turn. */
+  html .trellis-build-status[data-fresh] .trellis-build-pip,
+  html .trellis-build-status[data-fresh] .trellis-build-stroke + .trellis-build-stroke { animation-delay: 0s; }
+  /* A jump's mark stays put for its moment instead of fading, and so does
+     the wash on what an outside edit or an accepted suggestion changed. */
+  html .source-editor .cm-editor .cm-line.cm-reveal-flash, html .lx-md-editor .lx-reveal-flash { animation: none; background-color: var(--highlight-match-surface); }
+  html .source-editor .cm-editor .cm-line.cm-landed-line, html .source-editor .cm-editor .cm-accept-insert { animation: none; background-color: var(--status-success-soft); }
+  /* Things that arrive in turn arrive together: the replaced words go at once,
+     and a suggestion's edits show with its passage. */
+  html .source-editor .cm-accept-ghost { display: none; }
+  html .proofread-card-text .inline-edit { animation-delay: 0s; }
+  /* The tour's card arrives and its action mark checks itself without a flourish. */
+  html .guided-tour-card, html .guided-tour-content, html .guided-tour-action[data-done] .guided-tour-action-mark { animation: none; }
+  /* An indeterminate toast bar holds a still segment instead of strobing. */
+  html .app-toast-progress[data-indeterminate] .app-toast-progress-fill { animation: none; transform: translateX(95%); }
+}
+
+/* The actions drop under the search when the page is too narrow for one line,
+   rather than scrolling out of sight. */
+.app-log-actions { display: flex; flex-wrap: wrap; align-items: center; gap: var(--space-3); margin: 0 0 var(--space-5); flex: none; }
+.app-log-action-row, .app-log-query-row { display: flex; align-items: center; gap: var(--space-3); }
+.app-log-query-row { flex: 1 0 260px; min-width: 0; }
+.app-log-action-row { flex: none; }
+.app-log-action-row > button { flex: none; white-space: nowrap; }
+.app-log-search { width: auto; min-width: 0; flex: 1; }
+.app-log-level-filter { width: max-content; min-width: max-content; flex: none; }
+/* Logs tab: pin the settings scroll chain to the viewport so the settings
+   page itself never scrolls — the log panel takes the remaining height and
+   scrolls internally with the app's own ScrollArea scrollbar. */
+.settings-content [data-slot="scroll-area-content-shell"]:has(.app-logs-settings),
+.settings-content [data-slot="scroll-area-content"]:has(.app-logs-settings) { height: 100%; }
+.app-logs-settings { height: 100%; max-width: none; display: flex; flex-direction: column; }
+/* The other pages scroll their bottom padding away; this one pins the log
+   card to the sheet, so its bottom inset matches the side inset and the card
+   sits evenly framed instead of floating above an oversized gap. */
+.settings-section.app-logs-settings { padding-bottom: var(--settings-content-padding-inline); }
+.app-logs-settings :is(.ui-settings-group, .ui-settings-group-body) { flex: 1; min-height: 0; display: flex; flex-direction: column; }
+/* A card like the other boxes in Settings (the row groups, the Overleaf
+   cards), so the log reads as one framed surface on the page's sheet. */
+.app-log-scroll { flex: 1; min-height: 140px; border: 1px solid var(--border-subtle); border-radius: var(--settings-card-radius); background: var(--settings-card-surface); }
+.app-log-scroll [data-slot="scroll-area-viewport"] { overscroll-behavior-y: contain; }
+.app-log-list { display: flex; flex-direction: column; padding-block: var(--space-4); font: var(--type-body-compact-size)/1.8 var(--editor-font); user-select: text; }
+.app-log-entry { user-select: text; }
+.app-log-entry-summary, .app-log-operation > summary { display: grid; grid-template-columns: 24ch 6ch minmax(0, 1fr) 13px; align-items: baseline; gap: var(--space-5); padding: var(--space-1) var(--space-5); list-style: none; cursor: pointer; font: inherit; color: var(--text-secondary); transition: background-color var(--motion-fast); }
+.app-log-entry-summary::-webkit-details-marker, .app-log-operation > summary::-webkit-details-marker { display: none; }
+.app-log-entry-summary:hover, .app-log-operation > summary:hover { background: var(--control-hover-surface); }
+.app-log-entry-summary time, .app-log-operation > summary time { color: var(--text-tertiary); font-variant-numeric: tabular-nums; white-space: nowrap; }
+.app-log-entry-title, .app-log-operation-title { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; color: var(--text-primary); }
+.app-log-severity { font-weight: 500; }
+.info > summary .app-log-severity { color: var(--status-info); }
+.success > summary .app-log-severity { color: var(--status-success); }
+.warning > summary .app-log-severity { color: var(--status-warning); }
+.error > summary .app-log-severity { color: var(--status-danger); }
+.app-log-inline-fields { color: var(--text-secondary); }
+.app-log-entry-content { min-width: 0; padding: var(--space-4) var(--space-5); margin: var(--space-3) var(--space-5); border-inline-start: 1px solid var(--border-strong); background: var(--surface-panel); }
+.app-log-entry-heading { display: flex; justify-content: flex-end; }
+.app-log-context { display: flex; flex-wrap: wrap; gap: var(--space-2); margin-top: var(--space-3); color: var(--text-secondary); font-size: var(--type-micro-size); }
+.app-log-context > * { max-width: 100%; padding: var(--space-1) var(--space-3); border-radius: var(--radius-icon); background: var(--surface-panel-raised); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.app-log-context button { padding: var(--space-1) var(--space-3); border: 0; border-radius: var(--radius-icon); background: var(--surface-panel-raised); color: inherit; font: inherit; cursor: pointer; }
+.app-log-context button:hover { color: var(--text-primary); }
+.app-log-message, .app-log-fields { margin: var(--space-4) 0 0; color: var(--text-primary); font: var(--type-micro-size)/1.6 var(--editor-font); white-space: pre-wrap; overflow-wrap: anywhere; }
+.app-log-fields { padding-top: var(--space-4); border-top: 1px solid var(--border-subtle); color: var(--text-secondary); }
+.app-log-chevron { align-self: center; opacity: 0; transition: transform var(--motion-fast), opacity var(--motion-fast); }
+.app-log-entry-summary:is(:hover, :focus-visible) .app-log-chevron, .app-log-operation > summary:is(:hover, :focus-visible) .app-log-chevron, details[open] > summary .app-log-chevron { opacity: 1; }
+.app-log-entry[open] > summary .app-log-chevron, .app-log-operation[open] > summary .app-log-chevron { transform: rotate(90deg); }
+.app-log-operation-timeline { margin-block: var(--space-3); border-inline-start: 1px solid var(--border-strong); background: var(--surface-panel); }
+@media (max-width: 680px) {
+  .app-log-entry-summary, .app-log-operation > summary { grid-template-columns: 13ch 5ch minmax(0, 1fr) 13px; gap: var(--space-3); padding-inline: var(--space-4); }
+  .app-log-date { display: none; }
+  .settings-section.app-logs-settings { padding-bottom: var(--settings-content-padding-inline-compact); }
+}
+.app-log-export-dialog { width: min(720px, calc(100vw - var(--space-10))); max-height: min(720px, calc(100vh - var(--space-10))); display: flex; flex-direction: column; gap: var(--space-6); padding: var(--space-8); border: 1px solid var(--border-subtle); border-radius: var(--radius-panel); background: var(--surface-panel); }
+.app-log-export-dialog h2, .app-log-export-dialog p { margin: 0; }
+.app-log-export-dialog p { color: var(--text-secondary); font-size: var(--type-body-compact-size); }
+.app-log-export-preview { min-height: 160px; margin: 0; padding: var(--space-5); overflow: auto; border: 1px solid var(--border-subtle); border-radius: var(--radius-control); background: var(--surface-app); color: var(--text-primary); font: var(--type-micro-size)/1.5 var(--editor-font); white-space: pre-wrap; overflow-wrap: anywhere; }
+
+/* Holds the two icons of a MorphIcon on top of each other, so the swap does
+   not shift the label beside it. */
+.morph-icon { position: relative; display: inline-grid; place-items: center; flex: none; }
+.morph-icon > span { position: absolute; inset: 0; display: grid; place-items: center; }

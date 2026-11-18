@@ -1,0 +1,487 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+# A push to a pull request makes the run for its previous head moot, so that
+# run is cancelled instead of holding runners — macOS ones especially, which
+# GitHub caps at five at a time per account — for a result nobody reads. Each
+# push to main keeps its run: there the group is the commit.
+concurrency:
+  group: ci-${{ github.event.pull_request.number || github.sha }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
+# The work is split so the wall clock is the slowest single job rather than the
+# sum of every check. Vitest deliberately uses one worker per process to keep
+# the memory-heavy app/editor suites stable, so CI shards the test files across
+# three isolated runners, and each benchmark engine deals its scenarios across
+# runners too. Sharding skips nothing — it only stops the checks from queueing
+# behind each other.
+jobs:
+  # Pull requests that touch only documentation cannot change what any job
+  # below checks, so those jobs skip instead of spending ~10 minutes proving
+  # it. They are skipped job by job rather than with a workflow-level `paths:`
+  # filter so every check still reports under its own name — a required check
+  # that never reports blocks the merge, while a skipped one satisfies it.
+  #
+  # The list is deliberately short: anything not named below is code. Some
+  # Markdown is not documentation — THIRD_PARTY_NOTICES.md is verified by
+  # `pnpm notices:check`, the skills under src-tauri/ are embedded and tested,
+  # and public/licenses/ ships in the app — so only top-level and .github/
+  # Markdown counts, never nested Markdown. Pushes to main always run
+  # everything, and so does a failure here: the jobs skip only on an explicit
+  # `false`.
+  changes:
+    runs-on: ubuntu-latest
+    outputs:
+      code: ${{ steps.classify.outputs.code }}
+      synara-pin: ${{ steps.classify.outputs.synara-pin }}
+      research-env: ${{ steps.classify.outputs.research-env }}
+    steps:
+      # A pull_request run checks out the PR merged into its base, so the merge
+      # commit's first parent is the base and the diff between them is exactly
+      # what the PR changes.
+      - if: github.event_name == 'pull_request'
+        uses: actions/checkout@v7
+        with:
+          fetch-depth: 2
+      - id: classify
+        env:
+          EVENT: ${{ github.event_name }}
+        run: |
+          if [ "$EVENT" != pull_request ]; then
+            echo "code=true" >> "$GITHUB_OUTPUT"
+            echo "synara-pin=true" >> "$GITHUB_OUTPUT"
+            echo "research-env=true" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+          # --no-renames lists a rename as its deletion plus its addition, so
+          # moving code into docs/ still counts as touching code.
+          changed=$(git -c core.quotePath=false diff --no-renames --name-only HEAD^1 HEAD)
+          code=false
+          synara_pin=false
+          research_env=false
+          [ -n "$changed" ] || code=true
+          while IFS= read -r path; do
+            [ -n "$path" ] || continue
+            [ "$path" != scripts/synara-runtime.json ] || synara_pin=true
+            # The environment's seeds include the bundled templates.
+            case "$path" in
+              research-env/* | src-tauri/templates/* | .github/workflows/ci.yml) research_env=true ;;
+            esac
+            case "$path" in
+              THIRD_PARTY_NOTICES.md) ;;
+              docs/* | .github/ISSUE_TEMPLATE/*) continue ;;
+              .github/*/*) ;;
+              .github/*.md) continue ;;
+              */*) ;;
+              *.md | LICENSE | NOTICE) continue ;;
+            esac
+            echo "code: $path"
+            code=true
+          done <<< "$changed"
+          echo "code=$code" | tee -a "$GITHUB_OUTPUT"
+          echo "synara-pin=$synara_pin" | tee -a "$GITHUB_OUTPUT"
+          echo "research-env=$research_env" | tee -a "$GITHUB_OUTPUT"
+
+  # A Synara pin move must keep the fork's history linear: the pin reachable
+  # from its declared branch, and the previous pin its ancestor, so a pin cut
+  # from a side branch cannot drop another lane's Synara change. The previous
+  # pin is the base's (the merge commit's first parent on a pull request, the
+  # prior main commit on a push). It fetches only the fork's commits and needs
+  # no install. Pushes to main always start it; the script exits at once when
+  # the pin did not move.
+  synara-pin:
+    needs: changes
+    if: ${{ !cancelled() && needs.changes.outputs.synara-pin != 'false' }}
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          fetch-depth: 2
+      - run: node scripts/check-synara-pin.mjs HEAD^1
+
+  test:
+    name: test (${{ matrix.shard }}/3)
+    needs: changes
+    # Skipping a matrix job skips it before the matrix expands, so it would
+    # report one unexpanded `test (${{ matrix.shard }}/3)` check instead of the
+    # three shards. The shards therefore always start and skip their steps.
+    if: ${{ !cancelled() }}
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        shard: [1, 2, 3]
+    env:
+      CODE: ${{ needs.changes.outputs.code != 'false' }}
+    steps:
+      - if: env.CODE == 'false'
+        run: echo "Documentation-only change; nothing to test."
+      - if: env.CODE == 'true'
+        uses: actions/checkout@v7
+      - if: env.CODE == 'true'
+        uses: ./.github/actions/setup-pnpm
+      # vitest.config.ts turns on Vitest's fs module cache. A checkout starts
+      # with it empty, so each shard restores the transforms its files last
+      # produced on main. Entries are keyed by content, so a stale one is never
+      # used, only left unread; the lockfile in the key drops the lot whenever
+      # dependencies move, which is also when Vitest would discard it.
+      #
+      # main saves once per shard per UTC day, not per commit: keyed by commit,
+      # the saves filled the repository's 10 GB Actions cache with entries
+      # (82 of them, 1.35 GB) of which only the newest per shard was ever read,
+      # and evicted the release Rust cache. A later commit's run that day finds
+      # its key taken and saves nothing; the modules it changed re-transform.
+      - if: env.CODE == 'true'
+        id: day
+        run: echo "value=$(date -u +%F)" >> "$GITHUB_OUTPUT"
+      - if: env.CODE == 'true'
+        uses: actions/cache/restore@v5
+        with:
+          path: node_modules/.experimental-vitest-cache
+          key: vitest-fs-${{ matrix.shard }}-${{ hashFiles('pnpm-lock.yaml') }}-${{ steps.day.outputs.value }}
+          restore-keys: vitest-fs-${{ matrix.shard }}-${{ hashFiles('pnpm-lock.yaml') }}-
+      - if: env.CODE == 'true'
+        run: pnpm vitest run --shard=${{ matrix.shard }}/3
+      # Like the Rust cache below: only main writes, pull requests read.
+      - if: env.CODE == 'true' && github.ref == 'refs/heads/main'
+        uses: actions/cache/save@v5
+        with:
+          path: node_modules/.experimental-vitest-cache
+          key: vitest-fs-${{ matrix.shard }}-${{ hashFiles('pnpm-lock.yaml') }}-${{ steps.day.outputs.value }}
+
+  # One passing run lets a test that fails one run in five through four times
+  # in five; the reopen-from-tree test passed its own pull request that way and
+  # then failed a fifth of main's runs. So a pull request's added and modified
+  # test files run five times here, beside a busy-looping process
+  # (scripts/burn-in.mjs). The job runs beside the others and nothing waits for
+  # it, so it costs runner minutes, not wall clock; a file whose first run
+  # shows five would outlast the WebKit shards (about 5 min) runs once, as the
+  # shards already run it.
+  new-tests:
+    needs: changes
+    if: ${{ !cancelled() && github.event_name == 'pull_request' && needs.changes.outputs.code != 'false' }}
+    runs-on: ubuntu-latest
+    steps:
+      # The merge commit's first parent is the base, as in `changes`.
+      - uses: actions/checkout@v7
+        with:
+          fetch-depth: 2
+      - id: files
+        run: |
+          node scripts/burn-in.mjs --list --base HEAD^1 | tee "$RUNNER_TEMP/new-tests.txt"
+          if [ -s "$RUNNER_TEMP/new-tests.txt" ]; then
+            echo "any=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "No added or modified test files."
+          fi
+      - if: steps.files.outputs.any == 'true'
+        uses: ./.github/actions/setup-pnpm
+      # Every shard runs some App suites (the shard sequencer spreads them),
+      # so one shard's transforms cover most of what any test file imports.
+      - if: steps.files.outputs.any == 'true'
+        uses: actions/cache/restore@v5
+        with:
+          path: node_modules/.experimental-vitest-cache
+          key: vitest-fs-1-${{ hashFiles('pnpm-lock.yaml') }}-${{ github.sha }}
+          restore-keys: vitest-fs-1-${{ hashFiles('pnpm-lock.yaml') }}-
+      - if: steps.files.outputs.any == 'true'
+        run: node scripts/burn-in.mjs --base HEAD^1 --runs 5 --budget 300
+
+  # The literature Worker is its own pnpm project with its own lockfile and is
+  # not part of the root install, so nothing above sees it. Its tests run on
+  # `@cloudflare/vitest-pool-workers`, which starts a local workerd and
+  # simulates the Durable Object and rate-limit bindings from `wrangler.jsonc` —
+  # no Cloudflare account, API token, or `wrangler login` is involved. Only a
+  # deploy needs credentials, and that is not run here.
+  literature-worker:
+    needs: changes
+    if: ${{ !cancelled() && needs.changes.outputs.code != 'false' }}
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+      - uses: ./.github/actions/setup-pnpm
+        with:
+          project: literature-worker
+      - run: pnpm --dir literature-worker typecheck
+      - run: pnpm --dir literature-worker test
+
+  # The Open Slide presentation server (tools/open-slide-runtime) is its own
+  # pnpm project, staged into the app by prepare-presentation-runtime.mjs.
+  # Locally this is the `open-slide-runtime` mise stage.
+  open-slide-runtime:
+    needs: changes
+    if: ${{ !cancelled() && needs.changes.outputs.code != 'false' }}
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+      - uses: ./.github/actions/setup-pnpm
+        with:
+          project: tools/open-slide-runtime
+      - run: pnpm --dir tools/open-slide-runtime test
+      # Stage the pruned runtime as a release does; staging fails when the
+      # pruned tree can no longer serve the editor, a deck, or an export.
+      - run: node scripts/prepare-presentation-runtime.mjs
+
+  lint-and-build:
+    needs: changes
+    if: ${{ !cancelled() && needs.changes.outputs.code != 'false' }}
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+      - uses: ./.github/actions/setup-pnpm
+      # These only read the checkout (the build writes nothing but dist/), so
+      # they run side by side on the runner's four cores, each with its own
+      # log, and the job fails at the end of the group if any of them failed.
+      - parallel:
+          - run: pnpm lint
+          - run: pnpm knip
+          # Locally part of the `lint` mise stage: every table in
+          # docs/performance.md and docs/performance-history.md is accounted for in
+          # docs/performance-data/manifest.json, and each benchmark table is
+          # recomputed from the raw runs it names.
+          - run: pnpm perf:evidence
+          - run: pnpm build
+          # `pnpm check` gained a `notices` stage that CI did not run, so a
+          # dependency added without regenerating THIRD_PARTY_NOTICES.md would
+          # only fail locally. Reads the installed trees plus `cargo metadata`;
+          # it does not build. The Synara sidecar is absent here, so its
+          # section is carried over rather than regenerated — the npm and
+          # crates closures are what this gate protects.
+          - name: Check the third-party notices are in sync
+            run: pnpm notices:check
+      # Locally this is the `i18n-check` mise stage; it was the one stage of
+      # `pnpm check` that CI never ran, so catalog drift passed here and only
+      # failed on a contributor's machine.
+      #
+      # `pnpm i18n:check` re-extracts the catalogs and then asserts `git diff
+      # --exit-code -- src/locales`, so it is only meaningful on a clean
+      # checkout — which is exactly what actions/checkout gives us, and why this
+      # step must come after everything above rather than beside it:
+      # extraction and `lingui compile` rewrite files under `src/locales/`, and
+      # nothing may run against that rewritten tree.
+      - name: Check the i18n catalogs are in sync
+        run: pnpm i18n:check
+
+  # The bench page every benchmark shard below measures, built once here
+  # rather than by each shard, so the macOS shards (the run's slowest jobs,
+  # on runners capped at five per account) no longer spend about 40 s each on
+  # it. The build is the same bytes on Linux and macOS: `--build-only` prints
+  # its hash and `--dist` repeats it in each shard's log. The shards wait for
+  # this job through .github/actions/bench-page instead of `needs:`, so they
+  # set up while it builds.
+  bench-page:
+    needs: changes
+    if: ${{ !cancelled() && needs.changes.outputs.code != 'false' }}
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+      - uses: ./.github/actions/setup-pnpm
+      - run: pnpm perf:bench --build-only "$RUNNER_TEMP/bench-page"
+      # Overwrite: a full re-run uploads the same commit's build again.
+      - uses: actions/upload-artifact@v7
+        with:
+          name: bench-page
+          path: ${{ runner.temp }}/bench-page
+          retention-days: 1
+          overwrite: true
+
+  # Deterministic interaction benchmark (docs/performance.md, "Interaction
+  # benchmark and CI gate"). It measures the bench-page job's build, drives
+  # typing, file switching, PDF and scrolling scenarios in the runner's
+  # preinstalled Google Chrome, and fails when a gated per-interaction count
+  # exceeds its ceiling in scripts/perf-bench/budgets.json. Which counts are
+  # gated and which are report-only (frame-timing-dependent) is documented
+  # there. No Tauri host is involved; the page answers the app's IPC from an
+  # in-memory fixture project.
+  # `--layout` then checks geometry jsdom cannot (scripts/perf-bench/layout-checks.mjs)
+  # on the same build.
+  #
+  # The scenarios run one after another for minutes, so `--shard` deals them
+  # (then the layout checks) round-robin across runners; one added later lands
+  # in a shard without being named here. Each shard has a runner to itself:
+  # two browsers on one runner would put the frame-timing noise the ceilings
+  # leave room for back into the gated counts. A matrix job skipped for a
+  # documentation-only change reports one unexpanded name, which is harmless
+  # here because the `perf-bench` job below is the check that reports the
+  # result.
+  perf-bench-shard:
+    name: perf-bench (${{ matrix.shard }}/2)
+    needs: changes
+    if: ${{ !cancelled() && needs.changes.outputs.code != 'false' }}
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        shard: [1, 2]
+    steps:
+      - uses: actions/checkout@v7
+      - uses: ./.github/actions/setup-pnpm
+      - uses: ./.github/actions/bench-page
+      # A failed scenario or layout check writes a screenshot to the temporary
+      # directory, which dies with the runner. Pointing TMPDIR at the runner's
+      # temp keeps it for the upload below, as bench-harness.yml does.
+      - run: |
+          mkdir -p "$TMPDIR"
+          pnpm perf:bench --check --layout --shard ${{ matrix.shard }}/2 --dist "$RUNNER_TEMP/bench-page"
+        env:
+          TMPDIR: ${{ runner.temp }}/perf-bench
+      - if: failure()
+        uses: actions/upload-artifact@v7
+        with:
+          name: perf-bench-${{ matrix.shard }}-screenshots
+          path: ${{ runner.temp }}/perf-bench/lattice-perf-bench-*.png
+          if-no-files-found: ignore
+
+  # The one check that reports the Chromium benchmark, under the name it had
+  # before it was sharded.
+  perf-bench:
+    needs: [changes, perf-bench-shard]
+    if: ${{ !cancelled() && needs.changes.outputs.code != 'false' }}
+    runs-on: ubuntu-latest
+    steps:
+      - env:
+          SHARDS: ${{ needs.perf-bench-shard.result }}
+        run: |
+          echo "perf-bench shards: $SHARDS"
+          [ "$SHARDS" = success ]
+
+  # The same scenarios in WebKit, the engine release builds render in, against
+  # scripts/perf-bench/budgets-webkit.json. WebKit pays several times
+  # Chromium's cost for every element it styles and lays out, so a change that
+  # puts far more of the document in the DOM (or writes to it far more often)
+  # costs WebKit users first. Playwright's macOS WebKit build is the closest
+  # one to the system WKWebView a runner can drive headless.
+  #
+  # Two shards, not more: GitHub runs at most five macOS jobs at once across
+  # the account, and every lane's run needs them. With `rust` this is three
+  # per run (it was two). A third shard finished about a minute sooner, but
+  # with four macOS jobs per run, `rust` queued for five minutes behind other
+  # lanes; and each shard pays ~65 s of setup whatever its share.
+  perf-bench-webkit-shard:
+    name: perf-bench-webkit (${{ matrix.shard }}/2)
+    needs: changes
+    if: ${{ !cancelled() && needs.changes.outputs.code != 'false' }}
+    runs-on: macos-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        shard: [1, 2]
+    steps:
+      - uses: actions/checkout@v7
+      - uses: ./.github/actions/setup-pnpm
+      - run: pnpm exec playwright-core install webkit
+      - uses: ./.github/actions/bench-page
+      # Screenshots of a failure survive for the upload, as in perf-bench-shard.
+      - run: |
+          mkdir -p "$TMPDIR"
+          pnpm perf:bench --check --layout --engine webkit --shard ${{ matrix.shard }}/2 --dist "$RUNNER_TEMP/bench-page"
+        env:
+          TMPDIR: ${{ runner.temp }}/perf-bench
+      - if: failure()
+        uses: actions/upload-artifact@v7
+        with:
+          name: perf-bench-webkit-${{ matrix.shard }}-screenshots
+          path: ${{ runner.temp }}/perf-bench/lattice-perf-bench-*.png
+          if-no-files-found: ignore
+
+  # The one check that reports the WebKit benchmark, under its old name.
+  perf-bench-webkit:
+    needs: [changes, perf-bench-webkit-shard]
+    if: ${{ !cancelled() && needs.changes.outputs.code != 'false' }}
+    runs-on: ubuntu-latest
+    steps:
+      - env:
+          SHARDS: ${{ needs.perf-bench-webkit-shard.result }}
+        run: |
+          echo "perf-bench-webkit shards: $SHARDS"
+          [ "$SHARDS" = success ]
+
+  rust:
+    needs: changes
+    if: ${{ !cancelled() && needs.changes.outputs.code != 'false' }}
+    runs-on: macos-latest
+    steps:
+      - uses: actions/checkout@v7
+      # Installs the Rust release rust-toolchain.toml pins, with its components and target.
+      - run: rustup toolchain install
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: src-tauri
+          # Writing the cache costs ~25s on every run. Only the main branch can
+          # produce a cache that later runs reuse, so pull requests read it and
+          # skip the upload.
+          save-if: ${{ github.ref == 'refs/heads/main' }}
+      # Cargo compiles Tauri's resource manifest, but these tests never launch
+      # the bundled Synara runtime. The release workflow prepares the real
+      # pinned resources before packaging.
+      - name: Stub bundled runtime resources for compilation
+        run: |
+          mkdir -p src-tauri/synara-runtime
+          echo stub > src-tauri/synara-runtime/placeholder.txt
+      - run: cargo fmt --manifest-path src-tauri/Cargo.toml --all -- --check
+      - run: cargo test --manifest-path src-tauri/Cargo.toml
+      - run: cargo clippy --manifest-path src-tauri/Cargo.toml --all-targets --all-features -- -D warnings
+
+  headless-media:
+    needs: changes
+    if: ${{ !cancelled() && needs.changes.outputs.code != 'false' }}
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+      - run: rustup toolchain install
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: server
+          save-if: ${{ github.ref == 'refs/heads/main' }}
+      - run: cargo fmt --manifest-path server/Cargo.toml --check
+      - run: cargo build --locked --manifest-path server/Cargo.toml
+      - name: Exercise authenticated media against the real display-free server
+        run: python3 server/tests/media_streaming.py
+
+  # The research environment's verifier, run in the pinned TeX Live image its
+  # Harbor tasks use, since its scores depend on that exact toolchain: unit
+  # tests (the TeX ones build real papers), every seed built twice in
+  # different folders to prove the PDF is reproducible there, and a sample
+  # library admitted through its self-tests with --strict, so a cheat that
+  # gets past a verifier fails the check. The 2.6 GB image is only pulled
+  # when the environment, its seeds or this workflow change.
+  research-env:
+    needs: changes
+    if: ${{ !cancelled() && needs.changes.outputs.research-env != 'false' }}
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+      - name: Build the verifier's toolchain image
+        run: docker build --target toolchain -t lattice-env-toolchain research-env/lattice_env/harbor_templates/environment
+      - name: Unit tests against the pinned toolchain
+        run: docker run --rm -v "$PWD:/repo" -w /repo/research-env lattice-env-toolchain python3 -m unittest discover -s tests -v
+      # Three seeds cover both families' operators in a few minutes; every
+      # seed is still built twice by the unit tests above. The folders are
+      # made here first, so the root-owned container writes into folders
+      # the steps after it can still use.
+      - name: Generate a sample library and admit it through its self-tests
+        run: |
+          mkdir -p .tmp/tasks .tmp/sample .tmp/jobs
+          docker run --rm -v "$PWD:/repo" -w /repo/research-env lattice-env-toolchain \
+            python3 -m lattice_env generate --out /repo/.tmp/tasks --per-operator 1 --jobs 4 --strict \
+              --seed tutorial --seed sparse-routing --seed plain-notes
+      # Harbor itself, on two tasks of each family: its oracle agent (the
+      # reference repair) must score 1 and its nop agent (the untouched
+      # paper) 0, read back from the job folders by the calibration tool.
+      # The task images reuse the toolchain layers built above.
+      - name: Run a sample through Harbor's oracle and nop agents
+        run: |
+          for family in build-repair reference-hygiene; do
+            ls -d .tmp/tasks/${family}__* | head -2 | xargs -I{} cp -R {} .tmp/sample/
+          done
+          for agent in oracle nop; do
+            pipx run --spec harbor==0.24.0 harbor run -p .tmp/sample -a "$agent" \
+              -o .tmp/jobs --job-name "$agent" -n 4 -y -q
+          done
+          cd research-env
+          python3 -m lattice_env calibrate ../.tmp/jobs/oracle --expect-reward 1
+          python3 -m lattice_env calibrate ../.tmp/jobs/nop --expect-reward 0

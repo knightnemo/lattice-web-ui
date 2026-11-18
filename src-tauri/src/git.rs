@@ -1,0 +1,552 @@
+//! Git for the project folder: its status and the version timeline (history,
+//! per-file diffs, restore, and the automatic commits that record versions).
+//!
+//! Everything runs the user's own git with terminal prompts disabled, so
+//! their SSH agent or credential helper applies and nothing can block.
+
+use crate::commands;
+use crate::project;
+use serde::Serialize;
+use std::collections::{HashMap, HashSet};
+use std::fs;
+use std::path::{Component, Path, PathBuf};
+use std::process::{Command, Output};
+use std::sync::{LazyLock, Mutex, PoisonError};
+use std::time::{Duration, Instant};
+
+mod compare;
+mod parse;
+
+pub use compare::{compare_file, compare_files, write_version};
+use parse::{parse_log, parse_porcelain_v2};
+
+/// File extensions the version timeline always treats as binary, so we never
+/// try to render their blobs as text diffs.
+const BINARY_EXTENSIONS: &[&str] = &["pdf", "png", "jpg", "jpeg", "gif", "zip"];
+
+/// Directories inside a project that belong to the tools, not to the writing.
+///
+/// `.research/` is Lattice's own: Overleaf sync state, the search index, agent
+/// sessions and caches. Legacy `.omp/` folders may hold old MCP server config
+/// — whose `env` is where someone puts an API key, which is reason enough on
+/// its own never to commit it.
+const INTERNAL_DIRS: &[&str] = &[".research", ".omp"];
+
+fn is_internal_path(path: &str) -> bool {
+    let path = path.trim_start_matches("./");
+    INTERNAL_DIRS.iter().any(|dir| path == *dir || path.starts_with(&format!("{dir}/")))
+}
+
+/// Keep the tools' own directories out of version history.
+///
+/// Without this every Overleaf sync writes `.research/overleaf.json`, so
+/// `git add -A` records a version whose only change is a timestamp and a hash
+/// table — the timeline fills up with the app talking to itself instead of
+/// with the user's edits — and an MCP server's API key lands in the repository.
+///
+/// Best effort throughout: a project that cannot be ignored still commits.
+fn ensure_internal_ignored(root: &Path) {
+    let present: Vec<&str> =
+        INTERNAL_DIRS.iter().copied().filter(|dir| root.join(dir).exists()).collect();
+    // Nothing to ignore yet: a project the tools have not written state into
+    // should not gain a .gitignore, and a commit it triggers should stay a
+    // no-op on an otherwise clean tree.
+    if present.is_empty() {
+        return;
+    }
+    let ignore_path = root.join(".gitignore");
+    let existing = fs::read_to_string(&ignore_path).unwrap_or_default();
+    let mut next = existing.clone();
+    for dir in &present {
+        let covered = next
+            .lines()
+            .map(str::trim)
+            .any(|line| line == *dir || line == format!("{dir}/") || line == format!("/{dir}/"));
+        if !covered {
+            if !next.is_empty() && !next.ends_with('\n') {
+                next.push('\n');
+            }
+            next.push_str(&format!("{dir}/\n"));
+        }
+    }
+    if next != existing {
+        let _ = fs::write(&ignore_path, next);
+    }
+    // A project that was already committing these keeps doing so until the
+    // files are dropped from the index; .gitignore alone does not untrack.
+    for dir in &present {
+        let tracked = git_output(root, &["ls-files", "-z", "--", dir]).unwrap_or_default();
+        if nul_separated(&tracked).next().is_some() {
+            let _ = git_run(root, &["rm", "-r", "--cached", "--quiet", "--", dir]);
+        }
+    }
+}
+
+pub fn status(root: &Path) -> Result<GitStatus, String> {
+    let available = commands::available("git");
+    if !available || !is_repository(root) {
+        return Ok(GitStatus { available, repository: false, ..parse_porcelain_v2("") });
+    }
+    // The frontend polls this every couple of seconds, so subprocess count
+    // matters: one porcelain-v2 spawn carries every file's status. `-z`
+    // sidesteps C-style path quoting entirely.
+    let porcelain = git_output(root, &["status", "--porcelain=v2", "-z", "-uall"])?;
+    let mut status = parse_porcelain_v2(&porcelain);
+    (status.remote, status.remote_url) = cached_remote(root);
+    Ok(status)
+}
+
+/// A remote's name and URL.
+type Remote = (Option<String>, Option<String>);
+
+/// Remote name/URL memo with a short TTL. Remotes essentially never change
+/// mid-session (Lattice never edits them), so the 2-second status poll does not
+/// need to re-spawn `git remote` + `git remote get-url` every tick.
+static REMOTE_CACHE: LazyLock<Mutex<HashMap<PathBuf, (Instant, Remote)>>> =
+    LazyLock::new(|| Mutex::new(HashMap::new()));
+const REMOTE_CACHE_TTL: Duration = Duration::from_secs(30);
+
+/// Forget the remotes of projects no window has open.
+pub(crate) fn retain_open_remotes(open: &HashSet<PathBuf>) {
+    REMOTE_CACHE
+        .lock()
+        .unwrap_or_else(PoisonError::into_inner)
+        .retain(|root, _| open.contains(root));
+}
+
+fn cached_remote(root: &Path) -> Remote {
+    if let Some((resolved_at, remote)) =
+        REMOTE_CACHE.lock().unwrap_or_else(PoisonError::into_inner).get(root)
+    {
+        if resolved_at.elapsed() < REMOTE_CACHE_TTL {
+            return remote.clone();
+        }
+    }
+    let remote = primary_remote(root);
+    let remote_url = remote
+        .as_ref()
+        .and_then(|name| git_output(root, &["remote", "get-url", name]).ok())
+        .map(|value| value.trim().to_string())
+        .filter(|value| !value.is_empty());
+    let resolved = (remote, remote_url);
+    REMOTE_CACHE
+        .lock()
+        .unwrap_or_else(PoisonError::into_inner)
+        .insert(root.to_path_buf(), (Instant::now(), resolved.clone()));
+    resolved
+}
+
+pub fn init(root: &Path) -> Result<GitStatus, String> {
+    require_git()?;
+    if !is_repository(root) {
+        git_run(root, &["init"])?;
+    }
+    ensure_internal_ignored(root);
+    if !has_head(root) {
+        // Give the version timeline a starting point. Best effort: a failure
+        // here (e.g. a hook) must not undo the successful init.
+        let _ = auto_commit(root, "Initialize version tracking", None);
+    }
+    status(root)
+}
+
+pub fn log(root: &Path, limit: usize) -> Result<Vec<GitLogEntry>, String> {
+    if !commands::available("git") || !is_repository(root) || !has_head(root) {
+        return Ok(Vec::new());
+    }
+    let limit_arg = format!("--max-count={limit}");
+    let format = "--pretty=format:%x1e%H%x1f%h%x1f%an%x1f%aI%x1f%s";
+    let args = ["log", "--no-ext-diff", "--no-textconv", "--name-status", "-M", &limit_arg, format];
+    Ok(parse_log(&git_output(root, &args)?))
+}
+
+pub fn show_diff(root: &Path, rev: &str, path: &str) -> Result<GitFileDiff, String> {
+    ensure_repository(root)?;
+    let rev = validate_rev(rev)?;
+    let relative = normalize_relative(path)?;
+    project::safe_path(root, &relative)?;
+    if is_binary_path(&relative) {
+        return Ok(GitFileDiff { before: None, after: None, binary: true });
+    }
+    // `rev^:path` fails both when rev has no parent and when the file was
+    // added in rev; either way there is no "before" side.
+    let before = show_blob_bytes(root, &format!("{rev}^:{relative}"));
+    let after = show_blob_bytes(root, &format!("{rev}:{relative}"));
+    Ok(GitFileDiff::from_blobs(before, after))
+}
+
+pub fn restore_file(root: &Path, rev: &str, path: &str) -> Result<(), String> {
+    validate_restore(root, rev, Some(path))?;
+    let rev = validate_rev(rev)?;
+    let relative = normalize_relative(path)?;
+    git_run(root, &["restore", "--source", &rev, "--worktree", "--", &relative])
+}
+
+/// Validate before a caller records a recovery version; a bad restore request
+/// must not create a commit merely to discover its path or revision is invalid.
+pub fn validate_restore(root: &Path, rev: &str, path: Option<&str>) -> Result<(), String> {
+    ensure_repository(root)?;
+    let rev = validate_rev(rev)?;
+    if let Some(path) = path {
+        let relative = normalize_relative(path)?;
+        project::safe_path(root, &relative)?;
+        if git_run(root, &["cat-file", "-e", &format!("{rev}:{relative}")]).is_err() {
+            return Err(format!("{relative} did not exist at revision {rev}."));
+        }
+        Ok(())
+    } else {
+        git_run(root, &["rev-parse", "--verify", &format!("{rev}^{{commit}}")])
+    }
+}
+
+/// Forward-only restore: make the worktree match `rev`, then commit that as a
+/// new snapshot on top of the current history. Untracked files (like
+/// `.research/`) are never touched.
+pub fn restore_project(root: &Path, rev: &str) -> Result<String, String> {
+    validate_restore(root, rev, None)?;
+    let rev = validate_rev(rev)?;
+    git_run(root, &["restore", "--source", &rev, "--worktree", "--", "."])?;
+    // `git restore` never deletes, so drop tracked files that did not exist
+    // at rev. Untracked files are absent from `ls-files` and stay intact.
+    let at_rev = git_output(root, &["ls-tree", "-r", "--name-only", "-z", &rev])?;
+    let at_rev = nul_separated(&at_rev).collect::<HashSet<_>>();
+    for name in nul_separated(&git_output(root, &["ls-files", "-z"])?) {
+        if !at_rev.contains(name) {
+            let _ = fs::remove_file(root.join(name));
+        }
+    }
+    let short = rev_parse(root, &["--short", &rev])?;
+    match auto_commit(root, &format!("Restore project to {short}"), None)? {
+        Some(hash) => Ok(hash),
+        None => rev_parse(root, &["HEAD"]),
+    }
+}
+
+/// Stage everything in the project folder and commit it, quietly doing
+/// nothing when git is missing, the folder is not a repository, or the folder
+/// is clean. Always supplies a fallback identity via `-c` so commits succeed
+/// on machines with no `user.email` configured.
+///
+/// A project can sit inside a larger repository, whose other changes, staged
+/// or not, are not the paper's to commit: every step is limited to the folder.
+pub fn auto_commit(
+    root: &Path, message: &str, author_name: Option<&str>,
+) -> Result<Option<String>, String> {
+    if !commands::available("git") || !is_repository(root) {
+        return Ok(None);
+    }
+    let message = message.trim();
+    if message.is_empty() {
+        return Err("Commit message cannot be empty.".to_string());
+    }
+    ensure_internal_ignored(root);
+    git_run(root, &["add", "-A", "--", "."])?;
+    if git_output(root, &["status", "--porcelain", "--", "."])?.trim().is_empty() {
+        return Ok(None);
+    }
+    let identity = author_name
+        .map(sanitize_author_name)
+        .filter(|name| !name.is_empty())
+        .unwrap_or_else(|| "Lattice".to_string());
+    let user_name = format!("user.name={identity}");
+    let mut command = git_command_running_hooks(root);
+    let prefix = project_prefix(root)?;
+    let folder_index = (!prefix.is_empty()).then(|| FolderIndex::new(root, &prefix)).transpose()?;
+    if let Some(index) = &folder_index {
+        command.env("GIT_INDEX_FILE", &index.0);
+    }
+    command.args(["-c", &user_name, "-c", "user.email=lattice@local", "commit", "-m", message]);
+    if author_name.is_some() {
+        let email = format!("{}@lattice.local", author_email_slug(&identity));
+        command
+            .arg("--author")
+            .arg(format!("{identity} <{email}>"))
+            .env("GIT_COMMITTER_NAME", &identity)
+            .env("GIT_COMMITTER_EMAIL", &email);
+    }
+    let output = command.output().map_err(|error| format!("Could not run git: {error}"))?;
+    if !output.status.success() {
+        return Err(commands::stderr_or(&output, "git commit failed."));
+    }
+    rev_parse(root, &["HEAD"]).map(Some)
+}
+
+/// What a project inside a larger repository commits: the last commit with
+/// only the project's folder replaced by what is staged for it. `commit --
+/// <folder>` would not do: it takes the folder from the working tree, which
+/// puts back tool state [`ensure_internal_ignored`] has just untracked.
+/// Whatever else is staged in the repository stays staged, and the folder's
+/// staged entries already match the commit this makes.
+struct FolderIndex(PathBuf);
+
+impl FolderIndex {
+    fn new(root: &Path, prefix: &str) -> Result<Self, String> {
+        let prefix = format!("--prefix={prefix}");
+        let folder = git_output(root, &["write-tree", &prefix])?;
+        let path = std::env::temp_dir().join(format!("lattice-index-{}", uuid::Uuid::new_v4()));
+        let index = FolderIndex(path);
+        let run = |args: &[&str]| {
+            let output = git_command(root).env("GIT_INDEX_FILE", &index.0).args(args).output();
+            match output {
+                Ok(output) if output.status.success() => Ok(()),
+                Ok(output) => Err(commands::stderr_or(&output, "git could not stage the project.")),
+                Err(error) => Err(format!("Could not run git: {error}")),
+            }
+        };
+        if has_head(root) {
+            run(&["read-tree", "HEAD"])?;
+            run(&["rm", "-r", "--cached", "--quiet", "--ignore-unmatch", "--", "."])?;
+        }
+        run(&["read-tree", &prefix, folder.trim()])?;
+        Ok(index)
+    }
+}
+
+impl Drop for FolderIndex {
+    fn drop(&mut self) {
+        let _ = fs::remove_file(&self.0);
+    }
+}
+
+fn require_git() -> Result<(), String> {
+    if commands::available("git") {
+        Ok(())
+    } else {
+        Err("git is not installed or not on PATH.".to_string())
+    }
+}
+
+fn ensure_repository(root: &Path) -> Result<(), String> {
+    require_git()?;
+    if !is_repository(root) {
+        return Err("This project is not inside a Git repository.".to_string());
+    }
+    Ok(())
+}
+
+fn is_repository(root: &Path) -> bool {
+    rev_parse(root, &["--is-inside-work-tree"]).is_ok_and(|value| value == "true")
+}
+
+/// The project folder relative to its repository; empty only at its top level.
+pub fn project_prefix(root: &Path) -> Result<String, String> {
+    rev_parse(root, &["--show-prefix"])
+}
+
+fn has_head(root: &Path) -> bool {
+    git_run(root, &["rev-parse", "--verify", "HEAD"]).is_ok()
+}
+
+/// `origin` when it exists, else the first remote git lists.
+fn primary_remote(root: &Path) -> Option<String> {
+    let remotes = git_output(root, &["remote"]).ok()?;
+    let names = remotes.lines().map(str::trim).filter(|line| !line.is_empty()).collect::<Vec<_>>();
+    names.iter().find(|name| **name == "origin").or(names.first()).map(|name| name.to_string())
+}
+
+/// A project path as git's `rev:path` and pathspec syntax expect it: plain
+/// names joined by `/`. The traversal guard is the project one, so a name that
+/// merely contains `..` (`a..b.tex`) is accepted while a `..` segment is not.
+fn normalize_relative(path: &str) -> Result<String, String> {
+    let relative = path.trim().replace('\\', "/");
+    let invalid = || format!("Invalid project path: {path}");
+    if !project::stays_inside(Path::new(&relative)) {
+        return Err(invalid());
+    }
+    let names = Path::new(&relative)
+        .components()
+        .filter_map(|part| match part {
+            Component::Normal(name) => name.to_str(),
+            _ => None,
+        })
+        .collect::<Vec<_>>();
+    if names.is_empty() {
+        return Err(invalid());
+    }
+    Ok(names.join("/"))
+}
+
+fn validate_rev(rev: &str) -> Result<String, String> {
+    let trimmed = rev.trim();
+    if !(4..=40).contains(&trimmed.len()) || !trimmed.chars().all(|ch| ch.is_ascii_hexdigit()) {
+        return Err("Invalid revision: expected a commit hash.".to_string());
+    }
+    Ok(trimmed.to_string())
+}
+
+fn is_binary_path(relative: &str) -> bool {
+    Path::new(relative).extension().and_then(|extension| extension.to_str()).is_some_and(
+        |extension| BINARY_EXTENSIONS.contains(&extension.to_ascii_lowercase().as_str()),
+    )
+}
+
+fn sanitize_author_name(name: &str) -> String {
+    name.chars().filter(|ch| !matches!(ch, '<' | '>' | '"')).collect::<String>().trim().to_string()
+}
+
+fn author_email_slug(name: &str) -> String {
+    let slug = name
+        .to_ascii_lowercase()
+        .chars()
+        .map(|ch| if ch.is_ascii_alphanumeric() { ch } else { '-' })
+        .collect::<String>();
+    let slug = slug.trim_matches('-');
+    if slug.is_empty() { "author" } else { slug }.to_string()
+}
+
+fn nul_separated(text: &str) -> impl Iterator<Item = &str> {
+    text.split('\0').filter(|name| !name.is_empty())
+}
+
+fn show_blob_bytes(root: &Path, spec: &str) -> Option<Vec<u8>> {
+    run_git(root, &["show", spec])
+        .ok()
+        .filter(|output| output.status.success())
+        .map(|output| output.stdout)
+}
+
+/// The `user.name` Git would sign a commit in `root` with (the repository's
+/// own setting, else the global one), or None when git is missing or no name
+/// is configured. Outside a repository `git config` reads only the global and
+/// system files, which is the right answer for a folder without history.
+pub fn user_name(root: &Path) -> Option<String> {
+    if !commands::available("git") {
+        return None;
+    }
+    let output = run_git(root, &["config", "--get", "user.name"]).ok()?;
+    let name = String::from_utf8(output.stdout).ok()?;
+    let name = name.trim();
+    (output.status.success() && !name.is_empty()).then(|| name.to_string())
+}
+
+/// Git in `root` with the repository's own config unable to make it run a
+/// program. Opening a folder copied or unpacked from elsewhere polls `git
+/// status`, and its `.git/config` is as untrusted as the folder: without these
+/// a `core.fsmonitor` command runs on every poll, and `log.showSignature` with
+/// a `gpg.program` runs on reading the history — even with automatic builds
+/// turned off. Hooks are pointed at nothing for the same reason.
+///
+/// Diff-producing calls also pass `--no-ext-diff --no-textconv` themselves:
+/// those are not global options, and `-c diff.external=` would make any patch
+/// output fail outright rather than fall back to git's own diff.
+///
+/// Filter drivers (`filter.<name>.clean`/`smudge`) are not covered: their
+/// names come from the repository's attributes, so no fixed setting turns
+/// them off.
+fn git_command(root: &Path) -> Command {
+    let mut command = git_command_running_hooks(root);
+    command.args(["-c", "core.hooksPath=/dev/null"]);
+    command
+}
+
+/// [`git_command`] for the one call that should still run the repository's
+/// hooks: a version Lattice commits is a commit like any other, and the
+/// user's pre-commit and commit-msg hooks are part of how they commit.
+fn git_command_running_hooks(root: &Path) -> Command {
+    let mut command = commands::command("git");
+    command.current_dir(root).env("GIT_TERMINAL_PROMPT", "0").env("GIT_OPTIONAL_LOCKS", "0");
+    command.args(["-c", "core.fsmonitor=false", "-c", "log.showSignature=false"]);
+    command
+}
+
+fn run_git(root: &Path, args: &[&str]) -> Result<Output, String> {
+    git_command(root).args(args).output().map_err(|error| format!("Could not run git: {error}"))
+}
+
+/// Stdout of a successful run, exactly as printed.
+fn git_output(root: &Path, args: &[&str]) -> Result<String, String> {
+    let output = run_git(root, args)?;
+    if !output.status.success() {
+        return Err(commands::stderr_or(&output, &format!("git {} failed.", args.join(" "))));
+    }
+    String::from_utf8(output.stdout).map_err(|error| format!("Invalid git output: {error}"))
+}
+
+fn rev_parse(root: &Path, args: &[&str]) -> Result<String, String> {
+    let args = [&["rev-parse"], args].concat();
+    git_output(root, &args).map(|value| value.trim().to_string())
+}
+
+fn git_run(root: &Path, args: &[&str]) -> Result<(), String> {
+    let output = run_git(root, args)?;
+    if output.status.success() {
+        return Ok(());
+    }
+    // Some commands explain a failure on stdout only.
+    let stdout = String::from_utf8_lossy(&output.stdout).trim().to_string();
+    let fallback =
+        if stdout.is_empty() { format!("git {} failed.", args.join(" ")) } else { stdout };
+    Err(commands::stderr_or(&output, &fallback))
+}
+
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct GitFileStatus {
+    pub path: String,
+    pub status: String,
+    pub staged: bool,
+    pub unstaged: bool,
+}
+
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct GitStatus {
+    pub available: bool,
+    pub repository: bool,
+    pub branch: Option<String>,
+    pub remote: Option<String>,
+    pub remote_url: Option<String>,
+    pub upstream: Option<String>,
+    pub ahead: u32,
+    pub behind: u32,
+    pub files: Vec<GitFileStatus>,
+}
+
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct GitLogFile {
+    pub path: String,
+    /// "added" | "modified" | "deleted" | "renamed"
+    pub kind: String,
+    /// Where a renamed or copied file was before.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub old_path: Option<String>,
+}
+
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct GitLogEntry {
+    pub hash: String,
+    pub short_hash: String,
+    pub author_name: String,
+    /// ISO-8601 author date.
+    pub timestamp: String,
+    pub message: String,
+    pub files: Vec<GitLogFile>,
+}
+
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct GitFileDiff {
+    pub before: Option<String>,
+    pub after: Option<String>,
+    pub binary: bool,
+}
+
+impl GitFileDiff {
+    /// Two sides read as bytes: text, unless either holds a NUL.
+    fn from_blobs(before: Option<Vec<u8>>, after: Option<Vec<u8>>) -> Self {
+        if [&before, &after]
+            .iter()
+            .any(|blob| blob.as_ref().is_some_and(|bytes| bytes.contains(&0)))
+        {
+            return GitFileDiff { before: None, after: None, binary: true };
+        }
+        let text =
+            |blob: Option<Vec<u8>>| blob.map(|bytes| String::from_utf8_lossy(&bytes).into_owned());
+        GitFileDiff { before: text(before), after: text(after), binary: false }
+    }
+}
+
+#[cfg(test)]
+mod tests;

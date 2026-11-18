@@ -1,0 +1,193 @@
+name: Release cache
+
+# Keeps the expensive release inputs warm on the default branch so tag-scoped
+# Release runs can restore them: Rust dependencies and the prepared Synara
+# runtime.
+#
+# Why this exists: Actions scopes every cache entry to the ref that wrote it,
+# and Release runs on a tag. Each release is therefore a brand new scope that
+# can never see the previous release's cache — only the default branch's. The
+# only Rust cache main used to hold came from CI's `rust` job, which is a debug
+# build for the host under a different key, so every release recompiled ~500
+# dependencies from scratch: 17 minutes of a 23-minute release.
+#
+# This is a cache warmer, not a gate. It fails open — a miss only costs the
+# next release the work it was already paying.
+on:
+  push:
+    branches: [main]
+    # Frontend-only pushes cannot change what this builds. The restore key
+    # ignores the lockfile hash, so releases still restore a cache warmed
+    # several commits ago; it only has to be refreshed when the Rust inputs
+    # actually move.
+    paths:
+      - "src-tauri/Cargo.toml"
+      - "src-tauri/Cargo.lock"
+      - "rust-toolchain.toml"
+      - "scripts/synara-runtime.json"
+      - "scripts/synara-runtime-inputs.mjs"
+      - "scripts/prepare-synara-sidecar.mjs"
+      - "scripts/synara-codex-host.mjs"
+      - "scripts/lib/*.mjs"
+      - ".github/workflows/release-cache.yml"
+  # Actions evicts caches untouched for 7 days. Releases are less frequent than
+  # that, so refresh it on a schedule to keep releases off the cold path.
+  schedule:
+    - cron: "0 5 * * 1"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  # The two caches have different inputs, and the push filter above is their
+  # union. A Synara pin bump moves only the runtime's: it was 8 of this
+  # workflow's 10 runs in one busy round, and each also rebuilt the Rust
+  # dependency graph on macOS (2.5–11 min), competing with CI's `rust` and
+  # WebKit jobs for the five macOS runners the account gets, for a cache
+  # whose inputs had not moved. So `warm` runs only when a Rust input changed
+  # in this push. The schedule, a manual run, and anything this cannot
+  # classify still run both.
+  changes:
+    runs-on: ubuntu-latest
+    outputs:
+      rust: ${{ steps.classify.outputs.rust }}
+    steps:
+      - if: github.event_name == 'push'
+        uses: actions/checkout@v7
+        with:
+          fetch-depth: 2
+      - id: classify
+        env:
+          EVENT: ${{ github.event_name }}
+          BEFORE: ${{ github.event.before }}
+        run: |
+          rust=true
+          # A new branch's BEFORE is all zeros and fetches nothing: warm.
+          if [ "$EVENT" = push ] && { git cat-file -e "$BEFORE^{commit}" 2>/dev/null \
+            || git fetch --quiet --depth=1 origin "$BEFORE"; }; then
+            if changed=$(git -c core.quotePath=false diff --no-renames --name-only "$BEFORE" HEAD); then
+              rust=false
+              while IFS= read -r path; do
+                case "$path" in
+                  src-tauri/Cargo.toml | src-tauri/Cargo.lock | rust-toolchain.toml | .github/workflows/release-cache.yml)
+                    echo "rust input: $path"
+                    rust=true ;;
+                esac
+              done <<< "$changed"
+            fi
+          fi
+          echo "rust=$rust" | tee -a "$GITHUB_OUTPUT"
+
+  warm:
+    needs: changes
+    # Fails open: a broken classification warms anyway.
+    if: ${{ !cancelled() && needs.changes.outputs.rust != 'false' }}
+    runs-on: macos-latest
+    # One warm build at a time; a newer commit's cache supersedes an older
+    # one. Per job, so a pin bump's runtime build never cancels a dependency
+    # build still running for an earlier lockfile change, or the reverse.
+    concurrency:
+      group: release-cache-rust
+      cancel-in-progress: true
+    steps:
+      - uses: actions/checkout@v7
+
+      - uses: ./.github/actions/setup-pnpm
+      - run: pnpm build
+
+      - name: Read the minimum macOS version
+        id: macos-version
+        run: |
+          echo "value=$(node -p "require('./src-tauri/tauri.conf.json').bundle.macOS.minimumSystemVersion")" \
+            >> "$GITHUB_OUTPUT"
+
+      # Installs the Rust release rust-toolchain.toml pins, with its components and target.
+      - run: rustup toolchain install
+
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: src-tauri
+          # Must stay identical to the Release workflow's. shared-key replaces
+          # the job-name component of the key, which is exactly what kept these
+          # two apart (`v0-rust-release-…` vs `v0-rust-rust-…`).
+          shared-key: aarch64-apple-darwin-release-macos${{ steps.macos-version.outputs.value }}
+
+      # tauri-build compiles the resource list from tauri.conf.json, which names
+      # the bundled Synara runtime. Nothing here launches it.
+      - name: Stub bundled runtime resources for compilation
+        run: |
+          mkdir -p src-tauri/synara-runtime
+          echo stub > src-tauri/synara-runtime/placeholder.txt
+
+      # LATTICE_FIRECRAWL_KEY is deliberately absent. rust-cache prunes
+      # workspace crates from the target dir before saving (cache-workspace-
+      # crates defaults to false), so this crate's own artifacts — the only
+      # place an option_env! secret could land — never reach the cache. The
+      # release rebuilds them with the key.
+      - name: Warm the dependency graph
+        env:
+          # Tauri sets this from tauri.conf.json before its Cargo invocation.
+          # Without the same value here, the apparent cache hit still rebuilds
+          # the macOS/Tauri half of the dependency graph during every release.
+          MACOSX_DEPLOYMENT_TARGET: ${{ steps.macos-version.outputs.value }}
+        run: |
+          cargo build \
+            --release \
+            --target aarch64-apple-darwin \
+            --manifest-path src-tauri/Cargo.toml
+
+  synara:
+    runs-on: macos-latest
+    concurrency:
+      group: release-cache-synara
+      cancel-in-progress: true
+    steps:
+      - uses: actions/checkout@v7
+
+      - uses: actions/setup-node@v7
+        with:
+          node-version: 22
+
+      - uses: oven-sh/setup-bun@v2
+        with:
+          bun-version: 1.4.4
+
+      # The staging script reads the host triple from rustc to select the
+      # matching bundled Node runtime.
+      - run: rustup toolchain install
+
+      - name: Fetch pinned Synara source
+        run: |
+          synara_repository="$(
+            node -p "require('./scripts/synara-runtime.json').repository"
+          )"
+          synara_revision="$(
+            node -p "require('./scripts/synara-runtime.json').revision"
+          )"
+          synara_source="$RUNNER_TEMP/lattice-synara"
+
+          git init "$synara_source"
+          git -C "$synara_source" remote add origin "$synara_repository"
+          git -C "$synara_source" fetch --depth=1 origin "$synara_revision"
+          git -C "$synara_source" checkout --detach FETCH_HEAD
+          test "$(git -C "$synara_source" rev-parse HEAD)" = "$synara_revision"
+
+          echo "BUN_BIN=$(command -v bun)" >> "$GITHUB_ENV"
+          echo "SYNARA_SOURCE_DIR=$synara_source" >> "$GITHUB_ENV"
+
+      - name: Restore prepared Synara runtime
+        id: synara-runtime-cache
+        uses: actions/cache@v5
+        with:
+          path: src-tauri/synara-runtime
+          key: synara-runtime-${{ runner.os }}-${{ runner.arch }}-${{ hashFiles('scripts/synara-runtime.json', 'scripts/synara-runtime-inputs.mjs', 'scripts/prepare-synara-sidecar.mjs', 'scripts/synara-codex-host.mjs', 'scripts/lib/*.mjs') }}
+
+      - name: Build the prepared Synara runtime after a cache miss
+        if: steps.synara-runtime-cache.outputs.cache-hit != 'true'
+        env:
+          # Match the release build: the web bundle exceeds Node's default heap.
+          NODE_OPTIONS: --max-old-space-size=4096
+        run: |
+          bun install --cwd "$SYNARA_SOURCE_DIR" --frozen-lockfile
+          node scripts/prepare-synara-sidecar.mjs

@@ -1,0 +1,284 @@
+import { act, cleanup, fireEvent, render, screen, within } from "@testing-library/react";
+import { afterEach, describe, expect, it, vi } from "vitest";
+import { invoke } from "@tauri-apps/api/core";
+import { activateAppLocale } from "../i18n";
+import { installPdfTextLayerSelection } from "../pdf/pdf-text-layer-selection";
+import { CompileDiagnosticsPanel } from "./compile-diagnostics-panel";
+import { failedLogAnchor } from "./compile-diagnostics";
+import { useCompileRepair } from "./use-compile-repair";
+
+vi.mock("@tauri-apps/api/core", () => ({ invoke: vi.fn() }));
+
+const diagnostics = [
+  { level: "error", message: "Undefined control sequence", file: "main.tex", line: 42 },
+  { level: "warning", message: "Undefined reference", file: "results.tex", line: 17 },
+];
+const props = {
+  diagnostics, log: "Build output", success: false, expanded: false,
+  onExpandedChange: vi.fn(), onSelect: vi.fn(), onInstallDependency: vi.fn(), onDismiss: vi.fn(),
+};
+
+describe("batch repair controls", () => {
+  afterEach(cleanup);
+
+  it("announces a rejected repair in Chinese and leaves retry available", async () => {
+    await activateAppLocale("zh-CN");
+    vi.mocked(invoke).mockRejectedValueOnce("The workspace already has an active writer.");
+    function RepairPanel() {
+      const repair = useCompileRepair({
+        projectRoot: "/paper", rootDocument: "main.tex", runtimeMode: "auto", enabled: true,
+        save: async () => true, onComplete: async () => {},
+      });
+      return <CompileDiagnosticsPanel {...props} repair={repair.state} fixDisabled={repair.busy}
+        onFixAll={() => void repair.start(diagnostics)} />;
+    }
+    try {
+      render(<RepairPanel />);
+      await act(async () => { fireEvent.click(screen.getByRole("button", { name: "一键修复" })); });
+      expect(screen.getByRole("status")).toHaveTextContent("AI 助手正忙，请先结束它的任务再点“一键修复”");
+      expect(screen.getByRole("button", { name: "一键修复" })).toBeEnabled();
+      expect(screen.queryByText("The workspace already has an active writer.")).not.toBeInTheDocument();
+    } finally {
+      cleanup();
+      await activateAppLocale("en");
+      vi.mocked(invoke).mockReset();
+    }
+  });
+
+  it("offers one repair action even when collapsed and replaces it in-place while busy", () => {
+    const onFixAll = vi.fn();
+    const onCancelRepair = vi.fn();
+    const onOpenRepair = vi.fn();
+    const { rerender } = render(<CompileDiagnosticsPanel {...props} onFixAll={onFixAll} />);
+    fireEvent.click(screen.getByRole("button", { name: "Fix all" }));
+    expect(onFixAll).toHaveBeenCalledTimes(1);
+    expect(screen.queryByRole("button", { name: "Fix" })).not.toBeInTheDocument();
+    rerender(<CompileDiagnosticsPanel {...props} onFixAll={onFixAll} onCancelRepair={onCancelRepair}
+      onOpenRepair={onOpenRepair} repair={{ status: "running", threadId: "repair" }} />);
+    expect(screen.queryByRole("button", { name: "Fix all" })).not.toBeInTheDocument();
+    expect(screen.getByRole("status")).toHaveTextContent("Repairing…");
+    fireEvent.click(screen.getByRole("button", { name: "Cancel repair" }));
+    fireEvent.click(screen.getByRole("button", { name: "View repair" }));
+    expect(onCancelRepair).toHaveBeenCalledTimes(1);
+    expect(onOpenRepair).toHaveBeenCalledTimes(1);
+    rerender(<CompileDiagnosticsPanel {...props} onFixAll={onFixAll} onCancelRepair={onCancelRepair}
+      repair={{ status: "compiling", threadId: "repair" }} />);
+    expect(screen.getByRole("status")).toHaveTextContent("Recompiling…");
+    expect(screen.queryByRole("button", { name: "Cancel repair" })).not.toBeInTheDocument();
+  });
+
+  it("keeps approval and error details accessible, and respects write restrictions", () => {
+    const { rerender } = render(<CompileDiagnosticsPanel {...props} onFixAll={vi.fn()} fixDisabled />);
+    expect(screen.getByRole("button", { name: "Fix all" })).toBeDisabled();
+    rerender(<CompileDiagnosticsPanel {...props} repair={{ status: "awaiting-approval", threadId: "task" }} onOpenRepair={vi.fn()} />);
+    // The bar's "Needs approval" and the footer's View repair say it; no extra line.
+    expect(document.querySelector(".compile-repair-detail")).toBeNull();
+    expect(screen.getByRole("button", { name: "View repair" })).toBeEnabled();
+    rerender(<CompileDiagnosticsPanel {...props} repair={{ status: "failed", message: "No diagnostics were submitted." }} />);
+    expect(screen.getByRole("status")).toHaveTextContent("No diagnostics were submitted.");
+    rerender(<CompileDiagnosticsPanel {...props} diagnostics={[{ level: "info", message: "Note" }]} onFixAll={vi.fn()} />);
+    expect(screen.queryByRole("button", { name: "Fix all" })).not.toBeInTheDocument();
+  });
+});
+
+describe("raw build log", () => {
+  afterEach(cleanup);
+
+  // As reported: an rc-file failure leaves only the log, the panel sits above
+  // the PDF toolbar and the stale PDF's text layer, and the copied "log" ended
+  // "…problem with rc file 1 / 29%000001002Under review as a conference paper".
+  const log = [
+    "playwright._impl._errors.Error: BrowserType.launch: Executable doesn't exist at /Users/me/Library/Caches/ms-playwright/chromium_headless_shell-1243/chrome-headless-shell-mac-arm64/chrome-headless-shell",
+    "Latexmk: Initialization file './.latexmkrc' gave an error:",
+    "     Probe SVG conversion failed",
+    "",
+    "Latexmk: Stopping because of problem with rc file",
+  ].join("\n");
+
+  function renderAbovePdf() {
+    // The text layer reports its selection to the native copy monitor.
+    vi.mocked(invoke).mockResolvedValue(undefined);
+    const view = render(<>
+      <CompileDiagnosticsPanel {...props} diagnostics={[]} log={log} expanded />
+      <div className="pdf-toolbar"><span className="pdf-page-display">1 / 29</span><span>%</span></div>
+      <div className="textLayer"><span>000</span><span>001</span><span>Under review as a conference paper</span></div>
+    </>);
+    const uninstall = installPdfTextLayerSelection(view.container.querySelector(".textLayer") as HTMLElement, view.container);
+    return { ...view, uninstall: () => { uninstall(); vi.mocked(invoke).mockReset(); } };
+  }
+
+  it("keeps Command-A inside the log instead of reaching the PDF below it", () => {
+    const { uninstall } = renderAbovePdf();
+    try {
+      const field = screen.getByRole<HTMLTextAreaElement>("textbox", { name: "Raw build log" });
+      expect(field).toHaveAttribute("readonly");
+      expect(field.value).toBe(log);
+      field.focus();
+      fireEvent.keyDown(field, { key: "a", metaKey: true });
+      expect(field.selectionStart).toBe(0);
+      expect(field.selectionEnd).toBe(log.length);
+      expect(document.getSelection()?.toString() ?? "").not.toMatch(/1 \/ 29|Under review/);
+    } finally {
+      uninstall();
+    }
+  });
+});
+
+describe("build output layout", () => {
+  afterEach(() => {
+    cleanup();
+    localStorage.clear();
+  });
+
+  it("groups messages under their file and keeps each location in the button's name", () => {
+    const onSelect = vi.fn();
+    render(<CompileDiagnosticsPanel {...props} expanded onSelect={onSelect} diagnostics={[
+      { level: "warning", message: "Overfull hbox", file: "chapters/ch01.tex", line: 12 },
+      { level: "error", message: "Undefined control sequence", file: "chapters/ch01.tex", line: 40 },
+      { level: "warning", message: "There were undefined references.", file: "main.tex", line: 4 },
+    ]} />);
+    const groups = document.querySelectorAll(".compile-diagnostics-group");
+    expect([...groups].map((group) => group.querySelector(".compile-diagnostics-file")?.textContent))
+      .toEqual(["chapters/ch01.tex2", "main.tex"]);
+    expect(within(groups[0] as HTMLElement).getAllByRole("button", { name: /^chapters\/ch01\.tex:/ }).map((button) => button.getAttribute("aria-label")))
+      .toEqual(["chapters/ch01.tex:40 Undefined control sequence", "chapters/ch01.tex:12 Overfull hbox"]);
+    fireEvent.click(screen.getByRole("button", { name: "main.tex:4 There were undefined references." }));
+    expect(onSelect).toHaveBeenCalledWith(expect.objectContaining({ file: "main.tex", line: 4 }));
+  });
+
+  // TeX carries on past errors: the PDF below the bar is that build's, errors and all.
+  it("says a failed build whose PDF is on screen built, with its errors", () => {
+    const { rerender } = render(<CompileDiagnosticsPanel {...props} />);
+    const title = () => document.querySelector(".compile-diagnostics-toggle")?.textContent;
+    expect(title()).toBe("Build failed · 1 error · 1 warning");
+    rerender(<CompileDiagnosticsPanel {...props} wrotePdf />);
+    expect(title()).toBe("Built with 1 error · 1 warning");
+    expect(document.querySelector(".compile-diagnostics")).toHaveClass("error");
+  });
+
+  it("opens a failed build's log at TeX's error, with the whole log a click from the clipboard", () => {
+    // Lines as latexmk -file-line-error writes them.
+    const failedLog = "This is pdfTeX\n(./main.tex\nLaTeX Warning: Reference undefined\n./main.tex:4: Undefined control sequence.\nl.4 \\undefinedmacro\n"
+      + "./main.tex:4:  ==> Fatal error occurred, no output PDF file produced!\nLatexmk: Errors, so I did not complete making targets";
+    expect(failedLogAnchor(failedLog)).toBe(failedLog.indexOf("./main.tex:4: Undefined"));
+    expect(failedLogAnchor("(./main.tex\n! LaTeX Error: File `doesnotexist.sty' not found.\n./main.tex:3: Emergency stop.")).toBe(12);
+    expect(failedLogAnchor("(./main.tex\nPackage biblatex Error: Missing backend")).toBe(12);
+    // Without an error line, latexmk's own ending says why the run stopped.
+    expect(failedLogAnchor("(./main.tex\nLatexmk: Errors, so I did not complete making targets")).toBe(65);
+
+    render(<CompileDiagnosticsPanel {...props} expanded log={failedLog} />);
+    fireEvent.click(screen.getByRole("tab", { name: "Log" }));
+    expect(screen.getByRole("textbox", { name: "Raw build log" })).toHaveValue(failedLog);
+    expect(screen.getByRole("button", { name: "Copy log" })).toHaveTextContent("Copy log");
+    fireEvent.click(screen.getByRole("tab", { name: "Messages" }));
+    expect(screen.queryByRole("button", { name: "Copy log" })).not.toBeInTheDocument();
+  });
+
+  it("docks below the page and remembers the choice for the next build", () => {
+    const { unmount } = render(<CompileDiagnosticsPanel {...props} expanded />);
+    const section = screen.getByRole("region", { name: "Compile diagnostics" });
+    expect(section).not.toHaveClass("docked");
+    fireEvent.click(screen.getByRole("button", { name: "Dock below the page" }));
+    expect(section).toHaveClass("docked");
+    unmount();
+
+    render(<CompileDiagnosticsPanel {...props} />);
+    expect(screen.getByRole("region", { name: "Compile diagnostics" })).toHaveClass("docked");
+    fireEvent.click(screen.getByRole("button", { name: "Float over the page" }));
+    expect(screen.getByRole("region", { name: "Compile diagnostics" })).not.toHaveClass("docked");
+    // Dismissal stays available in either placement.
+    expect(screen.getByRole("button", { name: "Dismiss diagnostics" })).toBeEnabled();
+  });
+});
+
+
+describe("explained build errors", () => {
+  afterEach(cleanup);
+
+  const source = "\\begin{document}\nSee \\citep{a} and \\citep{b}.\nNeural systems \\cietp{luong2015effective}.\n\\end{document}";
+  const log = "./main.tex:3: Undefined control sequence.\nl.3 Neural systems \\cietp\n               {luong2015effective}.";
+  const typo = { level: "error", message: "Undefined control sequence.", file: "main.tex", line: 3 };
+  const citation = { level: "warning", message: "Citation `luong2015effective' on page 1 undefined on input line 3." };
+
+  it("says what went wrong in plain words, with the line, a fix and TeX's own words", () => {
+    const onReplaceToken = vi.fn();
+    const onAskAgent = vi.fn();
+    render(<CompileDiagnosticsPanel {...props} expanded log={log} diagnostics={[typo, citation]}
+      sourceOf={(file) => (file === "main.tex" ? source : null)} onReplaceToken={onReplaceToken} onAskAgent={onAskAgent} />);
+    screen.getByRole("button", { name: "main.tex:3 Unknown command \\cietp" });
+    expect(document.querySelector(".compile-excerpt-line[data-failing] mark")?.textContent).toBe("\\cietp");
+    screen.getByText("LaTeX doesn’t know \\cietp. It looks like a typo for \\citep, which this paper uses 2 times.");
+    // TeX's own words are the headline's hover, not a second visible line.
+    expect(screen.getByRole("button", { name: "main.tex:3 Unknown command \\cietp" })).toHaveAttribute("title", "TeX: Undefined control sequence.");
+    expect(screen.queryByText("TeX: Undefined control sequence.")).toBeNull();
+    fireEvent.click(screen.getByRole("button", { name: /Replace with/ }));
+    expect(onReplaceToken).toHaveBeenCalledWith(typo, "\\cietp", "\\citep");
+    fireEvent.click(screen.getByRole("button", { name: "Ask the agent" }));
+    expect(onAskAgent).toHaveBeenCalledWith(typo);
+    // The warning keeps one row, rewritten, in a different shape from the error.
+    const warning = screen.getByRole("button", { name: "Build log No entry for luong2015effective" });
+    expect(warning.getAttribute("title")).toContain("may clear once the error above is fixed");
+    expect(warning.querySelector("svg")?.getAttribute("class")).toContain("triangle-alert");
+    expect(screen.getByRole("button", { name: /Unknown command/ }).querySelector("svg")?.getAttribute("class")).toContain("circle-x");
+  });
+
+  it("explains two errors on one line each by its own command", () => {
+    const both = "./main.tex:3: Undefined control sequence.\nl.3 Neural systems \\cietp\n               {a} and \\reff{b}.\n"
+      + "./main.tex:3: Undefined control sequence.\nl.3 Neural systems \\cietp{a} and \\reff\n                         {b}.";
+    render(<CompileDiagnosticsPanel {...props} expanded log={both} diagnostics={[typo, { ...typo }]}
+      sourceOf={() => source.replace("\\cietp{luong2015effective}", "\\cietp{a} and \\reff{b}")} onReplaceToken={vi.fn()} />);
+    screen.getByRole("button", { name: "main.tex:3 Unknown command \\cietp" });
+    screen.getByRole("button", { name: "main.tex:3 Unknown command \\reff" });
+  });
+
+  it("keeps TeX's words where the log does not say which command it stopped at", () => {
+    render(<CompileDiagnosticsPanel {...props} expanded log="Build output" diagnostics={[typo]} sourceOf={() => source} onReplaceToken={vi.fn()} />);
+    screen.getByRole("button", { name: "main.tex:3 Undefined control sequence." });
+    expect(screen.queryByRole("button", { name: /Replace with/ })).toBeNull();
+  });
+});
+
+describe("CJK text the build could not set", () => {
+  afterEach(cleanup);
+
+  const dropped = {
+    level: "warning", message: "The PDF is missing 17 Chinese characters …", code: "cjk-glyphs-missing",
+    params: { count: "17", sample: "我 的 论 文 本 …", script: "chinese", missingFile: "ctex.sty" },
+  };
+
+  it("says how many characters the PDF lost and offers ctex when it is not installed", () => {
+    const onInstallDependency = vi.fn();
+    render(<CompileDiagnosticsPanel {...props} expanded success log="Build output" diagnostics={[dropped]} onInstallDependency={onInstallDependency} />);
+    screen.getByRole("button", { name: /^Build log The PDF is missing 17 Chinese characters \(我 的 论 文 本 …\): .+ctex is not installed yet/ });
+    fireEvent.click(screen.getByRole("button", { name: "Install" }));
+    expect(onInstallDependency).toHaveBeenCalledWith("ctex.sty");
+
+    cleanup();
+    const { missingFile: _installed, ...params } = dropped.params;
+    render(<CompileDiagnosticsPanel {...props} expanded success log="Build output" diagnostics={[{ ...dropped, params }]} />);
+    expect(screen.queryByRole("button", { name: "Install" })).toBeNull();
+    expect(screen.getByRole("button", { name: /The PDF is missing/ }).textContent).not.toContain("ctex is not installed");
+  });
+
+  it("says it in Chinese in the Chinese interface", async () => {
+    await activateAppLocale("zh-CN");
+    try {
+      render(<CompileDiagnosticsPanel {...props} expanded success log="Build output" diagnostics={[dropped]} />);
+      expect(screen.getByRole("button", { name: /PDF 里缺了 17 个汉字（我 的 论 文 本 …）/ }).textContent)
+        .toContain("新建项目。还没有安装 ctex");
+      screen.getByRole("button", { name: "安装" });
+    } finally {
+      cleanup();
+      await activateAppLocale("en");
+    }
+  });
+
+  it("explains pdfLaTeX's error on the line that holds the character", () => {
+    const source = "\\documentclass{article}\n\\begin{document}\n\\title{我的论文}\n\\maketitle\n\\end{document}";
+    const refused = { level: "error", message: "LaTeX Error: Unicode character 我 (U+6211)", file: "main.tex", line: 3 };
+    render(<CompileDiagnosticsPanel {...props} expanded log="./main.tex:3: LaTeX Error: Unicode character 我 (U+6211)" diagnostics={[refused]} sourceOf={() => source} />);
+    screen.getByRole("button", { name: "main.tex:3 pdfLaTeX can’t typeset 我" });
+    expect(document.querySelector(".compile-excerpt-line[data-failing] mark")?.textContent).toBe("我");
+    screen.getByText(/Add \\usepackage\{ctex\} to the preamble and switch the project to XeLaTeX/);
+  });
+});

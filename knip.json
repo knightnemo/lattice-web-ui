@@ -1,0 +1,59 @@
+{
+  "$schema": "https://unpkg.com/knip@6/schema.json",
+  // Export-level analysis is on: a first-party symbol that is exported but used
+  // only inside its own file fails `pnpm knip`. Drop the `export` rather than
+  // ignoring it; tsc's `noUnusedLocals` then polices the symbol.
+
+  // `src/main.tsx` is not listed: knip's vite plugin already derives it from the
+  // `<script type="module">` in index.html.
+  // The interaction benchmark reads probe.js as text and injects it over CDP,
+  // and serves bench-page.ts from its own tools/perf-bench/index.html, as the
+  // website's demo serves demo-page.ts from tools/web-demo/index.html;
+  // perf-fixture.d.mts types perf-fixture.mjs for the bench page's import, and
+  // perf-bench/selectors.d.mts types selectors.mjs for a component test's.
+  // perf-bench/pdf-window-timing.mjs, divider-drag-timing.mjs and
+  // tab-drag-timing.mjs are run by hand
+  // (docs/performance-history.md). check-perf-evidence.mjs imports the
+  // `readFigure` of the *-figures.mjs file a manifest entry names, by path.
+  // Open Slide scripts are staged by prepare-presentation-runtime.mjs and
+  // launched by Rust or the nested package's test script, not frontend imports.
+  // The native browser toolbar is a separate HTML entry, not part of App.
+  "workspaces": {
+    ".": {
+      "entry": [
+        "scripts/*.mjs",
+        "lingui.config.ts",
+        "src/web-browser/toolbar-entry.ts",
+        "scripts/perf-bench/probe.js",
+        "scripts/perf-fixture.d.mts",
+        "scripts/perf-bench/selectors.d.mts",
+        "scripts/perf-bench/pdf-window-timing.mjs",
+        "scripts/perf-bench/divider-drag-timing.mjs",
+        "scripts/perf-bench/tab-drag-timing.mjs",
+        "scripts/perf-bench/*-figures.mjs",
+        "tools/perf-bench/bench-page.ts",
+        "tools/web-demo/demo-page.ts"
+      ],
+      "project": ["src/**", "scripts/**", "tools/**"]
+    },
+    "tools/open-slide-runtime": {
+      "entry": ["*.mjs"],
+      "project": ["*.mjs"],
+      // server.mjs injects a CSS import and resolves it through a Vite alias.
+      "ignoreDependencies": ["@fontsource-variable/inter"]
+    }
+  },
+  // literature-worker/ is a separate workspace with its own package.json and is
+  // not in `project`, so knip cannot see it. src-tauri/templates/ holds sample
+  // project content; the perf-bench page reads it as raw text, and its slide
+  // decks are compiled by tools/open-slide-runtime, which declares their imports.
+  "ignore": [
+    "literature-worker/**",
+    "src-tauri/templates/**"
+  ],
+  // `pnpm check` shells out to mise, which is a system tool installed outside
+  // the package manager (see CONTRIBUTING.md), not a missing dependency. `typecheck`
+  // is knip misreading `pnpm --dir literature-worker typecheck` in ci.yml as a
+  // binary; it is a package script in that workspace.
+  "ignoreBinaries": ["mise", "typecheck"]
+}

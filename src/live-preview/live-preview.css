@@ -1,0 +1,33 @@
+/* The live preview's status (live-preview-status.tsx), at the bottom left of
+   the PDF's pages, clear of the centered loader and notices. It stands at the
+   popover level with the PDF's other statuses (pdf-notice). While all is live
+   it shrinks to its dot, so it does not sit over the page while you type;
+   the tooltip still names it. */
+.live-preview-status-host { position: absolute; left: var(--space-6); bottom: var(--space-6); z-index: 10; max-width: calc(100% - var(--space-12)); pointer-events: none; }
+.live-preview-status { pointer-events: auto; display: inline-flex; align-items: center; gap: var(--space-3); max-width: 100%; box-sizing: border-box; margin: 0; padding: var(--space-2) var(--space-5); border: 0; border-radius: var(--radius-control); background: var(--surface-elevated); box-shadow: var(--elevation-popover); color: var(--text-secondary); font: inherit; font-size: var(--type-micro-size); line-height: var(--type-micro-line-height); font-weight: var(--type-micro-weight); white-space: nowrap; }
+.live-preview-status-label { min-width: 0; overflow: hidden; text-overflow: ellipsis; }
+.live-preview-status[data-tone="live"] { padding: var(--space-3); }
+.live-preview-status[data-tone="live"] .live-preview-status-label { display: none; }
+button.live-preview-status { cursor: pointer; color: var(--text-primary); }
+button.live-preview-status:hover { background: var(--toolbar-hover-surface); }
+.live-preview-status-dot { flex: none; width: var(--space-3); height: var(--space-3); border-radius: var(--radius-pill); background: var(--text-tertiary); }
+.live-preview-status[data-tone="live"] .live-preview-status-dot { background: var(--status-success); }
+.live-preview-status[data-tone="pending"] .live-preview-status-dot { background: var(--status-warning); }
+.live-preview-status[data-tone="stopped"] .live-preview-status-dot { background: var(--status-danger); }
+.live-preview-status[data-tone="busy"] .live-preview-status-dot { animation: live-preview-status-pulse var(--motion-flourish) ease-in-out infinite alternate; }
+.live-preview-status-host[data-rebuilding] .live-preview-status-dot { animation: live-preview-status-pulse var(--motion-flourish) ease-in-out infinite alternate; }
+@keyframes live-preview-status-pulse { from { opacity: 1; } to { opacity: 0.35; } }
+/* A quiet build's PDF loads behind pages that already show the edit: the pill's
+   pulse is its only sign, not pdf-viewer's "Updating…" (quiet-builds.ts). */
+.pdf-scroll-area:has(> .live-preview-status-host[data-rebuilding]) > .pdf-loading-quiet { display: none; }
+.live-preview-status-tip { display: block; max-width: calc(var(--space-16) * 9); white-space: pre-line; }
+
+/* A page the live preview draws on (live-preview-layer.tsx): over pdf.js's
+   canvas, under its text and annotation layers, and never in the way of the
+   pointer. The z-indexes keep that order, not the DOM: pdf.js appends a text
+   layer only once the page's text has streamed in, right after its canvas, so
+   a page painted on its first draw ends up after the text layer in the tree.
+   Its paper is opaque and covered the selection's highlight there. PDFSlick
+   gives the text layer z-index 0 from a later chunk, hence the specificity. */
+.pdf-preview .pdfViewer .page > canvas.live-preview-page-layer { position: absolute; top: 0; left: 0; z-index: 0; pointer-events: none; }
+.pdf-preview .pdfViewer .page > :is(.textLayer, .annotationLayer) { z-index: 1; }

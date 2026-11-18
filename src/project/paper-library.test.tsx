@@ -1,0 +1,533 @@
+import { act, cleanup, fireEvent, render, screen, within } from "@testing-library/react";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import type { ComponentProps } from "react";
+import { invoke } from "@tauri-apps/api/core";
+import { writeText } from "@tauri-apps/plugin-clipboard-manager";
+import type { PaperSummary } from "../app-types";
+import { PaperLibrary } from "./paper-library";
+
+vi.mock("@tauri-apps/api/core", () => ({ invoke: vi.fn(async () => []) }));
+vi.mock("@tauri-apps/plugin-opener", () => ({ openUrl: vi.fn() }));
+vi.mock("@tauri-apps/plugin-clipboard-manager", () => ({ writeText: vi.fn(async () => undefined) }));
+
+type PaperLibraryProps = ComponentProps<typeof PaperLibrary>;
+
+const attention: PaperSummary = {
+  arxivId: "1706.03762",
+  title: "Attention Is All You Need",
+  authors: "Vaswani and Shazeer",
+  citationKey: "vaswani2017",
+  hasFullText: true,
+  hasBlog: false,
+};
+
+const vit: PaperSummary = {
+  arxivId: "2010.11929",
+  title: "An Image Is Worth 16x16 Words",
+  authors: "Dosovitskiy",
+  citationKey: "dosovitskiy2021",
+  hasFullText: false,
+  hasBlog: false,
+};
+
+function baseProps(): PaperLibraryProps {
+  return {
+    projectKey: "/tmp/paper",
+    papers: [attention, vit],
+    activePaper: null,
+    onReveal: vi.fn(),
+    onPaper: vi.fn(),
+    onFetchFullText: vi.fn(),
+    onCancelFetch: vi.fn(),
+    paperFetchStates: {},
+    onDeletePaper: vi.fn(),
+    onEditBibEntry: vi.fn(),
+    importInput: "",
+    setImportInput: vi.fn(),
+    onImport: vi.fn(),
+    onCancelImport: vi.fn(),
+    onAddPapers: vi.fn(),
+    onSearchLiterature: vi.fn(),
+    importing: false,
+  };
+}
+
+/**
+ * The search box is a controlled input owned by App, so a test drives the query
+ * the way App does: type, take the reported value, re-render with it.
+ */
+function renderLibrary(overrides?: Partial<PaperLibraryProps>) {
+  const props = { ...baseProps(), ...overrides };
+  const view = render(<PaperLibrary {...props} />);
+  const rerenderWith = (next: Partial<PaperLibraryProps>) => {
+    Object.assign(props, next);
+    view.rerender(<PaperLibrary {...props} />);
+  };
+  return {
+    ...view,
+    props,
+    rerenderWith,
+    search: (query: string) => {
+      fireEvent.change(searchbox(), { target: { value: query } });
+      rerenderWith({ importInput: query });
+    },
+  };
+}
+
+/** A paper the full-text index matched, by its one line. */
+const textMatch = (key: string, text: string) => ({ key, hits: [{ path: `.research/papers/${key}/paper.md`, line: 3, text }] });
+
+const searchbox = () => screen.getByRole("searchbox", { name: "Search or import papers" });
+/** The full-text searches, apart from the scan of where the manuscript cites each paper. */
+const searchCalls = () => vi.mocked(invoke).mock.calls.filter(([command]) => command === "search_paper_library");
+
+/** While a download runs, the search box is the read-only progress surface. */
+function expectImportProgress(active: boolean) {
+  const input = searchbox();
+  expect(input).toHaveAttribute("aria-busy", String(active));
+  expect(input.hasAttribute("readonly")).toBe(active);
+  expect(input.getAttribute("aria-describedby")).toBe(active ? "paper-import-status" : null);
+  expect(document.querySelector(".paper-import-track > span") !== null).toBe(active);
+}
+
+function paperTitles() {
+  return Array.from(document.querySelectorAll(".paper-row .paper-title"))
+    .map((title) => title.textContent ?? "");
+}
+
+afterEach(() => {
+  cleanup();
+  vi.useRealTimers();
+  vi.restoreAllMocks();
+});
+
+/** Lets the debounced full-text search run and settle. */
+const settleTextSearch = () => act(async () => { await vi.advanceTimersByTimeAsync(200); });
+
+beforeEach(() => {
+  localStorage.clear();
+  vi.mocked(invoke).mockReset().mockResolvedValue([]);
+});
+
+describe("PaperLibrary", () => {
+  // A paper already held is said to be, with its \cite to copy, and opens
+  // (or fetches its full text) instead of importing twice; anything else
+  // the add row offers to add.
+  it.each([
+    ["https://arxiv.org/pdf/1706.03762v3", "open"],
+    ["arXiv:1706.03762", "open"],
+    ["https://arxiv.org/pdf/2010.11929", "fetch"],
+    ["https://example.org/1706.03762", "import"],
+    ["A study of 1706.03762", "import"],
+  ])("adds %s only when the library does not hold it (%s)", (input, action) => {
+    const { props } = renderLibrary({ importInput: input });
+    const held = action !== "import";
+    if (held) expect(screen.getByText("Already in Papers")).toBeInTheDocument();
+    fireEvent.click(held ? screen.getByRole("button", { name: /Already in Papers/ }) : document.querySelector<HTMLElement>("button.paper-add-row")!);
+    expect(vi.mocked(props.onPaper).mock.calls).toEqual(action === "open" ? [[attention]] : []);
+    expect(vi.mocked(props.onFetchFullText).mock.calls).toEqual(action === "fetch" ? [[vit]] : []);
+    expect(props.onImport).toHaveBeenCalledTimes(held ? 0 : 1);
+  });
+
+  it("lists the whole library until something is typed, and says when the library is empty", () => {
+    const { rerenderWith } = renderLibrary();
+    expect(paperTitles()).toEqual(["Attention Is All You Need", "An Image Is Worth 16x16 Words"]);
+    expect(screen.getByText("2 papers")).toBeInTheDocument();
+
+    rerenderWith({ papers: [] });
+    expect(screen.getByText("No papers yet")).toBeInTheDocument();
+    expect(screen.queryByText("No matching papers")).toBeNull();
+  });
+
+  it("exposes each paper as a list item with its actions, and the open paper as current", () => {
+    const { rerenderWith } = renderLibrary();
+    const list = screen.getByRole("list", { name: "Papers" });
+    // The list owns the papers alone: the count sits after it.
+    expect(within(list).queryByText("2 papers")).toBeNull();
+    const items = within(list).getAllByRole("listitem");
+    expect(items.map((item) => within(item).getAllByRole("button").map((button) => button.getAttribute("title")))).toEqual([
+      ["Attention Is All You Need", "Copy citation key", "Open link in browser", "Edit bibliography entry", "Remove Attention Is All You Need"],
+      ["Download arXiv 2010.11929", "Copy citation key", "Open link in browser", "Edit bibliography entry", "Remove An Image Is Worth 16x16 Words"],
+    ]);
+    // The opening button is named by the title and byline it lies under,
+    // which are hidden themselves so they are read once, and described by
+    // what its glyph says and the citation key the eye sees only on a lit row.
+    // (jsdom draws no separators, which the browser takes from CSS.)
+    expect(within(items[0]).getAllByRole("button")[0]).toHaveAccessibleName(/^Attention Is All You Need\W+Vaswani and Shazeer$/);
+    expect(within(items[0]).getAllByRole("button")[0]).toHaveAccessibleDescription("Full text in Papers. Citation key vaswani2017");
+    expect(within(items[0]).queryByText("Attention Is All You Need")).toHaveAttribute("aria-hidden", "true");
+    expect(list.querySelectorAll("[aria-current]")).toHaveLength(0);
+
+    rerenderWith({ activePaper: attention });
+    const current = list.querySelectorAll("[aria-current]");
+    expect(current).toHaveLength(1);
+    expect(current[0]).toHaveAttribute("aria-current", "true");
+    expect(current[0]).toBe(within(items[0]).getByRole("button", { name: /^Attention Is All You Need/ }));
+  });
+
+  // Each token has to match somewhere in the entry, so a second word can only
+  // ever shorten the list — that is what makes typing feel like searching.
+  // Pasting a link is how a paper is imported, so the same paste has to find
+  // the copy already in the library instead of offering to fetch it again.
+  it.each([
+    ["a single word", "image", [vit.title]],
+    ["every word, not just the first", "image vaswani", []],
+    ["authors the row never shows", "dosovitskiy", [vit.title]],
+    ["citation keys the row never shows", "vaswani2017", [attention.title]],
+    ["a pasted arXiv URL with a versioned id", "https://arxiv.org/abs/2010.11929v3", [vit.title]],
+    ["a pasted DOI URL against the normalized DOI", "https://doi.org/10.48550/arXiv.1706.03762", [attention.title]],
+  ])("filters the library by %s", (_case, query, titles) => {
+    const { search } = renderLibrary({ papers: [{ ...attention, doi: "10.48550/arXiv.1706.03762" }, vit] });
+
+    search(query);
+    expect(paperTitles()).toEqual(titles);
+    // A query nothing matches is offered for adding instead.
+    expect(screen.getByText(titles.length ? "1 of 2 papers" : "Look up and add")).toBeInTheDocument();
+  });
+
+  it("starts empty and shows pipeline stages in a pending row without changing the submitted query", () => {
+    const { props, rerenderWith } = renderLibrary({
+      importInput: "graph transformers",
+      importLabel: "graph transformers",
+      importing: true,
+      importStage: "Resolving citation metadata…",
+      importStageId: "resolving",
+    });
+
+    const fill = () => document.querySelector(".paper-pending-track > span");
+    const steps = () => Array.from(document.querySelectorAll(".paper-pending-steps > li")).map((step) => step.getAttribute("data-state"));
+    expect(fill()).toHaveStyle({ width: "0%" });
+    const input = searchbox();
+    // The box stays a search box: the import is the row under it.
+    expectImportProgress(false);
+    expect(document.querySelector(".paper-pending .paper-add-title")).toHaveTextContent("graph transformers");
+    expect(steps()).toEqual(["current", "next", "next"]);
+    expect(screen.getByRole("status")).toHaveTextContent("Resolving citation metadata…");
+    fireEvent.keyDown(input, { key: "Enter" });
+    expect(props.onImport).not.toHaveBeenCalled();
+    fireEvent.click(screen.getByRole("button", { name: "Cancel" }));
+    expect(props.onCancelImport).toHaveBeenCalledOnce();
+    for (const [importStageId, importStage, states] of [
+      ["fulltext", "Downloading full text and figures…", ["done", "current", "next"]],
+      ["overview", "Fetching the paper overview…", ["done", "done", "current"]],
+    ] as const) {
+      rerenderWith({ importStage, importStageId });
+      expect(screen.getByRole("status").textContent).toBe(importStage);
+      expect(steps()).toEqual(states);
+      expect(fill()).toHaveStyle({ width: "0%" });
+      expect(input).toHaveValue("graph transformers");
+    }
+    rerenderWith({ importStage: undefined, importStageId: "future-stage" });
+    expect(screen.getByRole("status")).toHaveTextContent("Working…");
+    expect(fill()).not.toHaveStyle({ width: "100%" });
+    rerenderWith({ importing: false });
+    expect(screen.queryByRole("status")).toBeNull();
+    expect(document.querySelector(".paper-pending")).toBeNull();
+    expect(input).toHaveValue("graph transformers");
+  });
+
+  it("keeps import progress across stage changes and resets only when the task ends", () => {
+    let now = 0;
+    const frames = new Map<number, FrameRequestCallback>();
+    let id = 0;
+    vi.spyOn(performance, "now").mockImplementation(() => now);
+    vi.spyOn(window, "requestAnimationFrame").mockImplementation((callback) => {
+      frames.set(++id, callback);
+      return id;
+    });
+    vi.spyOn(window, "cancelAnimationFrame").mockImplementation((key) => { frames.delete(key); });
+    const tick = (time: number) => act(() => {
+      now = time;
+      const pending = [...frames.values()];
+      frames.clear();
+      pending.forEach((callback) => callback(time));
+    });
+    const { rerenderWith } = renderLibrary({ importing: true, importStageId: "resolving" });
+    const width = () => parseFloat(document.querySelector<HTMLElement>(".paper-pending-track > span")!.style.width);
+    tick(2000);
+    expect(width()).toBeCloseTo(14.85);
+    tick(3000);
+    expect(width()).toBeCloseTo(22.275);
+    rerenderWith({ importStageId: "fulltext" });
+    tick(9000);
+    expect(width()).toBeCloseTo(41.95125);
+    rerenderWith({ importing: false });
+    rerenderWith({ importing: true, importStageId: "resolving" });
+    tick(10000);
+    expect(width()).toBeCloseTo(7.425);
+  });
+
+  it("shows download progress until the last loading paper finishes without enabling import cancellation", () => {
+    const { props, rerenderWith } = renderLibrary({
+      importInput: "Adam",
+      paperFetchStates: { first: "loading", second: "loading" },
+      importStageId: "fulltext",
+      importStage: "Downloading full text and figures…",
+    });
+    expectImportProgress(true);
+    fireEvent.keyDown(searchbox(), { key: "Enter" });
+    expect(props.onImport).not.toHaveBeenCalled();
+    expect(screen.queryByRole("button", { name: "Cancel" })).toBeNull();
+    expect(screen.getByRole("status")).toHaveTextContent("Downloading full text and figures…");
+    rerenderWith({ paperFetchStates: { first: "success", second: "loading" }, importStageId: "overview", importStage: "Fetching the paper overview…" });
+    expect(screen.getByRole("status")).toHaveTextContent("Fetching the paper overview…");
+    // Failed fetches are removed; successful ones linger briefly for the row checkmark.
+    rerenderWith({ paperFetchStates: { first: "success" } });
+    expect(screen.queryByRole("status")).toBeNull();
+    expectImportProgress(false);
+    expect(searchbox()).toHaveValue("Adam");
+  });
+
+  it("ranks a title prefix ahead of metadata and full-text matches", async () => {
+    vi.useFakeTimers();
+    const spatial = { ...attention, citationKey: "spatial", arxivId: "2501.00001", title: "S-Space: Exploring Spatial Workspace in Multimodal Models" };
+    const metadata = { ...vit, authors: "The S-Space Consortium" };
+    const titleMatch = { ...vit, citationKey: "evaluating", arxivId: "2501.00002", title: "Evaluating S-Space representations" };
+    const exact = { ...vit, citationKey: "exact", arxivId: "2501.00003", title: "S-Space" };
+    vi.mocked(invoke).mockResolvedValue([
+      textMatch(attention.arxivId, "We evaluate s-space representations."),
+    ]);
+    const { search } = renderLibrary({ papers: [attention, metadata, titleMatch, spatial, exact] });
+    search("s-space");
+    await settleTextSearch();
+    expect(paperTitles()).toEqual([exact.title, spatial.title, titleMatch.title, metadata.title, attention.title]);
+  });
+
+  it("keeps a freshly imported paper visible under its retained raw URL query", () => {
+    const rawUrl = "https://publisher.example/article/opaque-id";
+    const imported = {
+      ...attention,
+      arxivId: "",
+      title: "Resolved Publisher Title",
+      url: "https://canonical.example/paper",
+    };
+    const { rerenderWith } = renderLibrary({ importInput: rawUrl, papers: [vit] });
+
+    rerenderWith({ importing: true });
+    rerenderWith({ papers: [vit, imported] });
+    rerenderWith({ importing: false, recentImport: { query: rawUrl, citationKey: imported.citationKey, arxivId: "" } });
+
+    expect(searchbox()).toHaveValue(rawUrl);
+    expect(paperTitles()).toEqual(["Resolved Publisher Title"]);
+  });
+
+  it("brings the confirmed import to the top and releases it when the query changes", () => {
+    const { rerenderWith, search } = renderLibrary({ importInput: "a" });
+    const viewport = screen.getByRole("list", { name: "Papers" }).closest<HTMLElement>("[data-slot=scroll-area-viewport]")!;
+    viewport.scrollTop = 200;
+    rerenderWith({ recentImport: { query: "a", citationKey: vit.citationKey, arxivId: vit.arxivId } });
+    expect(paperTitles()[0]).toBe(vit.title);
+    expect(viewport.scrollTop).toBe(0);
+    search("attention");
+    expect(paperTitles()).toEqual([attention.title]);
+  });
+
+  it.each(["open", "fetch", "import"])("never tries to %s a paper on Enter", (action) => {
+    const paper = { ...attention, title: "中文论文", hasFullText: action === "open" };
+    const { props } = renderLibrary({ importInput: "中文", papers: action === "import" ? [] : [paper] });
+    const input = searchbox();
+    fireEvent.keyDown(input, { key: "Enter", isComposing: true });
+    fireEvent.keyDown(input, { key: "Enter", keyCode: 229 });
+    fireEvent.keyDown(input, { key: "Enter" });
+    expect(props.onPaper).not.toHaveBeenCalled();
+    expect(props.onFetchFullText).not.toHaveBeenCalled();
+    expect(props.onImport).not.toHaveBeenCalled();
+  });
+
+  it("searches the full text at once on Enter, but not while an IME candidate is confirmed", async () => {
+    vi.useFakeTimers();
+    vi.mocked(invoke).mockResolvedValue([
+      textMatch("1706.03762", "scaled dot-product"),
+    ]);
+    const { search } = renderLibrary();
+    search("dot-product");
+    const input = searchbox();
+    fireEvent.compositionStart(input);
+    fireEvent.keyDown(input, { key: "Enter" });
+    expect(searchCalls()).toHaveLength(0);
+    fireEvent.compositionEnd(input);
+    act(() => vi.advanceTimersByTime(0));
+    // No pause in typing needed: Enter is the request to search now.
+    await act(async () => { fireEvent.keyDown(input, { key: "Enter" }); });
+    expect(searchCalls()).toEqual([["search_paper_library", { query: "dot-product" }]]);
+    expect(paperTitles()).toEqual(["Attention Is All You Need"]);
+    // The debounced pass this replaced must not search a second time.
+    await settleTextSearch();
+    expect(searchCalls()).toHaveLength(1);
+  });
+
+  it("moves between papers with the arrows, Home and End, from any of a row's controls", () => {
+    const web: PaperSummary = {
+      arxivId: "web-0123456789abcdef", url: "https://www.example.org/notes", title: "Notes", hasFullText: true, hasBlog: false,
+    };
+    renderLibrary({ papers: [attention, vit, web] });
+    const [first, second, third] = screen.getAllByRole("button", { name: /Attention|Image|Notes/ })
+      .filter((button) => button.classList.contains("paper-open"));
+    first.focus();
+    fireEvent.keyDown(first, { key: "ArrowDown" });
+    expect(second).toHaveFocus();
+    fireEvent.keyDown(second, { key: "End" });
+    expect(third).toHaveFocus();
+    fireEvent.keyDown(third, { key: "ArrowDown" });
+    expect(third).toHaveFocus();
+    // From a control inside the row, not only its open button.
+    const copy = within(second.closest<HTMLElement>(".paper-row")!).getByRole("button", { name: /Copy citation key/ });
+    copy.focus();
+    fireEvent.keyDown(copy, { key: "ArrowUp" });
+    expect(first).toHaveFocus();
+    fireEvent.keyDown(document.activeElement!, { key: "Home" });
+    expect(first).toHaveFocus();
+  });
+
+  it("adds an identifier on Enter, a title only from its add row, and anything more through the sheet", () => {
+    const { props, search } = renderLibrary();
+    expect(document.querySelector(".import-box .ui-search-field-icon")).not.toBeNull();
+    search("something nobody has");
+    fireEvent.keyDown(searchbox(), { key: "Enter" });
+    expect(props.onImport).not.toHaveBeenCalled();
+    fireEvent.click(screen.getByRole("button", { name: /^Search the literature for/ }));
+    expect(props.onSearchLiterature).toHaveBeenCalledExactlyOnceWith("something nobody has");
+    fireEvent.click(screen.getByRole("button", { name: /^Look up and add/ }));
+    expect(props.onImport).toHaveBeenCalledOnce();
+    search("10.1038/nature14539");
+    fireEvent.keyDown(searchbox(), { key: "Enter" });
+    expect(props.onImport).toHaveBeenCalledTimes(2);
+    fireEvent.click(screen.getByRole("button", { name: "Add papers…" }));
+    expect(props.onAddPapers).toHaveBeenCalledExactlyOnceWith("10.1038/nature14539");
+  });
+
+  it("bylines a paper with its authors and year, and with its source only when it records neither", () => {
+    const web: PaperSummary = {
+      arxivId: "web-0123456789abcdef", url: "https://www.example.org/notes", title: "Notes", hasFullText: true, hasBlog: false,
+    };
+    renderLibrary({ papers: [{ ...attention, year: "2017" }, { ...vit, authors: undefined, year: "2021" }, web] });
+    const [first, second, third] = screen.getAllByRole("button", { name: /Attention|Image|Notes/ })
+      .filter((button) => button.classList.contains("paper-open"))
+      .map((button) => button.closest<HTMLElement>(".paper-row")!);
+    const byline = (row: HTMLElement) => [...row.querySelector(".paper-byline")!.children].map((part) => part.textContent);
+    expect(byline(first)).toEqual(["Vaswani and Shazeer", "2017"]);
+    // The preprint downloads on click, which its glyph says, not the byline.
+    expect(byline(second)).toEqual(["2021"]);
+    // A captured page's bundle key is never presented as an arXiv id.
+    expect(byline(third)).toEqual(["example.org"]);
+  });
+
+  it("copies a paper's exact citation key from its row, and offers no key it lacks", async () => {
+    const keyless: PaperSummary = { ...vit, arxivId: "2501.00001", title: "Keyless", citationKey: undefined };
+    renderLibrary({ papers: [attention, keyless] });
+    fireEvent.click(screen.getByRole("button", { name: "Copy citation key vaswani2017" }));
+    expect(writeText).toHaveBeenCalledWith("vaswani2017");
+    const row = screen.getAllByRole("button", { name: /Keyless/ })[0].closest<HTMLElement>(".paper-row")!;
+    expect(row.querySelector(".paper-cite-key")).toBeNull();
+    expect(within(row).getAllByRole("button")[0]).not.toHaveAccessibleDescription(/Citation key/);
+  });
+
+  it("marks a paper with nothing to download as a citation", () => {
+    const cited: PaperSummary = { arxivId: "", title: "Cited Work", citationKey: "cited2020", hasFullText: false, hasBlog: false };
+    renderLibrary({ papers: [vit, cited] });
+    // An arXiv preprint downloads on click, which its glyph says too; neither row carries a chip.
+    const rows = [...document.querySelectorAll<HTMLElement>(".paper-row")];
+    expect(rows.map((row) => row.dataset.reading)).toEqual(["downloadable", "citation"]);
+    expect(document.querySelector(".paper-row .paper-tags")).toBeNull();
+    expect(screen.getAllByRole("button", { name: /Cited Work/ })[0]).toHaveAccessibleDescription(/^Citation only, no full text/);
+  });
+
+  it("names a corporate author whole, and finds it without its braces", () => {
+    // The author field as `list_papers` delivers it, braces kept.
+    const gemini: PaperSummary = { ...vit, arxivId: "2312.11805", title: "Gemini", authors: "{Gemini Team} and Mc{D}onald, Ronald", citationKey: "gemini" };
+    const { search } = renderLibrary({ papers: [attention, gemini] });
+    const row = screen.getAllByRole("button", { name: /Gemini/ }).find((button) => button.classList.contains("paper-open"))!.closest(".paper-row")!;
+    expect(row.querySelector(".paper-authors")).toHaveTextContent(/^Gemini Team and McDonald$/);
+
+    search("mcdonald");
+    expect(paperTitles()).toEqual(["Gemini"]);
+  });
+
+  it("waits for a pause in typing, then adds papers whose text matched even when their metadata did not", async () => {
+    vi.useFakeTimers();
+    vi.mocked(invoke).mockResolvedValue([
+      textMatch("1706.03762", "  scaled dot-product  "),
+    ]);
+    const { search } = renderLibrary();
+
+    search("dot");
+    search("dot-");
+    search("dot-product");
+    expect(paperTitles()).toEqual([]);
+
+    await settleTextSearch();
+
+    expect(searchCalls()).toEqual([["search_paper_library", { query: "dot-product" }]]);
+    expect(paperTitles()).toEqual(["Attention Is All You Need"]);
+    // The matching line replaces the usual subtitle, so the hit is visible.
+    expect(screen.getByText("scaled dot-product")).toBeInTheDocument();
+  });
+
+  it("searches the word being typed as typed, and again as a whole word once a space follows it", async () => {
+    vi.useFakeTimers();
+    vi.mocked(invoke).mockResolvedValue([textMatch("1706.03762", "scaled dot-product")]);
+    const { search } = renderLibrary();
+
+    search("  dot-product");
+    await settleTextSearch();
+    search("dot-product   ");
+    await settleTextSearch();
+
+    expect(searchCalls()).toEqual([
+      ["search_paper_library", { query: "dot-product" }],
+      ["search_paper_library", { query: "dot-product " }],
+    ]);
+    expect(paperTitles()).toEqual(["Attention Is All You Need"]);
+  });
+
+  it("keeps filtering by metadata when the full-text index cannot be read", async () => {
+    vi.useFakeTimers();
+    vi.mocked(invoke).mockRejectedValue(new Error("index missing"));
+    const { search } = renderLibrary();
+
+    search("attention");
+    await settleTextSearch();
+
+    expect(paperTitles()).toEqual(["Attention Is All You Need"]);
+    // What is listed is the metadata half only, and says so.
+    expect(screen.getByRole("status")).toHaveTextContent("Saved-text search unavailable");
+    expect(screen.getByText("Saved-text search unavailable")).toHaveAttribute("title", "Saved-text search unavailable\nindex missing");
+
+    vi.mocked(invoke).mockResolvedValue([textMatch("2010.11929", "attention maps")]);
+    fireEvent.click(screen.getByRole("button", { name: "Try again" }));
+    // The retry is said at once, in place of the failure it answers.
+    expect(screen.getByRole("status")).toHaveTextContent("Searching saved text…");
+    await settleTextSearch();
+
+    expect(searchCalls()).toEqual([["search_paper_library", { query: "attention" }], ["search_paper_library", { query: "attention" }]]);
+    expect(paperTitles()).toEqual(["Attention Is All You Need", "An Image Is Worth 16x16 Words"]);
+    expect(screen.queryByText("Saved-text search unavailable")).toBeNull();
+    expect(screen.queryByText("Searching saved text…")).toBeNull();
+  });
+
+  it("says a slow full-text search is still under way, and only a quick one stays quiet", async () => {
+    vi.useFakeTimers();
+    let answer: (hits: unknown) => void = () => undefined;
+    vi.mocked(invoke).mockImplementation((command) => (
+      command === "search_paper_library" ? new Promise((resolve) => { answer = resolve; }) : Promise.resolve([])
+    ));
+    const { search } = renderLibrary();
+
+    search("dot-product");
+    await settleTextSearch();
+    // The search has been asked, and has not been long enough to mention.
+    expect(searchCalls()).toHaveLength(1);
+    expect(screen.queryByText("Searching saved text…")).toBeNull();
+
+    await act(async () => { await vi.advanceTimersByTimeAsync(300); });
+    expect(screen.getByText("Searching saved text…")).toBeInTheDocument();
+    expect(document.querySelector(".paper-list")).toHaveAttribute("aria-busy", "true");
+
+    await act(async () => { answer([textMatch("1706.03762", "scaled dot-product")]); });
+    expect(paperTitles()).toEqual(["Attention Is All You Need"]);
+    expect(screen.queryByText("Searching saved text…")).toBeNull();
+    expect(document.querySelector(".paper-list")).not.toHaveAttribute("aria-busy");
+  });
+
+});
+

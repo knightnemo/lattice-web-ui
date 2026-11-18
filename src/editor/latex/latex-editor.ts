@@ -1,0 +1,523 @@
+/** The CodeMirror extension sets for source editors: shared text editing, and LaTeX on top of it. */
+import { autocompletion, insertBracket } from "@codemirror/autocomplete";
+import { insertNewlineKeepIndent } from "@codemirror/commands";
+import { HighlightStyle, syntaxHighlighting } from "@codemirror/language";
+import { linter } from "@codemirror/lint";
+import { highlightSelectionMatches, openSearchPanel, replaceAll, search, searchKeymap } from "@codemirror/search";
+import { Prec, StateEffect, Transaction, type Extension } from "@codemirror/state";
+import { EditorView, keymap, tooltips, ViewPlugin, type Command, type KeyBinding } from "@codemirror/view";
+import { tags } from "@lezer/highlight";
+import type { PaperSummary } from "../../app-types";
+import { resolveTexlabDefinition, texlabCompletionSource, texlabHoverTooltip } from "../../build/texlab-language";
+import { floatingSurfaceClassName } from "../../components/ui/menu-surface";
+import { popupMotionClassName } from "../../components/ui/popup-motion";
+import { withoutAppShortcuts } from "../editor-app-shortcuts";
+import { changeMarksExtension } from "../change-marks";
+import { centerMatch, revealExtension } from "../editor-reveal";
+import { harperSpellcheck, type GrammarIgnores, type HarperProse, type IgnoreGrammar } from "../harper-spellcheck";
+import { latexCommandCompletions, latexCommandHover } from "./latex-command-completions";
+import {
+  citationCompletions, citationIcon, includeCompletions, macroCompletions, openCitationAtCursor, referenceCompletions,
+  textBefore,
+} from "./latex-completions";
+import type { CompiledBuild } from "./compiled-labels";
+import { indexDiagnostics } from "./latex-diagnostics";
+import {
+  sortSelectedLines, toggleLineComments, transformCase, wrapCommentRegion, wrapEnvironment, wrapRange,
+  type CaseMode, type SelectionEdit, type TextEdit,
+} from "./latex-edits";
+import {
+  beginEnvironmentClose, enclosingEnvironment, enclosingEnvironmentRange, environmentAt, matchingEnvironmentTarget,
+} from "./latex-environments";
+import {
+  citationCardAtCursor, citationTooltips, citationTooltipSpace, graphicsTooltips, referenceTooltips,
+} from "./latex-hover-cards";
+import {
+  citationCompletionRange, definitionTargetAt, shouldInsertCommandBraces, symbolAt,
+} from "./latex-symbols";
+import type { CitationInfo, DefinitionTarget, LocalMacro, ReferenceInfo, SymbolTarget } from "./latex-text";
+import { listItemNewline, sizedDelimiterClose, type InputEdit } from "./latex-input";
+import { mathPreview } from "./math-preview";
+import { matchingMathDelimiter } from "./math-region";
+import { LATEX_SHORTCUTS, type LatexShortcut } from "./latex-shortcuts";
+import { compactSearchPanel } from "./search-panel";
+import { highlightPaint } from "./latex-highlight-paint";
+
+export const latexHighlightStyle = HighlightStyle.define([
+  { tag: [tags.keyword, tags.definitionKeyword], color: "var(--syntax-keyword)", fontWeight: "500" },
+  { tag: tags.operator, color: "var(--syntax-operator)" },
+  { tag: [tags.heading, tags.function(tags.variableName), tags.macroName], color: "var(--syntax-function)", fontWeight: "500" },
+  { tag: [tags.typeName, tags.className], color: "var(--syntax-type)" },
+  { tag: tags.variableName, color: "var(--syntax-variable)" },
+  { tag: [tags.special(tags.variableName), tags.processingInstruction], color: "var(--syntax-variable-special)", fontStyle: "italic" },
+  // LaTeX's cross-references and citations, command and key alike (latex-language.ts).
+  { tag: tags.labelName, color: "var(--syntax-reference)", fontStyle: "italic" },
+  { tag: tags.quote, color: "var(--syntax-citation)" },
+  { tag: tags.propertyName, color: "var(--syntax-property)" },
+  { tag: tags.attributeName, color: "var(--syntax-attribute)" },
+  { tag: tags.string, color: "var(--syntax-string)" },
+  { tag: tags.comment, color: "var(--syntax-comment)", fontStyle: "italic" },
+  { tag: [tags.docComment, tags.meta], color: "var(--syntax-comment-doc)", fontStyle: "italic" },
+  { tag: tags.bool, color: "var(--syntax-number)", fontWeight: "500" },
+  { tag: tags.number, color: "var(--syntax-number)" },
+  { tag: tags.constant(tags.name), color: "var(--syntax-constant)" },
+  { tag: tags.bracket, color: "var(--syntax-bracket)" },
+  { tag: tags.strong, fontWeight: "700" },
+  { tag: tags.emphasis, fontStyle: "italic" },
+  { tag: tags.invalid, color: "inherit", textDecoration: "none" },
+]);
+
+/** The project's citation and label index changed: lint the document against it again. */
+export const latexIndexChanged = StateEffect.define<null>();
+
+/** Project data the editor reads at use time, so extensions need not be rebuilt as it changes. */
+export type LatexEditorLiveData = {
+  citationKeys: string[];
+  citations: CitationInfo[];
+  references: ReferenceInfo[];
+  indexPending?: boolean;
+  unusedLabels: string[];
+  unusedCitations: string[];
+  localMacros: LocalMacro[];
+  graphicsRoots: string[];
+  projectPaths: string[];
+  /** The project's root document, whose folder TeX reads `\input` paths from. */
+  rootDocumentPath?: string;
+  onOpenCitation?: (key: string) => void;
+  canOpenCitation?: (key: string) => boolean;
+  /** The library, for a citation card's Crossref health; matched by citation key. */
+  papers?: PaperSummary[];
+  /** With the revision below, what a citation card's count of uses was scanned for. */
+  projectRoot?: string;
+  /** Changes after the manuscript was saved, so a citation card counts its uses again. */
+  citationUsageRevision?: unknown;
+  /** The project's `\newcommand`s, for the math a `\ref` card sets. */
+  katexMacros?: Record<string, string>;
+  /** The last build that wrote a PDF, whose `.aux` numbers each label. */
+  compiledBuild?: CompiledBuild;
+  spellingWords: string[];
+  onAddSpellingWord?: (word: string) => boolean | Promise<boolean>;
+  /** The open project's ignored grammar rules and sentences, and the action that adds one. */
+  grammarIgnores?: GrammarIgnores;
+  onIgnoreGrammar?: IgnoreGrammar;
+};
+
+export type LatexEditorOptions = {
+  live: { current: LatexEditorLiveData };
+  /** Project path of the edited file; enables cross-file label lint and TexLab. */
+  currentPath?: string;
+  spellcheck?: boolean;
+  /** TexLab hover, completion, and go-to-definition fallback (needs a `.tex` currentPath). */
+  texlab?: boolean;
+  loadReferenceImage?: (path: string) => Promise<string | null>;
+  onGotoDefinition?: (target: DefinitionTarget) => void;
+  onFindReferences?: (target: SymbolTarget) => void;
+  onRenameSymbol?: (target: SymbolTarget) => void;
+  onRenameEnvironment?: (currentName: string) => void;
+  onWrapEnvironment?: () => void;
+  onPasteImage?: (file: File) => boolean | void;
+  onCreateMissingFile?: (path: string) => void;
+  onTexlabGoto?: (path: string, line: number, column?: number) => void;
+};
+
+/**
+ * Enter keeps the current line's indent rather than adding an indent unit:
+ * that suits a programming language, not LaTeX prose inside
+ * `\begin{document}`. Right after a `\begin{env}` it opens an indented body
+ * line and writes the matching `\end{env}`, unless the environment is already
+ * closed there, in which case it only indents the new line. On an `\item`
+ * line it starts the next item, or leaves the list from an empty one.
+ */
+export function insertLatexNewline(view: EditorView): boolean {
+  const { main } = view.state.selection;
+  const line = view.state.doc.lineAt(main.from);
+  const before = line.text.slice(0, main.from - line.from).replace(/[ \t]+$/, "");
+  const item = main.empty && !/\\begin\{[^}]+\}$/.test(before)
+    ? listItemNewline(view.state.doc.toString(), main.head)
+    : null;
+  if (item) return applyInputEdit(view, item, "input");
+  if (!main.empty || !/\\begin\{[^}]+\}$/.test(before)) return insertNewlineKeepIndent(view);
+  const indent = /^\s*/.exec(line.text)?.[0] ?? "";
+  const close = beginEnvironmentClose(before, view.state.doc, indent)
+    ?? { insert: `\n${indent}  `, cursorOffset: indent.length + 3 };
+  // Trailing blanks after the `\begin{…}` would otherwise end up after the `\end{…}`.
+  const from = line.from + before.length;
+  view.dispatch({
+    changes: { from, to: main.from, insert: close.insert },
+    selection: { anchor: from + close.cursorOffset },
+    scrollIntoView: true,
+    userEvent: "input",
+  });
+  return true;
+}
+
+function applyInputEdit(view: EditorView, edit: InputEdit, userEvent: string): true {
+  view.dispatch({
+    changes: { from: edit.from, to: edit.to, insert: edit.insert },
+    selection: { anchor: edit.cursor },
+    scrollIntoView: true,
+    userEvent,
+  });
+  return true;
+}
+
+/** A command that applies a text edit to the main selection and selects its result. */
+function editCommand(edit: (text: string, from: number, to: number) => SelectionEdit | TextEdit | null): Command {
+  return (view) => {
+    const { from, to } = view.state.selection.main;
+    const result = edit(view.state.doc.toString(), from, to);
+    if (!result) return false;
+    view.dispatch({
+      changes: { from: result.from, to: result.to, insert: result.insert },
+      selection: "cursorFrom" in result
+        ? { anchor: result.cursorFrom, head: result.cursorTo }
+        : { anchor: result.from, head: result.from + result.insert.length },
+      scrollIntoView: true,
+    });
+    return true;
+  };
+}
+
+const wrapCommand = (before: string, after: string) =>
+  editCommand((text, from, to) => wrapRange(text, from, to, before, after));
+const caseCommand = (mode: CaseMode) =>
+  editCommand((text, from, to) => transformCase(text, from, to, mode));
+
+function selectRange(view: EditorView, range: { from: number; to: number } | null): boolean {
+  if (!range) return false;
+  view.dispatch({ selection: { anchor: range.from, head: range.to }, scrollIntoView: true });
+  return true;
+}
+
+function dollarPairCommand(view: EditorView): boolean {
+  const { empty, head } = view.state.selection.main;
+  if (!empty) return wrapCommand("$", "$")(view);
+  const before = view.state.sliceDoc(Math.max(0, head - 1), head);
+  const after = view.state.sliceDoc(head, head + 1);
+  view.dispatch({
+    // `$|$` becomes display math `$$|$$`; a closing `$` is stepped over.
+    changes: after !== "$"
+      ? { from: head, insert: "$$" }
+      : before === "$" ? { from: head - 1, to: head + 1, insert: "$$$$" } : undefined,
+    selection: { anchor: head + 1 },
+    scrollIntoView: true,
+  });
+  return true;
+}
+
+function bracedCommandContentBeforeCursor(view: EditorView): string | null {
+  const range = view.state.selection.main;
+  if (!range.empty || view.state.sliceDoc(range.head, range.head + 1) !== "}") return null;
+  const before = textBefore(view.state, range.head, 120);
+  const openingBrace = before.lastIndexOf("{");
+  if (openingBrace < 0 || !shouldInsertCommandBraces(before.slice(0, openingBrace))) return null;
+  const content = before.slice(openingBrace + 1);
+  return /[{}]/.test(content) ? null : content;
+}
+
+function skipExistingCommandCloseBrace(view: EditorView): boolean {
+  if (bracedCommandContentBeforeCursor(view) === null) return false;
+  view.dispatch({ selection: { anchor: view.state.selection.main.head + 1 }, scrollIntoView: true });
+  return true;
+}
+
+/**
+ * CodeMirror paints the selection layer *behind* line content. A filled
+ * `.cm-activeLine` background therefore hides local selection on the current
+ * line. Toggle a class so CSS can clear that fill while a range is selected.
+ */
+export function selectionVisibilityExtension(): Extension {
+  const sync = (view: EditorView) => {
+    view.dom.classList.toggle("cm-lattice-has-selection", !view.state.selection.main.empty);
+  };
+  return [
+    EditorView.updateListener.of((update) => {
+      if (update.selectionSet || update.docChanged) sync(update.view);
+    }),
+    // Ensure the class is correct on first focus / mount.
+    EditorView.domEventHandlers({ focus: (_event, view) => void sync(view) }),
+  ];
+}
+
+/**
+ * CodeMirror's tooltips (completions, hover cards, diagnostics) arrive and
+ * leave as every popup does, on `.popup-motion`. CodeMirror makes and removes
+ * their elements itself and takes no class for the host its hover cards
+ * share, so each is marked as it lands in the editor; a card joining a host
+ * already shown does not replay it. CodeMirror removes a closed tooltip at
+ * once, so a picture of it (a copy: CodeMirror may show the element itself
+ * again) takes its place for the exit, inert, and goes when that ends.
+ */
+const popupMotionTooltips = ViewPlugin.define((view) => {
+  const leave = (tooltip: HTMLElement, parent: Node, next: Node | null) => {
+    if (!parent.isConnected || window.matchMedia?.("(prefers-reduced-motion: reduce)").matches) return;
+    const picture = tooltip.cloneNode(true) as HTMLElement;
+    picture.inert = true;
+    picture.removeAttribute("role");
+    for (const named of [picture, ...picture.querySelectorAll("[id]")]) named.removeAttribute("id");
+    picture.setAttribute("data-leaving", "");
+    parent.insertBefore(picture, next?.parentNode === parent ? next : null);
+    const animations = picture.getAnimations?.() ?? [];
+    if (!animations.length) picture.remove();
+    else void Promise.allSettled(animations.map((animation) => animation.finished)).then(() => picture.remove());
+  };
+  const observer = new MutationObserver((records) => {
+    for (const record of records) {
+      for (const node of record.addedNodes) {
+        if (node instanceof HTMLElement && node.classList.contains("cm-tooltip")) node.classList.add(popupMotionClassName);
+      }
+      for (const node of record.removedNodes) {
+        if (node instanceof HTMLElement && node.classList.contains(popupMotionClassName) && !node.hasAttribute("data-leaving")) {
+          leave(node, record.target, record.nextSibling);
+        }
+      }
+    }
+  });
+  observer.observe(view.dom, { childList: true });
+  return { destroy: () => observer.disconnect() };
+});
+
+/** Editing behavior shared by LaTeX, Markdown, BibTeX, and plain-text files. */
+export function textEditorExtensions(
+  /** Which prose Harper checks, or false for none. */
+  spellcheck: HarperProse | false = false,
+  live?: { current: LatexEditorLiveData },
+  onPasteImage?: (file: File) => boolean | void,
+): Extension[] {
+  return [
+    EditorView.lineWrapping,
+    selectionVisibilityExtension(),
+    EditorView.contentAttributes.of({
+      // Harper owns prose diagnostics, so WebKit spellcheck stays disabled for
+      // every source language instead of duplicating underlines.
+      spellcheck: "false",
+      autocorrect: "off",
+      autocapitalize: "off",
+    }),
+    syntaxHighlighting(latexHighlightStyle),
+    search({ top: true, scrollToMatch: centerMatch }),
+    revealExtension(),
+    changeMarksExtension(),
+    compactSearchPanel(),
+    highlightSelectionMatches(),
+    tooltips({ tooltipSpace: (view) => citationTooltipSpace(view.dom.getBoundingClientRect()) }),
+    popupMotionTooltips,
+    ...(spellcheck ? [harperSpellcheck(live, spellcheck)] : []),
+    ...(onPasteImage ? [EditorView.domEventHandlers({
+      paste(event) {
+        const file = [...event.clipboardData?.items ?? []].find((item) => item.type.startsWith("image/"))?.getAsFile();
+        if (!file || onPasteImage(file) === false) return false;
+        event.preventDefault();
+        return true;
+      },
+    })] : []),
+  ];
+}
+
+/**
+ * The LaTeX editor's own commands, each on its key from LATEX_SHORTCUTS (which
+ * the shortcut sheet lists). Commands that need the host take it from
+ * `host`; without a handler their key falls through to the next keymap.
+ */
+export function latexCommandKeymap(host: {
+  gotoDefinition: Command;
+  findReferences: Command;
+  renameSymbol: Command;
+  citationCard?: Command;
+  wrapEnvironment?: () => void;
+  renameEnvironment?: (currentName: string) => void;
+}): KeyBinding[] {
+  const bind = (id: LatexShortcut, run: Command): KeyBinding => {
+    const { key, ...rest } = LATEX_SHORTCUTS[id];
+    return { key, run, ...("scope" in rest ? { scope: rest.scope } : {}) };
+  };
+  return [
+    bind("find", openSearchPanel),
+    bind("replaceAll", replaceAll),
+    bind("comment", editCommand(toggleLineComments)),
+    bind("bold", wrapCommand("\\textbf{", "}")),
+    bind("emphasis", wrapCommand("\\emph{", "}")),
+    bind("math", wrapCommand("$", "$")),
+    bind("equation", editCommand((text, from, to) => wrapEnvironment(text, from, to, "equation"))),
+    bind("itemize", editCommand((text, from, to) => wrapEnvironment(text, from, to, "itemize"))),
+    bind("sortLines", editCommand(sortSelectedLines)),
+    bind("upperCase", caseCommand("upper")),
+    bind("lowerCase", caseCommand("lower")),
+    bind("titleCase", caseCommand("title")),
+    bind("commentEnvironment", editCommand((text, from, to) => wrapCommentRegion(text, from, to, "comment-env"))),
+    bind("iffalse", editCommand((text, from, to) => wrapCommentRegion(text, from, to, "iffalse"))),
+    bind("wrapEnvironment", () => {
+      host.wrapEnvironment?.();
+      return Boolean(host.wrapEnvironment);
+    }),
+    bind("definition", host.gotoDefinition),
+    bind("references", host.findReferences),
+    bind("renameSymbol", host.renameSymbol),
+    bind("citationCard", host.citationCard ?? (() => false)),
+    bind("symbolPalette", (view) => {
+      void import("./symbol-palette").then(({ openSymbolPalette }) => openSymbolPalette(view));
+      return true;
+    }),
+    bind("matchingEnvironment", (view) => {
+      const text = view.state.doc.toString();
+      const head = view.state.selection.main.head;
+      return selectRange(view, matchingEnvironmentTarget(text, head) ?? matchingMathDelimiter(text, head));
+    }),
+    bind("selectEnvironment", (view) => selectRange(view, enclosingEnvironmentRange(view.state.doc.toString(), view.state.selection.main.head))),
+    bind("renameEnvironment", (view) => {
+      const { renameEnvironment } = host;
+      const text = view.state.doc.toString();
+      const head = view.state.selection.main.head;
+      const name = renameEnvironment && (environmentAt(text, head) ?? enclosingEnvironment(text, head))?.name;
+      if (!renameEnvironment || !name) return false;
+      renameEnvironment(name);
+      return true;
+    }),
+  ];
+}
+
+export function latexEditorExtensions(options: LatexEditorOptions): Extension[] {
+  const {
+    currentPath = "",
+    onGotoDefinition,
+    onFindReferences,
+    onRenameSymbol,
+    onRenameEnvironment,
+    onWrapEnvironment,
+    onTexlabGoto,
+  } = options;
+  const live = () => options.live.current;
+  const texlabPath = () => currentPath;
+  const texlab = options.texlab && currentPath.endsWith(".tex");
+  const gotoDefinition = (view: EditorView, position: number): boolean => {
+    const data = live();
+    const text = view.state.doc.toString();
+    const target = onGotoDefinition && definitionTargetAt(text, position, data.references, data.projectPaths, data.graphicsRoots, data.rootDocumentPath);
+    if (target) {
+      onGotoDefinition(target);
+      return true;
+    }
+    if (!texlab || !onTexlabGoto) return false;
+    const line = view.state.doc.lineAt(position);
+    void resolveTexlabDefinition(currentPath, text, line.number, position - line.from + 1).then((location) => {
+      if (location) onTexlabGoto(location.path, location.line, location.column);
+    });
+    return true;
+  };
+  const symbolCommand = (handler?: (target: SymbolTarget) => void): Command => (view) => {
+    const target = handler && symbolAt(view.state.doc.toString(), view.state.selection.main.head);
+    if (!target) return false;
+    handler(target);
+    return true;
+  };
+  return [
+    ...textEditorExtensions(options.spellcheck ? "latex" : false, options.live, options.onPasteImage),
+    highlightPaint(),
+    citationTooltips(live, onGotoDefinition),
+    referenceTooltips(live, options.loadReferenceImage),
+    options.loadReferenceImage ? graphicsTooltips(live, options.loadReferenceImage) : [],
+    texlabHoverTooltip(texlabPath, latexCommandHover, options.texlab),
+    currentPath.endsWith(".tex") ? mathPreview(() => live().katexMacros) : [],
+    linter((view) => indexDiagnostics(view.state.doc.toString(), live(), currentPath, options.onCreateMissingFile), {
+      delay: 400,
+      needsRefresh: (update) => update.transactions.some((transaction) => (
+        transaction.effects.some((effect) => effect.is(latexIndexChanged)))),
+    }),
+    autocompletion({
+      override: [
+        citationCompletions(live),
+        referenceCompletions(live),
+        includeCompletions(live),
+        macroCompletions(live),
+        ...(options.texlab ? [texlabCompletionSource(texlabPath)] : []),
+        latexCommandCompletions,
+      ],
+      activateOnTyping: true,
+      activateOnTypingDelay: 0,
+      // Citation completion appears only after the opening brace, so the key
+      // that opened it cannot also be a navigation key. CodeMirror's default
+      // 75 ms guard just makes a quick Arrow/Enter fall through to the editor.
+      interactionDelay: 0,
+      icons: false,
+      optionClass: (completion) => completion.type === "citation" ? "cm-citation-option" : "",
+      tooltipClass: (state) => {
+        const head = state.selection.main.head;
+        return citationCompletionRange(textBefore(state, head), head) ? `cm-citation-menu ${floatingSurfaceClassName}` : "";
+      },
+      addToOptions: [{ position: 10, render: citationIcon }],
+    }),
+    EditorView.domEventHandlers({
+      click(event, view) {
+        if (!(event.metaKey || event.ctrlKey)) {
+          // Clicking an unchanged cursor after Escape is an explicit reopen.
+          if (event.target instanceof Node && view.contentDOM.contains(event.target)) openCitationAtCursor(view);
+          return false;
+        }
+        const position = view.posAtCoords({ x: event.clientX, y: event.clientY });
+        if (position == null || !gotoDefinition(view, position)) return false;
+        event.preventDefault();
+        return true;
+      },
+    }),
+    Prec.high(keymap.of([
+      { key: "Enter", run: insertLatexNewline },
+      { key: "Shift-Enter", run: insertNewlineKeepIndent },
+    ])),
+    // Typing a full `\cite{}` must compose with the pair inserted after
+    // `\cite`: swallow the duplicate opening brace and step over its close.
+    // Highest precedence also keeps optional Vim handling from seeing them.
+    Prec.highest(keymap.of([
+      { key: "{", run: (view) => bracedCommandContentBeforeCursor(view) === "" },
+      { key: "}", run: skipExistingCommandCloseBrace },
+    ])),
+    keymap.of(withoutAppShortcuts(searchKeymap)),
+    // Above the editor's base keymap (codemirror-host), whose defaults took
+    // the LaTeX keys first: ⌘I selected the parent syntax node instead of
+    // writing \emph, and ⌘⇧M opened the lint panel instead of inline math.
+    Prec.high(keymap.of(latexCommandKeymap({
+      gotoDefinition: (view) => gotoDefinition(view, view.state.selection.main.head),
+      findReferences: symbolCommand(onFindReferences),
+      renameSymbol: symbolCommand(onRenameSymbol),
+      citationCard: citationCardAtCursor(live, onGotoDefinition),
+      wrapEnvironment: onWrapEnvironment,
+      renameEnvironment: onRenameEnvironment,
+    }))),
+    // Lowest precedence so Vim's `$` (end of line) still wins when that keymap is active.
+    Prec.lowest(keymap.of([{ key: "$", run: dollarPairCommand }])),
+    EditorView.updateListener.of((update) => {
+      // Cursor/focus entry is independent of typing. Ignore document edits
+      // (autocomplete already handles them), including accepting a completion.
+      // Escape and background updates must not reopen a dismissed menu.
+      if (!update.docChanged && (update.selectionSet || update.focusChanged)) openCitationAtCursor(update.view);
+      const completed = update.transactions.some((transaction) => transaction.isUserEvent("input.complete"));
+      const typed = completed || update.transactions.some((transaction) => transaction.isUserEvent("input.type"));
+      const { empty, head } = update.state.selection.main;
+      if (!update.docChanged || !typed || !empty) return;
+      const before = textBefore(update.state, head, 120);
+      const indent = /^\s*/.exec(update.state.doc.lineAt(head).text)?.[0] ?? "";
+      const close = beginEnvironmentClose(before, update.state.doc, indent);
+      if (close) {
+        update.view.dispatch({
+          changes: { from: head, insert: close.insert },
+          selection: { anchor: head + close.cursorOffset },
+          annotations: Transaction.userEvent.of("input.type"),
+        });
+        return;
+      }
+      const line = update.state.doc.lineAt(head);
+      const closer = sizedDelimiterClose(line.text.slice(0, head - line.from), line.text.slice(head - line.from));
+      if (closer) {
+        applyInputEdit(update.view, { from: head, to: head + closer.replace, insert: closer.insert, cursor: head }, "input.type");
+        return;
+      }
+      // Only an accepted completion gets braces. Every braced command is a
+      // prefix of a longer one (`\cite` of `\citep`, `\include` of
+      // `\includegraphics`, `\label` of `\labelitemi`), so adding them while
+      // typing stole the remaining letters into the argument. Typed commands
+      // wait for `{`, which bracket closing pairs.
+      if (!completed || update.state.sliceDoc(head, head + 1) === "{" || !shouldInsertCommandBraces(before)) return;
+      const braceTransaction = insertBracket(update.state, "{");
+      if (braceTransaction) update.view.dispatch(braceTransaction);
+    }),
+  ];
+}

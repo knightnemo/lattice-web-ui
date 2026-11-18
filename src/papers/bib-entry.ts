@@ -1,0 +1,99 @@
+import { msg } from "@lingui/core/macro";
+import { i18n } from "../i18n";
+import { bibEntryKeys } from "./bib-format";
+
+/** BibTeX entry types the entry editor offers; each value is the wire format. */
+export const BIB_ENTRY_TYPES = ["article", "inproceedings", "book", "misc"] as const;
+export type BibEntryType = (typeof BIB_ENTRY_TYPES)[number];
+
+export type BibEntryDraft = {
+  type: BibEntryType;
+  key: string;
+  title: string;
+  author: string;
+  year: string;
+  journal?: string;
+  booktitle?: string;
+  publisher?: string;
+  url?: string;
+  doi?: string;
+  note?: string;
+  extraFields?: Record<string, string>;
+};
+
+function escapeBibValue(value: string): string {
+  const characters = [...value];
+  const unmatched = new Set<number>();
+  const openings: number[] = [];
+  characters.forEach((character, index) => {
+    if (character !== "{" && character !== "}") return;
+    let precedingBackslashes = 0;
+    while (characters[index - 1 - precedingBackslashes] === "\\") precedingBackslashes += 1;
+    // TeX escapes are literal braces and do not participate in grouping.
+    if (precedingBackslashes % 2 === 1) return;
+    if (character === "{") openings.push(index);
+    else if (openings.length > 0) openings.pop();
+    else unmatched.add(index);
+  });
+  for (const index of openings) unmatched.add(index);
+  return characters.filter((_, index) => !unmatched.has(index)).join("");
+}
+
+export function slugifyCitationKey(title: string, author: string, year: string): string {
+  const last = (author.split(/ and /i)[0] ?? author)
+    .split(",")[0]
+    ?.trim()
+    .split(/\s+/)
+    .pop()
+    ?? "key";
+  const word = (title.match(/[A-Za-z0-9]+/g) ?? ["work"])[0] ?? "work";
+  const yearPart = (year.match(/\d{4}/) ?? ["0000"])[0];
+  return `${last.toLowerCase().replace(/[^a-z0-9]+/g, "")}${yearPart}${word.toLowerCase()}`;
+}
+
+export function formatBibEntry(draft: BibEntryDraft): string {
+  const key = draft.key.trim() || slugifyCitationKey(draft.title, draft.author, draft.year);
+  const fields: [string, string][] = [
+    ["title", draft.title],
+    ["author", draft.author],
+    ["year", draft.year],
+  ];
+  if (draft.type === "article" && draft.journal?.trim()) fields.push(["journal", draft.journal]);
+  if (draft.type === "inproceedings" && draft.booktitle?.trim()) fields.push(["booktitle", draft.booktitle]);
+  if (draft.type === "book" && draft.publisher?.trim()) fields.push(["publisher", draft.publisher]);
+  if (draft.url?.trim()) fields.push(["url", draft.url]);
+  if (draft.doi?.trim()) fields.push(["doi", draft.doi.trim()]);
+  if (draft.note?.trim()) fields.push(["note", draft.note]);
+  const modeledFields = new Set([
+    "title", "author", "year", "journal", "booktitle", "publisher", "url", "doi",
+  ]);
+  if (draft.note !== undefined) modeledFields.add("note");
+  const extraLines: string[] = [];
+  for (const [name, value] of Object.entries(draft.extraFields ?? {})) {
+    // A resolver should only return unmodeled fields, but filtering here keeps
+    // stale modeled values from overriding edits or resurrecting removed data.
+    if (!modeledFields.has(name.toLowerCase()) && /^[a-z][a-z0-9_-]*$/i.test(name) && value.trim()) {
+      // These are parsed BibTeX values, not plain-text form inputs. Preserve
+      // nested braces in commands such as howpublished = {\url{...}}.
+      extraLines.push(`  ${name} = {${value.trim()}}`);
+    }
+  }
+  const body = fields
+    .filter(([, value]) => value.trim())
+    .map(([name, value]) => `  ${name} = {${escapeBibValue(value.trim())}}`)
+    .concat(extraLines)
+    .join(",\n");
+  return `@${draft.type}{${key},\n${body}\n}\n`;
+}
+
+export function appendBibEntry(existing: string, entry: string): string {
+  const keys = bibEntryKeys(entry);
+  if (keys.length !== 1) throw new Error(i18n._(msg`Add exactly one bibliography entry at a time.`));
+  if (bibEntryKeys(existing).some((key) => key.toLowerCase() === keys[0].toLowerCase())) {
+    const key = keys[0];
+    throw new Error(i18n._(msg`Citation key ''${key}'' already exists. Choose a different key or edit the existing reference.`));
+  }
+  const trimmed = existing.replace(/\s*$/, "");
+  const terminated = entry.endsWith("\n") ? entry : `${entry}\n`;
+  return trimmed ? `${trimmed}\n\n${terminated}` : terminated;
+}

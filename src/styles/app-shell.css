@@ -1,0 +1,1362 @@
+* { box-sizing: border-box; }
+html, body, #root { width: 100%; height: 100%; margin: 0; overflow: hidden; background: var(--surface-window); }
+button, input, textarea, select { font: inherit; color: inherit; }
+button { border: 0; cursor: pointer; transition: background-color var(--motion-fast), border-color var(--motion-fast), color var(--motion-fast); }
+button:disabled { cursor: default; opacity: 0.45; }
+input[type="search"] { -webkit-appearance: none; appearance: none; }
+input[type="search"]::-webkit-search-cancel-button,
+input[type="search"]::-webkit-search-decoration,
+input[type="search"]::-webkit-search-results-button,
+input[type="search"]::-webkit-search-results-decoration {
+  -webkit-appearance: none;
+  appearance: none;
+}
+input[type="search"]:focus { outline: none; }
+input[type="search"]:focus-visible {
+  border-color: var(--border-strong);
+  box-shadow: 0 0 0 1px color-mix(in srgb, var(--text-primary) 12%, transparent);
+}
+.copy-button-icon { position: relative; width: 14px; height: 14px; display: inline-grid; place-items: center; flex: none; }
+.copy-button-icon > svg { position: absolute; transition: opacity var(--motion-moderate), transform var(--motion-moderate); }
+.copy-icon-idle { opacity: 1; transform: scale(1) rotate(0); }
+.copy-icon-success { opacity: 0; transform: scale(.85); color: var(--status-success); }
+.copy-button.copied .copy-icon-idle { opacity: 0; transform: scale(.85); }
+.copy-button.copied .copy-icon-success { opacity: 1; transform: scale(1) rotate(0); }
+
+.root-error-page { min-height: 100vh; padding: var(--space-16); display: grid; place-items: center; background: var(--surface-app); color: var(--text-primary); }
+.root-error-card { width: min(100%, 520px); padding: var(--space-16); border-radius: var(--radius-dialog); }
+.root-error-card h1 { margin: 0; font-family: var(--type-display-font); font-size: var(--type-display-size); line-height: var(--type-display-line-height); font-weight: var(--type-display-weight); }
+.root-error-card > p { margin: var(--space-6) 0 0; color: var(--text-secondary); font-size: var(--type-body-size); line-height: 1.6; }
+.root-error-actions { margin-top: 22px; display: flex; flex-wrap: wrap; gap: var(--space-4); }
+.root-error-card > .root-error-action-error { color: var(--status-danger); font-size: var(--type-caption-size); }
+.root-error-details { margin-top: 22px; border-top: 1px solid var(--border-subtle); padding-top: 14px; color: var(--text-secondary); font-size: var(--type-caption-size); }
+.root-error-details summary { width: max-content; cursor: pointer; font-weight: 600; }
+.root-error-details pre { max-height: 180px; margin: var(--space-6) 0 0; padding: var(--space-6); overflow: auto; border-radius: var(--radius-control); background: var(--surface-panel); color: var(--text-primary); font-family: var(--editor-font); font-size: var(--type-micro-size); line-height: 1.5; white-space: pre-wrap; overflow-wrap: anywhere; }
+/* A panel that crashed (telemetry/panel-error-boundary.tsx): its card fills the panel, centered, as an empty state does. */
+.panel-error { box-sizing: border-box; height: 100%; padding: var(--space-8); display: flex; flex-direction: column; align-items: center; justify-content: center; gap: var(--space-4); overflow: auto; text-align: center; color: var(--text-secondary); font-size: var(--type-body-compact-size); }
+.panel-error > strong { color: var(--text-primary); }
+.panel-error > p { margin: 0; }
+.panel-error > .root-error-details { width: min(100%, 420px); margin-top: var(--space-4); text-align: start; }
+
+/* Focus, in two parts.
+ *
+ * WebKit paints a native blue halo on plain `:focus`, including pointer clicks,
+ * even where the product already shows the state with its own border and fill.
+ * That halo is suppressed.
+ *
+ * Keyboard focus is different: it must always be visible, so `:focus-visible`
+ * draws one product ring for controls in the Tab order. Not for focus a
+ * pointer caused, though: script focus after a click or a hover matches
+ * `:focus-visible` too, so components/ui/pointer-focus.ts marks such an element
+ * `data-pointer-focus` and the rule below hides every ring on it, this one
+ * and those components draw themselves (a checkbox, an outline row).
+ * Menu items (every `menuitem*` role), Radix's and the project tree's own row
+ * menu, expose focus through their active-row fill, while the project switcher
+ * and the Overleaf split-menu trigger use a chrome fill. Outlining those
+ * composite controls can leave a stray black frame when WebKit restores focus
+ * after app activation. Radix also temporarily focuses dialog surfaces with
+ * `tabindex="-1"`; those composites already expose focus through their active
+ * row or modal context. Text entry is excluded because a field already answers
+ * with its own border treatment (see the `--field-control-*` contract), and
+ * doubling the two reads as an error state. */
+:where(button, a, input, textarea, select, summary, [role="button"], [tabindex]):focus {
+  outline: none;
+}
+:where(button:not(.project-title):not(.overleaf-toolbar-menu-button):not([role^="menuitem"]), a, select, summary, [role="button"], [tabindex]:not(.ProseMirror):not([tabindex="-1"]):not([role^="menuitem"])):focus-visible {
+  outline: var(--focus-ring-width) solid var(--focus-ring);
+  outline-offset: var(--focus-ring-offset);
+}
+/* Specific enough to beat a component's own ring (`.ui-checkbox:focus-visible`,
+   `.latex-selection-tool button:focus-visible`), so one rule covers them all.
+   A ring more specific than this, or drawn some other way (a fill, a shadow,
+   a parent's outline), checks the mark itself. */
+:root [data-pointer-focus]:focus-visible { outline-color: transparent; }
+
+.app-shell { height: 100%; background: var(--surface-window); display: flex; flex-direction: column; }
+.titlebar { container: titlebar / inline-size; position: relative; z-index: var(--z-chrome); height: var(--titlebar-height); flex: none; display: flex; align-items: center; background: var(--surface-titlebar); box-shadow: inset 0 -1px 0 var(--titlebar-rule); user-select: none; }
+.titlebar-sidebar { width: var(--titlebar-sidebar-width); min-width: 0; height: 100%; flex: none; display: flex; align-items: center; }
+.titlebar-navigator { width: var(--titlebar-navigator-width); height: 100%; flex: none; display: flex; align-items: center; padding-right: var(--titlebar-leading-gap); }
+.traffic-space { width: var(--titlebar-traffic-space-width); height: 100%; flex: none; }
+/* No traffic lights beside the bar: a browser tab and the website's demo have
+   none, and full screen hides them. There the switcher starts at the bar's
+   own padding. In full screen AppKit shows them again only while the pointer
+   holds the menu bar down, in its own bar that slides in over this one. */
+:is(.app-shell.browser-hosted, .app-shell.fullscreen, .titlebar-without-lights) .titlebar-navigator { width: var(--titlebar-navigator-width-browser); padding: 0 var(--space-4); }
+:is(.app-shell.browser-hosted, .app-shell.fullscreen, .titlebar-without-lights) .traffic-space { width: 0; }
+.icon-button { width: var(--titlebar-action-size); height: var(--titlebar-action-size); border-radius: var(--radius-chrome); background: transparent; display: grid; place-items: center; color: var(--text-secondary); }
+.icon-button:hover { background: var(--chrome-hover-surface); color: var(--text-primary); }
+/* Soften the light/dark switch on the big themed surfaces (a rare action, so a
+   short color transition here is cheap even on weak WebKit). */
+.app-shell, .titlebar { transition: background-color var(--motion-slow), color var(--motion-slow); }
+.project-switcher { min-width: 0; height: 100%; flex: none; position: relative; display: flex; align-items: center; overflow: hidden; }
+.project-title { max-width: var(--titlebar-project-title-max-width); height: var(--titlebar-action-size); min-width: 0; flex: none; border-radius: var(--radius-chrome); padding: 0 var(--space-4); background: transparent; color: var(--text-chrome); display: flex; align-items: center; gap: var(--gap-inline); font-size: var(--type-subtitle-size); font-weight: var(--weight-semibold); text-align: left; }
+.project-title:hover, .project-title:focus-visible, .project-title[aria-expanded="true"] { background: var(--chrome-hover-surface); }
+.project-title:disabled { opacity: 1; cursor: default; }
+.project-title > span:first-child { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.project-title > svg { flex: none; color: var(--text-tertiary); }
+/* A long name clamps at the title's max width; the percentage cap this used to
+   carry is cyclic inside the content-sized switcher, so the unclamped name set
+   the switcher's width and pushed Panels away. The gap after it is fixed, so
+   the switcher stays centered between the lights and Panels. */
+/* Near the window's minimum width a full-length name would starve the panel
+   controls beside it; measured on the bar itself so interface zoom and the
+   browser tab's missing traffic lights are already accounted for. */
+@container titlebar (max-width: 800px) { .project-title { max-width: var(--titlebar-project-title-max-width-compact); } }
+.titlebar-drag-area { width: var(--titlebar-trailing-gap); height: 100%; flex: none; }
+/* Focus mode (focus-mode-bar.tsx): the bar keeps the window's controls, the
+   document's name centered on the window and the way out, on the ground the
+   panels sit on and without its rule, so the page is all that stands out. */
+.titlebar.titlebar-focus { background: var(--surface-shell); box-shadow: none; }
+.focus-bar { min-width: 0; height: 100%; flex: 1; padding-inline: var(--space-4); display: flex; align-items: center; justify-content: flex-end; animation: focus-bar-in var(--motion-fast) both; }
+.focus-bar-title { position: absolute; left: 50%; max-width: min(40%, 420px); translate: -50% 0; overflow: hidden; color: var(--text-tertiary); font-size: var(--type-body-compact-size); line-height: var(--type-body-compact-line-height); font-weight: var(--weight-regular); text-overflow: ellipsis; white-space: nowrap; pointer-events: none; }
+.focus-bar-actions { position: relative; display: flex; align-items: center; gap: var(--space-2); }
+.focus-bar-exit .focus-bar-keys { margin-inline-start: var(--space-1); }
+@keyframes focus-bar-in { from { opacity: 0; } }
+.titlebar-main { min-width: 0; height: 100%; flex: 1; background: transparent; display: flex; align-items: center; overflow: hidden; }
+.titlebar-main > .canvas-toolbar { min-width: max-content; width: auto; height: 100%; flex: none; padding: 0 var(--space-3); border: 0; background: transparent; display: flex; align-items: center; gap: var(--space-4); overflow: visible; container-type: normal; container-name: none; }
+.titlebar-main > .canvas-toolbar .active-document { position: absolute; width: 1px; height: 1px; overflow: hidden; clip-path: inset(50%); }
+.titlebar-main > .canvas-toolbar .canvas-actions { min-width: max-content; width: max-content; flex: none; overflow: visible; }
+.spin { animation: spin 0.8s linear infinite; }
+@keyframes spin { to { transform: rotate(360deg); } }
+
+.compile-diagnostics { box-shadow: 0 0 0 1px var(--border-subtle), var(--elevation-floating-shadow); position: absolute; z-index: var(--z-diagnostics); top: 46px; right: var(--space-4); width: min(440px, calc(100% - 16px)); border-radius: var(--radius-panel); color: var(--text-secondary); overflow: hidden; }
+.compile-diagnostics.error .compile-diagnostics-toggle > svg:first-child { color: var(--status-danger); }
+.compile-diagnostics.warning .compile-diagnostics-toggle > svg:first-child { color: var(--status-warning); }
+.compile-diagnostics-bar { min-height: 34px; display: flex; align-items: center; gap: var(--space-3); padding: var(--space-2) var(--space-5) var(--space-2) var(--space-4); }
+.compile-diagnostics-toggle { flex: 1; min-width: 0; height: var(--control-height-compact); border: 0; border-radius: var(--radius-icon); padding: 0 var(--space-3); background: transparent; color: inherit; display: flex; align-items: center; gap: var(--gap-inline); font-size: var(--type-caption-size); font-weight: var(--weight-regular); }
+.compile-diagnostics-toggle:hover { background: var(--tone-hover-surface); }
+.compile-diagnostics-toggle > svg:first-child { width: 15px; height: 15px; flex: none; }
+.compile-diagnostics-toggle span { flex: 1; min-width: 0; overflow: hidden; white-space: nowrap; text-overflow: ellipsis; text-align: left; font-weight: 400; }
+.compile-diagnostics-bar > button:last-child { width: var(--control-size-icon-compact); height: var(--control-size-icon-compact); border: 0; border-radius: calc(var(--radius-icon) * var(--corner-smoothing)); corner-shape: squircle; padding: 0; background: transparent; color: inherit; display: grid; place-items: center; }
+.compile-diagnostics-bar > button:last-child:hover { background: var(--tone-hover-surface); }
+.compile-repair-progress { display: flex; align-items: center; gap: var(--space-3); white-space: nowrap; font-size: var(--type-caption-size); }
+.compile-repair-action { flex: none; gap: var(--space-3); }
+.compile-repair-detail { margin: 0; padding: var(--space-2) var(--space-5) var(--space-4); font-size: var(--type-caption-size); overflow-wrap: anywhere; max-height: 120px; overflow-y: auto; }
+.compile-repair-footer { display: flex; align-items: center; justify-content: flex-end; gap: var(--space-4); padding: var(--space-2) var(--space-4); border-top: 1px solid var(--border-subtle); font-size: var(--type-caption-size); }
+.compile-repair-footer > span { margin-right: auto; }
+.compile-diagnostics-body { padding: 0 var(--space-4) var(--space-4); display: grid; gap: var(--space-3); }
+.compile-diagnostics-switch { min-height: var(--control-height-compact); display: flex; align-items: center; justify-content: space-between; gap: var(--space-4); }
+.compile-log-copy { margin-inline-start: auto; }
+.compile-diagnostics-tabs .ui-segmented-tab { gap: var(--space-2); }
+/* The list scrolls, so it clips: it reaches into the body's padding by as much
+   as it pads back in, which keeps the focus rings of its rows whole. */
+.compile-diagnostics-list { list-style: none; margin: calc(-1 * var(--focus-ring-reach)); padding: var(--focus-ring-reach); max-height: calc(168px + 2 * var(--focus-ring-reach)); overflow: auto; display: grid; align-content: start; gap: var(--space-4); }
+.compile-diagnostics-group { min-width: 0; display: grid; gap: var(--space-1); }
+.compile-diagnostics-group > ul { list-style: none; margin: 0; padding: 0; display: grid; }
+.compile-diagnostics-group > ul > li { min-width: 0; display: flex; align-items: center; gap: var(--gap-tight); }
+/* A path wraps rather than truncates: its last segment is the part that matters. */
+.compile-diagnostics-file { min-width: 0; padding: 0 var(--space-4); display: flex; align-items: baseline; gap: var(--space-3); color: var(--text-tertiary); font-size: var(--type-micro-size); font-weight: var(--weight-medium); overflow-wrap: anywhere; }
+.compile-diagnostics-count { flex: none; font-weight: var(--weight-regular); font-variant-numeric: tabular-nums; opacity: .8; }
+.compile-diagnostic-item { min-width: 0; flex: 1; min-height: 30px; border: 0; border-radius: var(--radius-chrome); padding: var(--space-3) var(--space-4); background: transparent; color: inherit; display: grid; grid-template-columns: auto minmax(0, 1fr) auto; column-gap: var(--gap-inline); align-items: start; text-align: left; font-size: var(--type-caption-size); }
+.compile-diagnostic-item:hover:not(:disabled) { background: var(--tone-hover-surface); }
+.compile-diagnostic-item:disabled { opacity: 0.88; cursor: default; }
+.compile-diagnostic-item.error > svg { color: var(--status-danger); }
+.compile-diagnostic-item.warning > svg { color: var(--status-warning); }
+.compile-diagnostic-message { min-width: 0; color: var(--text-primary); overflow-wrap: anywhere; line-height: 1.45; }
+.compile-diagnostic-line { color: var(--text-tertiary); font-size: var(--type-micro-size); line-height: 1.6; white-space: nowrap; font-variant-numeric: tabular-nums; }
+.compile-diagnostic-copy { width: var(--control-size-icon-compact); height: var(--control-size-icon-compact); flex: none; border: 0; border-radius: var(--radius-icon); padding: 0; background: transparent; color: inherit; display: grid; place-items: center; opacity: .72; transition: background-color var(--motion-fast), opacity var(--motion-fast); }
+.compile-diagnostic-copy:hover { background: var(--tone-hover-surface); opacity: 1; }
+/* An error the build explains (compile-explain.ts) opens into a card: the
+   headline row, an excerpt of the failing line, one sentence, then the fix
+   first and TeX's own words last, small at the end. */
+.compile-diagnostics-group > ul > li.compile-explained { flex-direction: column; align-items: stretch; gap: var(--space-3); padding-bottom: var(--space-3); }
+.compile-explained .compile-diagnostic-message { font-weight: var(--weight-medium); }
+.compile-excerpt { margin: 0 var(--space-4); padding: var(--space-3) 0; border-radius: calc(var(--radius-control) * var(--corner-smoothing)); corner-shape: squircle; background: var(--editor-bg); box-shadow: inset 0 0 0 1px var(--border-subtle); color: var(--text-secondary); font-family: var(--editor-font); font-size: var(--type-micro-size); line-height: 20px; overflow: hidden; display: grid; }
+.compile-excerpt-line { display: grid; grid-template-columns: 30px minmax(0, 1fr); padding-inline-end: var(--space-4); white-space: pre; }
+.compile-excerpt-line[data-failing] { background: color-mix(in srgb, var(--status-danger) 7%, transparent); box-shadow: inset 2px 0 0 var(--status-danger); color: var(--text-primary); }
+.compile-excerpt-number { padding-inline-end: var(--space-4); text-align: right; color: var(--text-tertiary); font-variant-numeric: tabular-nums; }
+.compile-excerpt-text { overflow: hidden; text-overflow: ellipsis; }
+/* The marked line shrinks its end first and then its lead, which is clipped
+   from the start (its text is packed to the end), so the token never leaves. */
+.compile-excerpt-marked { display: flex; }
+.compile-excerpt-lead { flex: 0 1 auto; min-width: 0; display: flex; justify-content: flex-end; overflow: hidden; }
+.compile-excerpt-lead > span { flex: none; }
+.compile-excerpt-marked > mark { flex: none; }
+.compile-excerpt-rest { flex: 0 100 auto; min-width: 0; overflow: hidden; text-overflow: ellipsis; }
+.compile-excerpt mark { background: none; color: var(--status-danger); text-decoration: underline wavy var(--status-danger); text-decoration-thickness: 1px; text-underline-offset: 2px; text-decoration-skip-ink: none; font-weight: var(--weight-semibold); }
+.compile-explained-text { margin: 0; padding: 0 var(--space-4); color: var(--text-primary); font-size: var(--type-caption-size); line-height: 1.5; text-wrap: pretty; }
+.compile-explained-actions { display: flex; flex-wrap: wrap; align-items: center; gap: var(--space-3); padding-inline-start: var(--space-4); }
+.compile-explained-actions code { font-family: var(--editor-font); }
+.compile-explained-enter { opacity: .55; }
+/* The row's Copy stands at its end, as on every other message row. */
+.compile-explained-actions > .compile-diagnostic-copy { margin-inline-start: auto; }
+/* An explained card is taller than a row: the list gets room for it and the rows after it. */
+.compile-diagnostics-list:has(.compile-explained) { max-height: calc(320px + 2 * var(--focus-ring-reach)); }
+.compile-log { display: block; box-sizing: border-box; width: 100%; field-sizing: content; min-height: 0; max-height: 220px; margin: 0; overflow: auto; resize: none; border: 1px solid var(--tone-border); border-radius: var(--radius-chrome); padding: var(--space-4) var(--space-5); background: color-mix(in srgb, var(--surface-panel-raised) 90%, transparent); color: var(--text-primary); font-family: var(--editor-font); font-size: var(--type-micro-size); line-height: 1.45; white-space: pre-wrap; overflow-wrap: anywhere; }
+/* Without field-sizing a textarea is two rows tall; give it the old cap. */
+@supports not (field-sizing: content) { .compile-log { height: 220px; } }
+/* Docked, the output takes a strip under the page instead of covering its
+   top. The strip's height is fixed while it is open, so switching tabs or a
+   new build's messages never resize the PDF; only opening and closing do,
+   and the viewer settles its refit after those. */
+.compile-diagnostics.docked { order: 1; position: relative; z-index: auto; top: auto; right: auto; width: auto; border-top: 1px solid var(--border-subtle); border-radius: 0; background: var(--editor-bg); box-shadow: none; }
+.compile-diagnostics.docked.expanded { height: min(240px, 40%); display: flex; flex-direction: column; }
+.compile-diagnostics.docked.expanded > * { flex: none; }
+.compile-diagnostics.docked.expanded > .compile-repair-detail { flex: 0 1 auto; min-height: 0; overflow-y: auto; }
+.compile-diagnostics.docked.expanded > .compile-diagnostics-body { flex: 1 1 0; min-height: 80px; display: flex; flex-direction: column; }
+.compile-diagnostics.docked .compile-diagnostics-switch { flex: none; }
+.compile-diagnostics.docked .compile-diagnostics-list,
+.compile-diagnostics.docked .compile-log { flex: 1 1 0; min-height: 0; max-height: none; }
+.compile-diagnostics.docked .compile-log { field-sizing: fixed; }
+.editor-status-bar {
+  container-type: inline-size;
+  flex: none;
+  height: var(--control-height-compact);
+  min-height: var(--control-height-compact);
+  /* Each item pads its own 6px, so the text still starts 12px in. */
+  padding: 0 var(--space-3);
+  border-top: 1px solid var(--border-subtle);
+  background: var(--editor-bg);
+  color: var(--text-secondary);
+  display: flex;
+  align-items: center;
+  gap: var(--space-1);
+  font-size: var(--type-caption-size);
+  line-height: var(--type-caption-line-height);
+  font-variant-numeric: tabular-nums;
+  flex-wrap: nowrap;
+  overflow: hidden;
+}
+.editor-status-bar > * { flex: none; white-space: nowrap; }
+/* The bar clips its overflow and leaves 2-3px above and below a 22px item:
+   the ring hugs the item so it fits. */
+.editor-status-bar .status-item:focus-visible { outline-offset: 0; }
+/* Every item a pointer lands on is one slab: 22px on the 28px bar, the
+   control radius, the control hover and press fills, and the secondary ink
+   stepping up to the primary, as the titlebar's and toolbar's controls do. */
+.editor-status-bar .status-item { height: 22px; min-width: 0; border: 0; border-radius: var(--radius-control); padding: 0 var(--space-3); background: transparent; color: var(--text-secondary); font: inherit; display: inline-flex; align-items: center; gap: var(--gap-inline-tight); cursor: pointer; transition: background-color var(--motion-fast), color var(--motion-fast); }
+.editor-status-bar .status-item:hover { background: var(--control-hover-surface); color: var(--text-primary); }
+.editor-status-bar .status-item:is(:active, [data-state="open"]) { background: var(--control-pressed-surface); color: var(--text-primary); }
+.editor-status-bar .status-item > svg { flex: none; }
+.editor-status-bar .status-item > span { min-width: 0; overflow: hidden; text-overflow: ellipsis; }
+.editor-status-bar .status-caret-word { white-space: pre; }
+/* Comments and TODOs travel together toward the counts at the end rather than
+   floating mid-bar whenever the hint and the breadcrumb are absent. */
+.editor-status-bar .status-comments { margin-left: auto; }
+/* An open count is the one coloured thing on the bar: the icon and the
+   number take the accent, the noun keeps the bar's ink. */
+.editor-status-bar .status-count { font-weight: var(--weight-medium); }
+.editor-status-bar .status-counter[data-active] :is(svg, .status-count) { color: var(--control-active); }
+/* The count reads first and names its scope in the quieter ink after a dot;
+   the scope is the first thing to go. */
+.editor-status-bar .status-body-words { margin-left: var(--space-2); gap: var(--space-2); }
+.editor-status-bar .status-body-words .status-word-scope::after { content: "·"; margin-left: var(--space-2); }
+.editor-status-bar .status-body-words .status-word-count { color: var(--text-primary); }
+.editor-status-bar .status-more { display: none; width: 22px; padding: 0; justify-content: center; }
+.editor-status-bar .editor-breadcrumb { min-width: 0; flex: 1 1 auto; overflow: hidden; color: var(--text-secondary); text-align: center; display: inline-flex; align-items: center; justify-content: center; gap: var(--space-2); flex-wrap: nowrap; }
+.editor-status-bar .editor-breadcrumb button { border: 0; background: transparent; color: inherit; padding: 0; font: inherit; max-width: 160px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; transition: color var(--motion-fast); }
+.editor-status-bar .editor-breadcrumb button:hover { color: var(--text-primary); }
+.editor-status-bar .editor-breadcrumb i { flex: none; color: var(--text-tertiary); font-style: normal; }
+/* Each crumb (separator and button) is the flex item, so it is the one that
+   must be allowed under its text's width: then the button ellipsizes, where a
+   crumb wider than the bar was cut at both ends of the centred row. */
+.editor-status-bar .editor-breadcrumb > span { min-width: 0; display: flex; align-items: center; gap: var(--space-2); }
+.editor-status-bar .status-vim-mode { min-width: max-content; flex: none; padding: 0 var(--space-3); color: var(--text-primary); font-size: var(--type-micro-size); font-weight: var(--weight-semibold); letter-spacing: .02em; font-variant-numeric: tabular-nums; }
+.editor-status-bar .status-vim-compact { display: none; }
+/* The save slot after the caret: tertiary ink while all is well, the
+   secondary ink and a warning-tinted icon offline, danger only for a write
+   that failed. The age trails the label after a dot. */
+.editor-status-bar .status-save { color: var(--text-tertiary); }
+.editor-status-bar .status-save .status-save-age::before { content: "·"; margin-inline-end: var(--space-2); }
+.editor-status-bar .status-save .status-save-age { margin-inline-start: var(--space-2); }
+.editor-status-bar .status-save[data-mode="offline"] { color: var(--text-secondary); }
+.editor-status-bar .status-save[data-mode="offline"] > svg { color: var(--status-warning); }
+.editor-status-bar .status-save[data-mode="error"] { color: var(--status-danger); }
+/* The bar gives way in one order as it narrows, so what stays is what a
+   writer glances at most, and nothing ever wraps, overlaps or is cut:
+     1. the breadcrumb keeps only the current section, then goes;
+     2. the counters drop their nouns and keep icon and count;
+     3. the word count drops its scope, then folds with everything below it
+        into More (…), which lists the counters and every word count;
+     4. the caret shortens to line:column and Vim's mode to its initial;
+     5. the counters fold into More.
+   The save slot drops its age with the breadcrumb's parents (1), its label
+   with the breadcrumb (3), and keeps its icon, which still opens its details.
+   The caret, Vim's mode and More never leave. Each step is the measured
+   width of the English bar that stays (the longer language) with a 5-digit
+   line, a 3-digit column, two-digit counts and a 7-digit manuscript, plus the
+   gaps; the breadcrumb, the one item that shrinks rather than goes, absorbs
+   the slack between steps. Vim's mode is about 80px, so a bar showing it
+   takes each step that much sooner (the `:has` twins). Keep them here as one
+   ladder: a second copy elsewhere in the cascade silently wins and strands the
+   step you are reading. A Split source at its minimum (SPLIT_SOURCE_MIN_WIDTH)
+   leaves the bar 216px; a panel narrower than both Split minimums shrinks the
+   source below that, and the caret ellipsizes before anything spills. */
+@container (max-width: 600px) { .editor-status-bar .status-save .status-save-age { display: none; } }
+@container (max-width: 680px) { .editor-status-bar:has(.status-vim-mode) .status-save .status-save-age { display: none; } }
+@container (max-width: 420px) { .editor-status-bar .status-save .status-save-label { display: none; } }
+@container (max-width: 500px) { .editor-status-bar:has(.status-vim-mode) .status-save .status-save-label { display: none; } }
+@container (max-width: 600px) {
+  .editor-status-bar .editor-breadcrumb > span:not(:last-child),
+  .editor-status-bar .editor-breadcrumb > span > i { display: none; }
+}
+@container (max-width: 680px) {
+  .editor-status-bar:has(.status-vim-mode) .editor-breadcrumb > span:not(:last-child),
+  .editor-status-bar:has(.status-vim-mode) .editor-breadcrumb > span > i { display: none; }
+}
+@container (max-width: 520px) { .editor-status-bar .status-counter .status-label { display: none; } }
+@container (max-width: 600px) { .editor-status-bar:has(.status-vim-mode) .status-counter .status-label { display: none; } }
+@container (max-width: 420px) {
+  .editor-status-bar .editor-breadcrumb { display: none; }
+  .editor-status-bar .status-body-words .status-word-scope { display: none; }
+}
+@container (max-width: 500px) {
+  .editor-status-bar:has(.status-vim-mode) :is(.editor-breadcrumb, .status-body-words .status-word-scope) { display: none; }
+}
+@container (max-width: 340px) {
+  .editor-status-bar .status-body-words { display: none; }
+  .editor-status-bar .status-more { display: inline-flex; margin-left: var(--space-2); }
+}
+@container (max-width: 420px) {
+  .editor-status-bar:has(.status-vim-mode) .status-body-words { display: none; }
+  .editor-status-bar:has(.status-vim-mode) .status-more { display: inline-flex; margin-left: var(--space-2); }
+}
+/* From here the caret may also shrink, with an ellipsis, so a bar narrower
+   than the last step never spills past its end. */
+@container (max-width: 240px) {
+  .editor-status-bar .status-goto { flex: 0 1 auto; }
+  .editor-status-bar :is(.status-caret-word, .status-vim-full) { display: none; }
+  .editor-status-bar .status-caret-column::before { content: ":"; }
+  .editor-status-bar .status-vim-compact { display: inline; }
+}
+@container (max-width: 350px) {
+  .editor-status-bar:has(.status-vim-mode) .status-goto { flex: 0 1 auto; }
+  .editor-status-bar:has(.status-vim-mode) :is(.status-caret-word, .status-vim-full) { display: none; }
+  .editor-status-bar:has(.status-vim-mode) .status-caret-column::before { content: ":"; }
+  .editor-status-bar:has(.status-vim-mode) .status-vim-compact { display: inline; }
+}
+/* With the counters folded, More takes the end of the bar on its own. */
+@container (max-width: 180px) {
+  .editor-status-bar .status-counter { display: none; }
+  .editor-status-bar .status-more { margin-left: auto; }
+}
+@container (max-width: 210px) {
+  .editor-status-bar:has(.status-vim-mode) .status-counter { display: none; }
+  .editor-status-bar:has(.status-vim-mode) .status-more { margin-left: auto; }
+}
+.word-count-popover { width: 284px; padding: var(--space-2); }
+/* A filename is one unbroken token; the notes break it anywhere rather than
+   run out of the popover, and the label column may shrink below its text. */
+.word-count-popover dl { margin: 0; display: grid; }
+.word-count-popover dl > div { display: grid; grid-template-columns: minmax(0, 1fr) auto; align-items: baseline; gap: var(--space-1) var(--space-6); padding: var(--space-5) var(--space-6); }
+.word-count-popover dl > div + div { border-top: 1px solid var(--border-subtle); }
+.word-count-popover dt { color: var(--text-primary); font-size: var(--type-body-compact-size); font-weight: var(--weight-semibold); }
+.word-count-popover dd { margin: 0; color: var(--text-primary); font-size: var(--type-body-compact-size); font-weight: var(--weight-semibold); font-variant-numeric: tabular-nums; white-space: nowrap; }
+.word-count-popover dd.word-count-note { grid-column: 1 / -1; color: var(--text-tertiary); font-size: var(--type-micro-size); font-weight: var(--weight-regular); line-height: var(--type-micro-line-height); white-space: normal; text-wrap: pretty; min-width: 0; overflow-wrap: anywhere; }
+/* The save slot's details: a sentence or two above the rows when there is
+   something to say (offline, a failed write), and the actions under them. */
+.save-state-popover { display: grid; gap: var(--space-2); }
+.save-state-popover > strong { padding: var(--space-4) var(--space-6) 0; color: var(--text-primary); font-size: var(--type-body-compact-size); font-weight: var(--weight-semibold); overflow-wrap: anywhere; }
+.save-state-popover > p { margin: 0; padding: 0 var(--space-6); color: var(--text-secondary); font-size: var(--type-caption-size); line-height: var(--type-caption-line-height); text-wrap: pretty; }
+.save-state-popover > p.save-state-reason { color: var(--text-primary); font-family: var(--editor-font); font-size: var(--type-micro-size); overflow-wrap: anywhere; }
+.save-state-popover .save-state-actions { display: flex; flex-wrap: wrap; gap: var(--space-3); padding: var(--space-2) var(--space-6) var(--space-4); }
+.save-state-popover > dl + .save-state-actions { padding-top: 0; }
+/* At the narrowest steps More lists what the bar folded: the counters as
+   rows that open their drawers, the open count at the end in the accent,
+   then the word counts by scope. */
+.status-more-rows { --fluid-hover-fill: var(--control-hover-surface); position: relative; display: grid; padding-bottom: var(--space-2); border-bottom: 1px solid var(--border-subtle); }
+.status-more-row { min-height: var(--row-height-compact); border: 0; border-radius: calc(var(--nested-radius) * var(--nested-corner-smoothing, 1)); corner-shape: var(--nested-corner-shape, round); padding: 0 var(--space-4); background: transparent; color: var(--text-primary); font: inherit; font-size: var(--type-body-compact-size); line-height: var(--type-body-compact-line-height); display: flex; align-items: center; gap: var(--space-4); text-align: left; cursor: pointer; }
+.status-more-row > svg { flex: none; width: 14px; height: 14px; stroke-width: 1.5; color: var(--text-secondary); }
+.status-more-row > span:first-of-type { flex: 1 1 auto; min-width: 0; }
+.status-more-row .status-count { font-weight: var(--weight-medium); font-variant-numeric: tabular-nums; color: var(--text-secondary); }
+.status-more-row[data-active] :is(svg, .status-count) { color: var(--control-active); }
+/* `.modal` (dialogs.css) loads later with its own width and padding, so these
+   carry the base class too or they silently lose to it. */
+.modal.quick-open-modal { width: min(560px, calc(100vw - 40px)); padding: 0; overflow: hidden; }
+.quick-open-header { position: relative; padding: var(--space-3) var(--space-4); display: flex; align-items: center; }
+.quick-open-header::after { content: ""; position: absolute; inset-inline: 0; bottom: 0; height: 1px; background: var(--border-subtle); }
+/* The divider already frames the query, so the field drops its own box; it
+   stands a row taller than the results, so the query reads as the way in. */
+.quick-open-header .ui-search-field { height: var(--row-height-default); border-color: transparent; background: transparent; }
+.quick-open-header .ui-search-field-input { font-size: var(--type-body-size); line-height: var(--type-body-line-height); }
+/* Pickers whose details are short (the command palette's shortcuts) keep each
+   row to one line, with the detail trailing at the end. */
+.quick-open-modal[data-detail="end"] .quick-open-list button { flex-direction: row; align-items: center; justify-content: space-between; gap: var(--space-8); }
+.quick-open-modal[data-detail="end"] .picker-label { flex: 1 1 auto; }
+.quick-open-modal[data-detail="end"] .picker-detail { flex: 0 1 auto; max-width: 45%; }
+.quick-open-list { --surface-radius: var(--radius-dialog); --surface-inset: var(--space-3); padding: var(--surface-inset); display: grid; }
+/* Arrowing to a row past the fold stops it clear of the edge fades. */
+.quick-open-scroll [data-slot="scroll-area-viewport"] { max-height: min(360px, 50vh); scroll-padding-block: var(--scroll-fade-size); }
+.quick-open-list button { min-height: var(--row-height-compact); border: 0; border-radius: calc(var(--nested-radius) * var(--nested-corner-smoothing, 1)); corner-shape: var(--nested-corner-shape, round); padding: var(--space-3) var(--space-5); background: transparent; color: var(--text-primary); text-align: left; font-size: var(--type-body-size); line-height: var(--type-body-line-height); display: flex; flex-direction: column; align-items: stretch; justify-content: center; gap: var(--gap-tight); min-width: 0; overflow: hidden; }
+/* The pointer moves the current row too (on a real move), so `.active` is the
+   only highlight; a :hover fill would light a second row under a resting
+   pointer while the arrows move on. */
+.quick-open-list { --fluid-hover-fill: var(--control-active-soft); }
+.quick-open-list button.active { background: var(--control-active-soft); color: var(--text-primary); }
+/* A block: labels are plain text, and an ellipsis draws only in a block
+   container, so a long file name ends in "…" rather than mid-letter. */
+.quick-open-list .picker-label { min-width: 0; display: block; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+/* One heading per section at the caption role, quiet enough that the rows
+   stay the thing to read. */
+.quick-open-list .picker-section { padding: var(--space-6) var(--space-5) var(--space-2); color: var(--text-secondary); font-size: var(--type-caption-size); line-height: var(--type-caption-line-height); font-weight: var(--weight-medium); }
+/* The first heading by class, not :first-of-type: the hover fill is a div that
+   mounts first in the list, and counting it moved every row 8px down under a
+   fill measured before it came. */
+.quick-open-list .picker-section:not(.picker-section ~ .picker-section) { padding-top: var(--space-2); }
+.quick-open-list .picker-file { min-width: 0; display: flex; align-items: center; gap: var(--space-4); }
+.quick-open-list .picker-file-icon { flex: none; display: inline-flex; color: var(--text-secondary); }
+.quick-open-list button.active .picker-file-icon { color: var(--text-primary); }
+.quick-open-list .picker-file-name { flex: none; max-width: 70%; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; color: var(--text-primary); }
+.quick-open-list button.active .picker-file-name { color: inherit; }
+.quick-open-list .picker-file-folder { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; color: var(--text-secondary); font-size: var(--type-caption-size); }
+.quick-open-list .picker-detail { color: var(--text-secondary); font-size: var(--type-caption-size); font-style: normal; max-width: 100%; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+/* A row with an icon or a shortcut: icon, then its text, then the keycaps at
+   the end, all on one line whatever the detail placement. */
+.quick-open-list button:has(> .picker-text) { flex-direction: row; align-items: center; gap: var(--space-4); }
+.quick-open-list .picker-icon { flex: none; display: inline-flex; color: var(--text-secondary); }
+/* The palette's icon symbols: in the document for <use>, never on screen. */
+.picker-icon-sprite { position: absolute; width: 0; height: 0; overflow: hidden; }
+.quick-open-list button.active .picker-icon { color: var(--text-primary); }
+.quick-open-list .picker-text { flex: 1 1 auto; min-width: 0; display: flex; flex-direction: column; gap: var(--gap-tight); }
+.quick-open-modal[data-detail="end"] .picker-text { flex-direction: row; align-items: baseline; justify-content: space-between; gap: var(--space-8); }
+.quick-open-list .picker-shortcut { flex: none; margin-inline-start: var(--space-2); }
+/* The command palette reaches files, papers and settings as well as
+   commands, so it gives its rows more room than the single-purpose pickers. */
+/* A query that found nothing names what was not found, set as an empty
+   state's title and description, at the rows' text edge; the one row that
+   may still answer it (the palette's Find in project) follows. */
+.picker-no-match { padding: var(--space-8) var(--space-8) var(--space-2); display: grid; gap: var(--space-1); color: var(--text-tertiary); font-size: var(--type-caption-size); line-height: var(--type-caption-line-height); overflow-wrap: anywhere; }
+.picker-no-match > strong { color: var(--text-primary); font-size: var(--type-subtitle-size); line-height: var(--type-subtitle-line-height); font-weight: var(--type-subtitle-weight); }
+.picker-no-match:has(+ .quick-open-scroll[hidden]) { padding-bottom: var(--space-8); }
+.quick-open-scroll[hidden] { display: none; }
+.modal.quick-open-modal.command-palette-modal { width: min(640px, calc(100vw - 40px)); }
+.command-palette-modal .quick-open-scroll [data-slot="scroll-area-viewport"] { max-height: min(460px, 60vh); }
+.command-palette-footer { position: relative; padding: var(--space-4) var(--space-6); display: flex; align-items: center; justify-content: flex-end; gap: var(--space-8); color: var(--text-secondary); font-size: var(--type-caption-size); line-height: var(--type-caption-line-height); }
+.command-palette-footer::before { content: ""; position: absolute; inset-inline: 0; top: 0; height: 1px; background: var(--border-subtle); }
+.command-palette-footer > span { display: inline-flex; align-items: center; gap: var(--space-3); white-space: nowrap; }
+/* Quick open marks the typed characters in each name: semibold on an accent
+   underline, the rest of the name a step quieter, so the match is what reads. */
+.quick-open-list .picker-match { background: none; color: var(--text-primary); font-weight: var(--weight-semibold); text-decoration: underline; text-decoration-color: color-mix(in srgb, var(--accent) 55%, transparent); text-decoration-thickness: 1.5px; text-underline-offset: 3px; }
+.quick-open-list .picker-file-name:has(.picker-match) { color: var(--text-secondary); }
+/* "Current" or the `:42` a query asked for, at the row's end. */
+.quick-open-list .picker-file-tag { margin-inline-start: auto; flex: none; padding-inline-start: var(--space-4); color: var(--text-tertiary); font-size: var(--type-caption-size); font-variant-numeric: tabular-nums; white-space: nowrap; }
+/* The prefixes, the one thing the footer shows (↑↓ and ↵ need no telling), lead at the start. */
+.quick-open-footer .quick-open-scopes { display: inline-flex; gap: var(--space-8); margin-inline-end: auto; min-width: 0; overflow: hidden; }
+.quick-open-footer .quick-open-scopes > span { display: inline-flex; align-items: center; gap: var(--space-3); white-space: nowrap; }
+/* A narrow window drops the line prefix first: it is the one the writer can reach with ⌘G. */
+@media (max-width: 480px) { .quick-open-footer .quick-open-scopes > span:last-child { display: none; } }
+/* Each crumb (separator and button) is the flex item, so it is the one that
+   must be allowed under its text's width: then the button ellipsizes, where a
+   crumb wider than the bar was cut at both ends of the centred row. */
+.modal:is(.goto-line-modal, .figure-insert-modal) { width: min(420px, calc(100vw - 40px)); }
+.goto-line-field { display: flex; align-items: center; gap: var(--space-4); }
+.goto-line-field > input { flex: 1 1 auto; min-width: 0; }
+.goto-line-range { flex: none; color: var(--text-secondary); font-weight: var(--weight-regular); font-variant-numeric: tabular-nums; }
+.canvas-body { position: relative; flex: 1 1 0; min-width: 0; min-height: 0; width: 100%; max-width: 100%; display: flex; flex-direction: column; overflow: hidden; }
+.primary-opening-overlay { position: absolute; inset: 0; z-index: var(--z-editor-popover); display: flex; align-items: center; justify-content: center; background: color-mix(in srgb, var(--surface-app) 82%, transparent); color: var(--text-secondary); cursor: progress; }
+/* The titlebar overrides this height to fill its single chrome row. Keeping the
+   strip's own default compact also makes the component usable in isolation. */
+/* While a tab is being dragged, the whole strip shows the grab cursor and stops
+   selecting text under the pointer. */
+/* Embedded documents own their pointer stream. Let the parent canvas receive
+   the rest of a tab/tree drag so HTML previews remain valid split drop targets. */
+/* The bibliography entry editor shares the Add papers sheet's frame (see
+   --dialog-sheet-width) so "Enter manually" swaps contents, not sizes. The
+   form is a column: the lookup, the entry as it reads, the work (title,
+   authors, year beside venue), then the record (DOI, URL, type, key) past a
+   hairline. Each field's label sits at its start, the way a reference
+   manager's info pane reads, so the whole entry fits the sheet unscrolled. */
+.modal.sheet-dialog.bib-entry-dialog { width: var(--dialog-sheet-width); container: bib-entry / inline-size; }
+.bib-entry-form { display: grid; gap: var(--space-8); }
+.bib-entry-form label { min-width: 0; display: flex; flex-direction: column; gap: var(--space-3); color: var(--text-secondary); font-size: var(--type-caption-size); line-height: var(--type-caption-line-height); font-weight: var(--weight-medium); font-family: var(--ui-font); }
+/* Four columns: a label, its field, and on a shared row a second label and
+   field; a label on a row of its own spans them and its field takes the rest. */
+.bib-entry-group { display: grid; text-align: start; grid-template-columns: 64px minmax(0, 1fr) auto minmax(0, 1fr); gap: var(--space-5) var(--space-5); align-items: center; }
+.bib-entry-form .bib-entry-group > label { grid-column: span 2; display: grid; grid-template-columns: subgrid; align-items: center; gap: inherit; }
+.bib-entry-label { min-width: 0; overflow-wrap: anywhere; }
+/* A year is four digits: its column holds them and the stepper, and the venue takes the rest. */
+.bib-entry-work { grid-template-columns: 64px 112px auto minmax(0, 1fr); }
+.bib-entry-form .bib-entry-work > label:nth-child(-n + 2) { grid-column: 1 / -1; }
+.bib-entry-work > label:nth-child(-n + 2) > :last-child { grid-column: 2 / -1; }
+.bib-entry-record { padding-top: var(--space-8); border-top: 1px solid var(--border-subtle); }
+.bib-citation-records { display: flex; flex-wrap: wrap; align-items: center; gap: var(--space-4); font: var(--type-caption-size)/1.5 var(--ui-font); }
+.bib-citation-records[data-edited] .bib-citation-evidence { color: var(--text-tertiary); }
+/* How a record was matched: one quiet line, its parts set off by middle dots;
+   the source links to the record without leaving the type's own ink. */
+.bib-citation-evidence { display: inline-flex; flex-wrap: wrap; align-items: center; color: var(--text-secondary); }
+.bib-citation-evidence > span + span::before { content: "·"; padding-inline: var(--space-3); }
+.bib-evidence-source { color: inherit; text-decoration: underline; text-decoration-color: var(--border-strong); text-underline-offset: 2px; transition: color var(--motion-fast), text-decoration-color var(--motion-fast); }
+.bib-evidence-source:hover { color: var(--text-primary); text-decoration-color: currentColor; }
+/* Records a lookup could not tell apart: one radio list in a raised card, each
+   record read as it would be cited, the chosen one washed and edged in the accent. */
+.bib-candidates { display: grid; gap: var(--space-5); }
+.bib-candidate-list { border: 1px solid var(--border-subtle); border-radius: var(--radius-panel); overflow: hidden; background: var(--surface-panel-raised); }
+.bib-candidate-list .bib-candidate { padding: var(--space-6) var(--space-8) var(--space-6) var(--space-6); display: grid; grid-template-columns: 16px minmax(0, 1fr); align-items: start; gap: var(--space-5); cursor: pointer; color: var(--text-primary); font-weight: var(--weight-regular); transition: background-color var(--motion-fast); }
+.bib-candidate + .bib-candidate { border-top: 1px solid var(--border-subtle); }
+.bib-candidate:hover { background: var(--control-hover-surface); }
+.bib-candidate[data-chosen] { background: color-mix(in srgb, var(--control-active) 6%, transparent); box-shadow: inset 2px 0 0 var(--control-active); }
+.bib-candidate > input { margin: var(--space-2) 0 0; accent-color: var(--control-active); }
+.bib-candidate-body { min-width: 0; display: grid; gap: var(--space-1); }
+.bib-candidate-body > strong { overflow-wrap: anywhere; font-family: var(--reading-font); font-size: var(--type-typeset-size); line-height: var(--type-body-line-height); font-weight: var(--weight-regular); text-wrap: pretty; }
+.bib-candidate-byline { color: var(--text-secondary); font-size: var(--type-caption-size); line-height: var(--type-caption-line-height); overflow-wrap: anywhere; }
+.bib-candidate-body > em { color: var(--text-secondary); font-family: var(--reading-font); font-size: var(--type-caption-size); line-height: var(--type-caption-line-height); overflow-wrap: anywhere; }
+.bib-candidate-evidence { margin-top: var(--space-2); display: flex; flex-wrap: wrap; align-items: center; gap: var(--space-2) var(--space-4); color: var(--text-secondary); font-size: var(--type-micro-size); line-height: var(--type-micro-line-height); }
+.bib-candidate-kind { height: 18px; padding: 0 var(--space-3); border-radius: var(--radius-compact); display: inline-flex; align-items: center; flex: none; font-weight: var(--weight-medium); white-space: nowrap; color: var(--text-secondary); box-shadow: inset 0 0 0 1px var(--border-subtle); }
+.bib-candidate-kind[data-kind="published"] { color: color-mix(in srgb, var(--status-success) 80%, var(--text-primary)); background: var(--status-success-soft); box-shadow: none; }
+.bib-candidates-actions { display: flex; justify-content: flex-end; }
+/* The entry as a reference list prints it, its key floated at the corner so
+   the lines beside it wrap around it at any width. */
+.bib-typeset { margin: 0; padding: var(--space-6) var(--space-8); border-radius: var(--radius-panel); background: var(--surface-panel-raised); box-shadow: 0 0 0 1px var(--border-subtle); overflow-wrap: anywhere; }
+.bib-typeset > * { display: block; }
+.bib-typeset-key { float: right; max-width: 45%; margin: 0 0 var(--space-2) var(--space-6); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; padding: 0 var(--space-3); border-radius: var(--radius-compact); background: color-mix(in srgb, var(--text-primary) 5%, transparent); color: var(--text-secondary); font: var(--type-micro-size)/18px var(--editor-font); }
+.bib-typeset-authors { color: var(--text-secondary); font-size: var(--type-caption-size); line-height: var(--type-caption-line-height); }
+.bib-typeset > strong { margin-block: var(--space-1); color: var(--text-primary); font-family: var(--reading-font); font-size: var(--type-typeset-size); line-height: var(--type-body-line-height); font-weight: var(--weight-regular); text-wrap: pretty; }
+.bib-typeset-venue { color: var(--text-secondary); font-family: var(--reading-font); font-size: var(--type-caption-size); line-height: var(--type-caption-line-height); }
+.bib-typeset-doi { font-family: var(--ui-font); }
+.bib-typeset-doi[data-joined]::before { content: "·"; padding-inline: var(--space-3); }
+/* A line not filled yet names its field in the faint ink. */
+.bib-typeset > [data-unfilled] { color: var(--text-tertiary); }
+/* The lookup is one field and a way past it: the sheet fits it, and grows to the form when that appears. */
+.modal.sheet-dialog.bib-entry-lookup { height: auto; max-height: var(--dialog-large-height); }
+.bib-entry-manual { display: flex; margin-top: calc(-1 * var(--space-6)); }
+.bib-entry-manual > button { margin-left: calc(-1 * var(--space-4)); color: var(--text-secondary); }
+.bib-entry-form > .bib-entry-lookup-error { margin: 0; }
+/* The footer holds the one choice about after saving at its start, the actions at its end. */
+.bib-entry-footer { align-items: center; }
+/* Past the checkbox field's own `margin: 0`. */
+.sheet-dialog > .bib-entry-footer > label.bib-entry-cite { margin-inline-end: auto; }
+.bib-entry-footer > button { flex: none; }
+/* A narrow window: every field takes a row of its own, and the footer's choice its own line. */
+@container bib-entry (width < 480px) {
+  .bib-entry-group, .bib-entry-work { grid-template-columns: 64px minmax(0, 1fr); }
+  .bib-entry-form .bib-entry-group > label { grid-column: 1 / -1; }
+  .bib-entry-footer { flex-wrap: wrap; }
+  .sheet-dialog > .bib-entry-footer > label.bib-entry-cite { flex-basis: 100%; }
+}
+/* The BibTeX the form will write, a click away rather than a block of empty braces under it. */
+.bib-entry-preview-disclosure { flex: none; }
+.bib-entry-preview-disclosure > summary { display: inline-flex; align-items: center; gap: var(--space-2); list-style: none; cursor: pointer; border-radius: var(--radius-compact); color: var(--text-secondary); font: 600 var(--type-micro-size)/var(--type-micro-line-height) var(--ui-font); }
+.bib-entry-preview-disclosure > summary::-webkit-details-marker { display: none; }
+.bib-entry-preview-disclosure > summary:hover { color: var(--text-primary); }
+.bib-entry-preview-disclosure > summary > svg { transition: transform var(--motion-fast); }
+.bib-entry-preview-disclosure[open] > summary > svg { transform: rotate(90deg); }
+.bib-entry-preview { margin: var(--space-4) 0 0; min-height: 96px; overflow: auto; border: 1px solid var(--border-subtle); border-radius: var(--radius-control); padding: var(--space-5); background: var(--surface-app); color: var(--text-secondary); font: var(--type-caption-size)/1.45 var(--editor-font); white-space: pre-wrap; }
+.venue-combobox { position: relative; }
+.venue-combobox input { width: 100%; }
+/* Motion, and its origin under the field, come from the shared `.popup-motion`
+   class, applied in `bib-entry-dialog.tsx`. */
+.venue-menu { position: absolute; top: calc(100% + 4px); left: 0; right: 0; z-index: var(--z-menu-inline-raised); max-height: 232px; overflow: auto; }
+/* 8 outer + 4 pad → 4 item (concentric). */
+.venue-menu button { display: flex; align-items: center; justify-content: space-between; gap: var(--space-4); height: auto; min-height: 28px; border: 0; border-radius: calc(var(--nested-radius) * var(--nested-corner-smoothing, 1)); corner-shape: var(--nested-corner-shape, round); background: transparent; color: var(--text-primary); padding: 5px var(--space-4); text-align: left; font: var(--type-caption-size)/1.3 var(--ui-font); font-weight: 500; cursor: pointer; }
+.venue-menu button span { min-width: 0; flex: 1; overflow: hidden; text-overflow: ellipsis; }
+.venue-menu button em { flex: none; font-style: normal; font-size: var(--type-micro-size); letter-spacing: .04em; text-transform: uppercase; color: var(--text-tertiary); }
+.venue-menu { --fluid-hover-fill: var(--control-active-soft); }
+.venue-menu button:is(:hover, [data-highlighted], [aria-selected="true"]) { background: var(--control-active-soft); color: var(--control-active); }
+.venue-menu button:is(:hover, [data-highlighted], [aria-selected="true"]) em { color: var(--control-active); }
+.year-stepper { position: relative; display: flex; }
+.year-stepper input { width: 100%; padding-right: 26px; }
+.year-stepper-buttons { position: absolute; top: 0; right: 0; bottom: 0; width: 22px; display: flex; flex-direction: column; }
+.year-stepper-buttons button { flex: 1; width: 22px; height: auto; min-height: 0; padding: 0; border: 0; border-left: 1px solid var(--border-subtle); background: transparent; color: var(--text-secondary); display: grid; place-items: center; cursor: pointer; }
+.year-stepper-buttons button:first-child { border-bottom: 1px solid var(--border-subtle); }
+.year-stepper-buttons button:hover { background: var(--control-active-soft); color: var(--control-active); }
+.doctor-status { margin: 0 0 var(--space-6); padding: var(--space-4) var(--space-5); border-radius: var(--radius-control); font-size: var(--type-body-compact-size); font-weight: 600; }
+.doctor-status.ok { background: color-mix(in srgb, var(--status-success) 14%, var(--surface-app)); color: var(--status-success); }
+.doctor-status.bad { background: color-mix(in srgb, var(--status-danger) 12%, var(--surface-app)); color: var(--status-danger); }
+.doctor-checklist { list-style: none; margin: 0; padding: 0; display: grid; grid-template-columns: repeat(auto-fit, minmax(var(--settings-row-control-min-width), 1fr)); gap: var(--space-3); }
+.doctor-checklist li { min-width: 0; min-height: var(--control-height-default); padding: var(--space-3) var(--space-4); border: 1px solid var(--border-subtle); border-radius: var(--radius-control); background: var(--surface-app); display: grid; grid-template-columns: auto minmax(0, 1fr); align-items: center; column-gap: var(--space-3); }
+.doctor-checklist li.bad { grid-column: 1 / -1; border-color: color-mix(in srgb, var(--status-danger) 22%, var(--border-subtle)); background: color-mix(in srgb, var(--status-danger) 5%, var(--surface-app)); }
+.doctor-checklist li > svg { width: 15px; height: 15px; color: var(--status-success); }
+.doctor-checklist li.bad > svg { color: var(--status-danger); }
+.doctor-checklist li strong { min-width: 0; overflow: hidden; color: var(--text-primary); font-size: var(--type-caption-size); text-overflow: ellipsis; white-space: nowrap; }
+.doctor-checklist .doctor-check-detail { grid-column: 2; margin-top: var(--space-1); color: var(--text-secondary); font-size: var(--type-caption-size); line-height: 1.4; overflow-wrap: anywhere; }
+.doctor-checklist .doctor-check-result { position: absolute; width: 1px; height: 1px; overflow: hidden; clip-path: inset(50%); white-space: nowrap; }
+.table-generator-form, .project-replace label { display: grid; grid-template-columns: 1fr 1fr; gap: var(--space-5); }
+.project-replace label { grid-template-columns: 1fr; }
+.project-replace-options { display: flex; flex-wrap: wrap; gap: var(--space-6); }
+.table-generator-form label, .project-replace label { display: flex; flex-direction: column; gap: var(--space-3); color: var(--text-secondary); font-size: var(--type-caption-size); line-height: var(--type-caption-line-height); font-weight: var(--weight-medium); }
+.table-generator-form > .ui-checkbox-field { grid-column: 1 / -1; }
+.table-generator-preview { margin: 0; flex: 1; min-height: 160px; overflow: auto; border: 1px solid var(--border-subtle); border-radius: var(--radius-control); padding: var(--space-5); background: var(--surface-app); color: var(--text-secondary); font: var(--type-caption-size)/1.45 var(--editor-font); white-space: pre-wrap; }
+.table-generator-actions { display: flex; justify-content: flex-end; gap: var(--space-4); }
+.project-replace .dialog-error { margin: 0; color: var(--status-danger); font-size: var(--type-caption-size); }
+.bib-resolve-row { display: flex; gap: var(--space-4); }
+.bib-resolve-row .ui-input,
+.bib-resolve-row .ui-search-field { flex: 1; }
+.project-replace-preview { display: flex; flex-direction: column; gap: var(--space-4); min-height: 0; flex: 1; }
+.project-replace-preview-summary { color: var(--text-secondary); font-size: var(--type-caption-size); display: flex; flex-wrap: wrap; gap: var(--space-2) var(--space-5); }
+.project-replace-hits { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: var(--space-2); overflow: auto; max-height: min(46vh, 360px); }
+.project-replace-hit { width: 100%; text-align: left; border: 1px solid var(--border-subtle); border-radius: var(--radius-control); background: var(--surface-app); padding: var(--space-4) var(--space-5); display: flex; flex-direction: column; gap: var(--gap-tight); }
+.project-replace-hit:hover { border-color: var(--border-strong); }
+.project-replace-hit.active { border-color: var(--control-active-border); background: var(--control-active-soft); }
+/* Find results are a list, not a stack of cards: rows that light up under the
+   pointer and the keyboard, an icon column, then name, folder and line above
+   the matched text. */
+/* Find's empty and no-result states stand centred in the room the results
+   would take, a step down from the filters. */
+.project-find .project-replace-hits { gap: var(--space-1); }
+.project-find .project-replace-hit { border-color: transparent; background: transparent; display: grid; grid-template-columns: auto minmax(0, 1fr); column-gap: var(--space-4); row-gap: var(--space-1); padding: var(--space-4) var(--space-5); }
+/* Find's current hit is the one highlight, which the pointer moves as well
+   as the keys. */
+.project-find-hits { --nested-radius: var(--radius-control); --fluid-hover-fill: var(--control-active-soft); }
+.project-find .project-replace-hit.active { border-color: transparent; background: var(--control-active-soft); }
+.project-find-hit-icon { grid-row: 1; display: inline-flex; align-items: center; color: var(--text-tertiary); }
+.project-find .project-replace-hit-preview { grid-column: 2; }
+.project-find-hit-heading { display: flex; align-items: baseline; gap: var(--space-3); min-width: 0; }
+.project-find-hit-name { flex: 0 1 auto; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; color: var(--text-primary); font-size: var(--type-caption-size); font-weight: var(--weight-semibold); }
+.project-find-hit-folder { flex: 0 1 auto; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; color: var(--text-tertiary); font-size: var(--type-micro-size); }
+.project-find-hit-line { flex: none; margin-left: auto; color: var(--text-tertiary); font-size: var(--type-micro-size); font-variant-numeric: tabular-nums; }
+.project-replace-hit-path { color: var(--text-secondary); font-size: var(--type-micro-size); font-weight: 600; }
+.project-replace-hit-preview { color: var(--text-primary); font-size: var(--type-caption-size); font-family: var(--editor-font); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+/* Files and papers each take the height they need, and share the dialog only
+   when together they overflow it, so a short list is not followed by a gap. */
+.project-find-results { flex: 0 1 auto; min-height: 0; }
+.project-replace-hit-preview mark { border-radius: 2px; background: var(--highlight-match-surface); color: inherit; }
+.project-find .project-replace-hits { max-height: none; overflow: visible; padding-right: var(--space-5); }
+/* A file's hits sit under one header (its name, folder and how many hits it
+   holds), so a hit is only its line number, in a right-aligned column, and
+   its text: about twice as many fit on screen as when every hit restated its
+   file. */
+.project-find-group { display: flex; align-items: center; gap: var(--space-4); min-width: 0; padding: var(--space-6) var(--space-5) var(--space-2); color: var(--text-primary); font-size: var(--type-body-size); line-height: var(--type-body-line-height); }
+.project-find-group:first-child { padding-top: var(--space-2); }
+.project-find-group .project-find-hit-icon { color: var(--text-secondary); }
+.project-find-group .project-find-hit-name { font-size: inherit; font-weight: var(--weight-medium); }
+.project-find-group .project-find-hit-folder { color: var(--text-secondary); font-size: var(--type-caption-size); }
+.project-find-group-count { flex: none; margin-inline-start: auto; color: var(--text-secondary); font-size: var(--type-caption-size); font-variant-numeric: tabular-nums; }
+.project-find .project-replace-hit[data-grouped] { position: relative; grid-template-columns: 40px minmax(0, 1fr); align-items: center; min-height: var(--control-height-compact); padding-block: var(--space-2); }
+.project-replace-hit[data-grouped] .project-find-hit-heading { justify-content: flex-end; padding-inline-end: var(--space-4); }
+.project-replace-hit[data-grouped] .project-find-hit-line { margin: 0; color: var(--text-secondary); font-size: var(--type-caption-size); line-height: var(--type-caption-line-height); }
+.project-find-papers { flex: 0 1 auto; min-height: 0; margin-top: var(--space-5); display: flex; flex-direction: column; gap: var(--space-3); }
+/* Scope tabs lead the results, the live status trailing them on one line. A
+   tab's count is a quiet numeral beside its name, solid on the tab you are on. */
+.project-find-scope { display: flex; align-items: center; justify-content: space-between; gap: var(--space-5); min-height: var(--control-height-compact); }
+.project-find-status { min-width: 0; color: var(--text-secondary); font-size: var(--type-caption-size); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.project-find-scope .ui-segmented-tab { min-width: 52px; }
+.project-find-scope .ui-segmented-tab em { margin-left: var(--space-1); color: var(--text-tertiary); font-style: normal; font-variant-numeric: tabular-nums; transition: color var(--motion-fast); }
+.project-find-scope .ui-segmented-tab.active em { color: var(--text-secondary); }
+
+
+/* Expansion is monotonic. Only closing and releasing an elastic boundary use
+   the spring; the clipping column and its content always share one curve. */
+.workspace { flex: 1; min-width: 0; min-height: 0; overflow: hidden; background: var(--surface-sidebar); }
+.workspace > * { min-width: 0; }
+.navigator { min-width: 0; display: flex; flex-direction: column; overflow: hidden; background: var(--surface-sidebar); }
+.panel-resizer { position: relative; z-index: 2; width: 1px; min-width: 1px; height: 100%; cursor: col-resize; outline: none; background: transparent; touch-action: none; transition: background var(--motion-fast), box-shadow var(--motion-fast); }
+.panel-resizer::after { content: ""; position: absolute; inset: 0 -4px; }
+.panel-resizer:hover, .panel-resizer:focus-visible, body.resizing-panels .panel-resizer { background: var(--border-strong); box-shadow: 0 0 0 .5px var(--border-strong); }
+/* A wide invisible grab strip, but only a hairline of paint. Fade the ends
+   clear of the canvas corner; resizing itself stays glued to the pointer. */
+body.dragging-project-item iframe { pointer-events: none; }
+body.resizing-panels { cursor: col-resize; user-select: none; }
+.synara-frame-shell {
+  position: relative;
+  width: 100%;
+  height: 100%;
+  overflow: hidden;
+  background: var(--surface-sidebar);
+  color-scheme: inherit;
+}
+.synara-poc-frame {
+  display: block;
+  width: 100%;
+  height: 100%;
+  border: 0;
+  background-color: var(--surface-sidebar);
+  color-scheme: inherit;
+  opacity: 0;
+  transform: translateY(2px);
+  transition: opacity var(--motion-moderate), transform var(--motion-moderate);
+}
+.synara-frame-shell[data-ready="true"] .synara-poc-frame {
+  opacity: 1;
+  transform: none;
+}
+/* An Agent visual shown over the window (agent-visual-dialog.tsx): the frame
+   takes the height its page reports, and the dialog scrolls past that. */
+.modal.sheet-dialog.agent-visual-dialog { gap: var(--space-4); }
+.agent-visual-frame {
+  display: block;
+  flex: none;
+  width: 100%;
+  min-height: 80px;
+  border: 0;
+  background: transparent;
+}
+/* Native-drag hover cue; an ::after overlay because the embedded frame paints
+   over the shell's own box. Mirrors .source-editor.file-drop-active. */
+.synara-frame-shell.agent-drop-active::after {
+  content: "";
+  position: absolute;
+  inset: 0;
+  z-index: 2;
+  pointer-events: none;
+  box-shadow:
+    inset 0 0 0 1px color-mix(in srgb, var(--control-active) 30%, transparent),
+    inset 0 0 24px color-mix(in srgb, var(--control-active) 4%, transparent);
+}
+.synara-loading-surface {
+  position: absolute;
+  inset: 0;
+  z-index: 1;
+  /* Stacked like the other empty states, so a narrow panel does not squeeze
+     the message into a column of three-word lines beside Retry. */
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: var(--space-5);
+  overflow-y: auto;
+  text-align: center;
+  padding: var(--space-10);
+  background: var(--surface-sidebar);
+  color: var(--text-secondary);
+}
+/* Centred by auto margins rather than justify-content, so open Details taller
+   than a short panel overflow downward into scroll reach instead of pushing
+   the title above the panel's top edge. */
+.synara-loading-surface > :first-child { margin-top: auto; }
+.synara-loading-surface > :last-child { margin-bottom: auto; }
+.synara-loading-mark {
+  width: 30px;
+  height: 30px;
+  flex: none;
+  border: 1px solid var(--border-subtle);
+  border-radius: var(--radius-panel);
+  display: grid;
+  place-items: center;
+  color: var(--text-tertiary);
+  background: color-mix(in srgb, var(--surface-panel) 78%, transparent);
+}
+.synara-loading-mark.failed {
+  color: var(--status-danger);
+  animation: none;
+}
+.synara-loading-copy {
+  min-width: 0;
+  max-width: 260px;
+  display: grid;
+  gap: var(--space-1);
+}
+/* Set as EmptyState sets its title, so a starting or failed Agent reads
+   like every other empty panel. */
+.synara-loading-copy strong {
+  color: var(--text-primary);
+  font-size: var(--type-body-compact-size);
+  line-height: var(--type-body-compact-line-height);
+  font-weight: var(--weight-semibold);
+}
+.synara-slow {
+  margin-block: auto;
+  display: grid;
+  grid-template-columns: minmax(0, 1fr);
+  gap: var(--space-1);
+  padding: var(--space-6) var(--space-8);
+  border-radius: var(--radius-surface);
+  background: var(--surface-panel-raised);
+  box-shadow: var(--elevation-raised);
+  color: var(--text-secondary);
+  font-size: var(--type-caption-size);
+  line-height: var(--type-caption-line-height);
+  overflow-wrap: break-word;
+}
+.synara-slow > strong {
+  color: var(--text-primary);
+  font-size: var(--type-subtitle-size);
+  line-height: var(--type-subtitle-line-height);
+  font-weight: var(--type-subtitle-weight);
+}
+.synara-slow > .synara-failure-actions { justify-content: flex-start; margin-top: var(--space-4); }
+.synara-slow > .synara-failure-note { margin: var(--space-2) 0 0; }
+/* Side by side when they fit; stacked at one shared width when they don't. */
+.synara-failure-actions {
+  width: max-content;
+  max-width: 100%;
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: center;
+  gap: var(--space-3);
+}
+.synara-failure-actions > * { flex: 1 0 auto; }
+.synara-failure-note {
+  margin: calc(var(--space-3) * -1) 0 0;
+  color: var(--text-tertiary);
+  font-size: var(--type-caption-size);
+  line-height: var(--type-caption-line-height);
+}
+/* The exact runtime message, folded: a writer who needs it is one keypress
+   away, and everyone else sees a calm headline instead of a log excerpt. */
+.synara-failure-details {
+  width: min(100%, 320px);
+  color: var(--text-tertiary);
+  font-size: var(--type-caption-size);
+  line-height: var(--type-caption-line-height);
+}
+.synara-failure-details > summary {
+  width: max-content;
+  margin: 0 auto;
+  padding: var(--space-1) var(--space-3);
+  border-radius: var(--radius-compact);
+  display: flex;
+  align-items: center;
+  gap: var(--gap-tight);
+  list-style: none;
+  cursor: pointer;
+  transition: color var(--motion-fast), background-color var(--motion-fast);
+}
+.synara-failure-details > summary::-webkit-details-marker { display: none; }
+.synara-failure-details > summary:hover { color: var(--text-secondary); background: var(--tone-hover-surface); }
+.synara-failure-details > summary > svg { transition: transform var(--motion-fast); }
+.synara-failure-details[open] > summary > svg { transform: rotate(90deg); }
+.synara-failure-detail { position: relative; margin-top: var(--space-3); text-align: left; }
+.synara-failure-detail > pre {
+  max-height: 132px;
+  margin: 0;
+  padding: var(--space-4) var(--space-16) var(--space-4) var(--space-5);
+  overflow: auto;
+  border: 1px solid var(--border-subtle);
+  border-radius: var(--radius-chrome);
+  background: var(--surface-panel);
+  color: var(--text-secondary);
+  font-family: var(--editor-font);
+  font-size: var(--type-micro-size);
+  line-height: 1.5;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+  user-select: text;
+}
+.synara-failure-copy {
+  position: absolute;
+  top: var(--space-2);
+  right: var(--space-2);
+  width: var(--control-size-icon-compact);
+  height: var(--control-size-icon-compact);
+  border: 0;
+  border-radius: var(--radius-icon);
+  padding: 0;
+  background: transparent;
+  color: var(--text-tertiary);
+  display: grid;
+  place-items: center;
+}
+.synara-failure-copy:hover { color: var(--text-primary); background: var(--tone-hover-surface); }
+.agent-permission-trigger:focus { box-shadow: none; }
+.agent-permission-menu { --surface-radius: var(--radius-surface); --surface-inset: var(--gap-inline-tight); width: 292px; padding: var(--surface-inset); border-radius: calc(var(--surface-radius) * var(--corner-smoothing)); corner-shape: squircle; background: var(--editor-bg); }
+.agent-permission-option { position: relative; }
+.agent-permission-option[data-disabled] { opacity: var(--control-disabled-opacity); }
+.agent-permission-radio { padding: var(--space-4) var(--space-5); font-family: var(--ui-font); }
+.agent-permission-menu [data-slot="fluid-hover-highlight"] { background: var(--control-hover-surface); }
+.agent-permission-radio[aria-disabled] { cursor: default; pointer-events: none; }
+.navigator-section { min-height: 0; padding: var(--space-5); }
+/* The tree's scrollbar track reaches the window bottom; its thumb owns the inset.
+   The right inset lives on the tree surface instead, so the scrollbar can use it
+   as its gutter and sit at the panel edge like the Papers list's. */
+.project-section { flex: 1; padding: 7px 0 0 var(--space-5); display: flex; flex-direction: column; overflow: hidden; }
+/* Papers stands 10px off the panel edge like the Project tree, and its search
+   icon 10px inside the field, border included, like a tree row's glyph inside
+   its row: the tab icons, the tree glyphs and the search icon share one
+   gutter (the tabs' 14px in trellis.css). */
+.papers-section { display: flex; flex: 1; flex-direction: column; padding-block: 7px var(--space-5); padding-inline: var(--space-5) 0; overflow: hidden; }
+.papers-section .paper-import-control,
+.papers-section .import-box {
+  width: calc(100% - var(--space-5));
+}
+.papers-section .paper-import-control .import-box { width: 100%; }
+/* The field clips a pixel past its border: the trailing button's ring stays inside that. */
+.papers-section .import-box .ui-search-field-trailing button:focus-visible { outline-offset: 1px; }
+.papers-section .ui-search-field.import-box[data-control-size="compact"] {
+  height: var(--navigation-search-height);
+  padding-inline-start: calc(var(--search-control-padding-inline) - var(--field-control-border-width));
+}
+.papers-section .paper-import-control { position: relative; }
+.papers-section .paper-import-control[data-importing] .import-box {
+  border-color: color-mix(in srgb, var(--control-active) 35%, var(--border-subtle));
+}
+.papers-section .import-box .ui-search-field-input[aria-busy="true"] {
+  color: transparent;
+  caret-color: transparent;
+}
+.papers-section .import-box .ui-search-field-input[aria-busy="true"]::placeholder {
+  color: transparent;
+}
+/* Downloading, the trailing slot takes the line from the read-only input:
+   the status, then Cancel, above the progress fill. */
+.papers-section .paper-import-control { container: paper-import / inline-size; }
+.papers-section .import-box .ui-search-field-input[aria-busy="true"] { width: 0; flex: none; margin-inline-end: calc(-1 * var(--search-control-gap)); }
+.papers-section .paper-import-control[data-importing] .ui-search-field-trailing {
+  position: relative;
+  z-index: 1;
+  flex: 1;
+  gap: var(--space-3);
+}
+.papers-section .paper-import-track {
+  position: absolute;
+  inset: 1px;
+  border-radius: calc(var(--search-control-radius) - 1px);
+  overflow: hidden;
+  pointer-events: none;
+}
+.paper-import-track > span {
+  display: block;
+  height: 100%;
+  overflow: hidden;
+  position: relative;
+  background: color-mix(in srgb, var(--control-active) 12%, transparent);
+}
+.paper-import-track > span::after {
+  content: "";
+  position: absolute;
+  inset: 0;
+  background: linear-gradient(90deg, transparent, color-mix(in srgb, var(--control-active) 8%, transparent), transparent);
+  animation: paper-import-flow 2.4s ease-in-out infinite;
+}
+@keyframes paper-import-flow {
+  from { transform: translateX(-100%); }
+  to { transform: translateX(100%); }
+}
+.papers-section .paper-import-status {
+  min-width: 0;
+  flex: 1;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  color: var(--text-primary);
+  font-size: var(--navigation-search-font-size);
+  line-height: var(--navigation-search-line-height);
+  font-weight: var(--navigation-search-font-weight);
+}
+.papers-section .import-box button.paper-import-cancel {
+  width: auto;
+  flex: none;
+  padding: 0 var(--space-3);
+  display: inline-flex;
+  align-items: center;
+  font-size: var(--type-caption-size);
+  line-height: var(--type-caption-line-height);
+  font-weight: var(--weight-medium);
+  white-space: nowrap;
+}
+.paper-import-cancel-icon { display: none; stroke-width: 1.75; }
+@container paper-import (width < 200px) {
+  .papers-section .import-box button.paper-import-cancel { width: 24px; padding: 0; justify-content: center; }
+  .paper-import-cancel-icon { display: block; }
+  .paper-import-cancel-label { display: none; }
+}
+.papers-section .ui-search-field.import-box[data-control-size="compact"] .ui-search-field-input {
+  font-size: var(--navigation-search-font-size);
+  line-height: var(--navigation-search-line-height);
+  font-weight: var(--navigation-search-font-weight);
+}
+.lattice-file-tree {
+  min-width: 0;
+  min-height: 42px;
+  width: 100%;
+  flex: 1 1 auto;
+  overflow: hidden;
+  --trees-accent-override: var(--navigation-text-strong);
+  --trees-bg-override: var(--surface-sidebar);
+  --trees-bg-muted-override: var(--navigation-tree-hover-surface);
+  --trees-border-color-override: var(--border-subtle);
+  --trees-border-radius-override: 6px;
+  --trees-fg-override: var(--text-chrome);
+  --trees-fg-muted-override: var(--text-tertiary);
+  --trees-selected-bg-override: var(--navigation-tree-selected-surface);
+  --trees-selected-fg-override: var(--navigation-text-strong);
+  --trees-focus-ring-color-override: var(--navigation-focus-ring);
+  --trees-selected-focused-border-color-override: transparent;
+  --trees-focus-ring-width-override: var(--focus-ring-width);
+  --trees-input-bg-override: color-mix(in srgb, var(--text-primary) 5%, transparent);
+  --trees-search-bg-override: color-mix(in srgb, var(--text-primary) 5%, transparent);
+  --trees-search-fg-override: var(--navigation-text-strong);
+  --trees-font-family-override: var(--ui-font);
+  --trees-font-size-override: var(--type-project-tree-size);
+  --trees-font-weight-regular-override: var(--type-body-weight);
+  --trees-font-weight-semibold-override: var(--weight-semibold);
+  --trees-icon-width-override: 14px;
+  --trees-padding-inline-override: 1px;
+  --trees-scrollbar-thumb-override: color-mix(in srgb, var(--text-primary) 10%, transparent);
+}
+.project-file-tree-surface { position: relative; isolation: isolate; box-sizing: border-box; min-width: 0; min-height: 42px; width: 100%; flex: 1 1 auto; display: flex; padding-right: var(--space-5); overflow: hidden; }
+/* A drag aimed at the project root washes the whole tree, rows, sticky folder
+   headers and empty space alike. Drawn over the tree rather than as its
+   background, which the sticky headers must keep opaque; the z-index is local
+   to the surface and only clears the headers' own (4, Pierre's). */
+.project-file-tree-surface::after {
+  content: "";
+  position: absolute;
+  inset: 0 var(--space-5) 0 0;
+  z-index: 5;
+  background: var(--control-active-soft);
+  box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--control-active) 27%, transparent);
+  opacity: 0;
+  pointer-events: none;
+  transition: opacity var(--motion-moderate);
+}
+.project-file-tree-surface:has(> .lattice-file-tree[data-lattice-drop-root="true"])::after { opacity: 1; }
+/* A row's menu is drawn here rather than by Radix (Pierre asks for it from
+   inside the tree), but it is the same menu as the one for the empty area
+   around the rows: the item geometry, type and colours of menu-surface.ts. */
+.file-tree-context-menu {
+  --fluid-hover-fill: var(--control-active-soft);
+  min-width: 176px;
+  color: var(--text-primary);
+}
+.file-tree-context-menu > button { width: 100%; padding: var(--space-3) var(--space-5); border-radius: calc(var(--nested-radius) * var(--nested-corner-smoothing, 1)); corner-shape: var(--nested-corner-shape, round); background: transparent; color: inherit; display: flex; align-items: center; gap: var(--space-5); font-size: var(--type-body-size); line-height: var(--type-body-line-height); font-weight: var(--type-body-weight); text-align: left; }
+.file-tree-context-menu > button > svg { flex: none; stroke-width: 1.5; color: var(--text-secondary); }
+.file-tree-context-menu > button:is(:hover, :focus-visible):not(:disabled) { background: var(--control-active-soft); color: var(--control-active); }
+.file-tree-context-menu > button:disabled { opacity: .5; }
+body:has(.modal-backdrop, .drawer-backdrop) .file-tree-context-menu { display: none; }
+.file-tree-context-menu-separator { height: 1px; margin: var(--space-2) calc(-1 * var(--surface-inset)); background: var(--border-subtle); }
+.file-tree-context-menu > button.destructive { color: var(--status-danger); }
+.file-tree-context-menu > button.destructive:is(:hover, :focus-visible):not(:disabled) { background: color-mix(in srgb, var(--status-danger) 10%, transparent); color: var(--status-danger); }
+.file-tree-context-menu > button.destructive > svg { color: inherit; }
+/* The count, then the filter and the sort at the end, on the search field's
+   measure (list-tool.css draws the tools). Below 300px the tools drop their
+   carets, below 230px they fold to their icons and a weft dot on the icon
+   says it is set, and below 210px the count shortens to "2/24" (the long form
+   stays for a screen reader). */
+.paper-list-toolbar { --list-tool-dot-ring: var(--surface-sidebar); container: paper-toolbar / inline-size; width: calc(100% - var(--space-5)); min-width: 0; margin-top: var(--space-4); display: flex; align-items: center; gap: var(--space-1); }
+.paper-list-count { flex: none; margin: 0 auto 0 0; padding-inline: var(--space-4); white-space: nowrap; color: var(--text-secondary); font-size: var(--type-caption-size); line-height: var(--type-caption-line-height); font-variant-numeric: tabular-nums; }
+.paper-count-short { display: none; }
+@container paper-toolbar (width < 300px) {
+  .paper-list-toolbar .list-tool { padding-inline-end: var(--pad-inline-control-tight); }
+  .paper-list-toolbar .list-tool-caret { display: none; }
+}
+@container paper-toolbar (width < 230px) {
+  .paper-list-toolbar .list-tool { width: var(--control-size-icon); padding: 0; justify-content: center; }
+  .paper-list-toolbar :is(.list-tool-text, .list-tool-caret) { display: none; }
+  .paper-list-toolbar .list-tool[data-on]::after { display: block; }
+}
+@container paper-toolbar (width < 210px) {
+  .paper-count-long { position: absolute; width: 1px; height: 1px; overflow: hidden; clip-path: inset(50%); }
+  .paper-count-short { display: inline; }
+}
+/* A filter menu row: the check, the name, and how many papers it keeps. */
+.paper-menu { min-width: 13rem; }
+.paper-menu-check { width: 14px; flex: none; display: grid; place-items: center; }
+.paper-menu-label { flex: 1; min-width: 0; }
+.paper-menu-count { flex: none; color: var(--text-secondary); font-size: var(--type-caption-size); font-variant-numeric: tabular-nums; }
+/* An active filter as a chip under the toolbar; a click clears it. */
+.paper-chips { width: calc(100% - var(--space-5)); min-width: 0; margin-top: var(--space-2); display: flex; flex-wrap: wrap; gap: var(--space-2); }
+.paper-chip { height: 24px; min-width: 0; max-width: 100%; padding: 0 var(--space-3) 0 var(--space-5); border-radius: var(--radius-pill); display: inline-flex; align-items: center; gap: var(--space-2); background: var(--control-hover-surface); color: var(--text-primary); font-size: var(--type-caption-size); line-height: var(--type-caption-line-height); }
+.paper-chip > span { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.paper-chip > svg { flex: none; color: var(--text-secondary); stroke-width: 1.5; transition: color var(--motion-fast); }
+.paper-chip:hover { background: var(--control-pressed-surface); }
+.paper-chip:hover > svg { color: var(--text-primary); }
+/* The list and its rows are no query containers: WebKit restyles all a
+   container holds whenever its width changes, every frame of a divider drag.
+   Their widths arrive as attributes instead (paper-library.tsx): the list's
+   data-table, data-below and data-short, the rows' data-row-below on .paper-rows. */
+.paper-list { min-height: 0; flex: 1; }
+.paper-list-content { min-width: 100%; padding-block: 7px 0; padding-inline: 0 var(--space-6); }
+/* A paper is a short grid: its glyph on the Project tree's icon gutter, the
+   title, and the times the manuscript cites it at the end; under them a
+   byline of who, when and where, then any citation-health notice.
+   Surfaces and the 8px text inset follow the Project tree's (hover < open,
+   text over its icons); the row's surface is a
+   variable so the actions' backing (below) can match it. Its content never
+   widens the list: a long DOI ellipsizes instead of scrolling sideways. */
+.paper-row { --paper-row-surface: transparent; --paper-row-padding: var(--space-5); position: relative; padding: var(--paper-row-padding) var(--paper-row-padding-inline); border-radius: var(--radius-icon); display: grid; grid-template-columns: 16px minmax(0, 1fr) auto; column-gap: var(--space-3); align-items: start; background: var(--paper-row-surface); color: var(--text-secondary); transition: background-color var(--motion-fast-exit); }
+/* A long list draws only the rows near the view and stands a gap for the
+   rest (paper-list-window.ts): the row drawn after a gap keeps the margin and
+   hairline it has after a row, and the list does its own scroll anchoring. */
+.paper-row + .paper-row, .paper-rows-gap + .paper-row { margin-top: var(--space-1); }
+.paper-list > [data-slot="scroll-area-viewport"][data-windowed] { overflow-anchor: none; }
+/* Hairlines part the rows at rest, under the text; a lit row needs none on
+   either side. */
+:is(.paper-row, .paper-rows-gap) + .paper-row::before { content: ""; position: absolute; inset-block-start: calc(-1 * var(--space-1)); inset-inline: var(--paper-row-padding-inline); height: 1px; background: var(--border-subtle); pointer-events: none; transition: opacity var(--motion-fast-exit); }
+.paper-row:is(:hover, .active)::before, .paper-row:is(:hover, .active) + .paper-row::before { opacity: 0; transition-duration: var(--duration-fast); }
+.paper-rows { --paper-row-padding-inline: var(--space-4); --fluid-hover-fill: var(--navigation-tree-hover-surface); }
+.paper-row:hover { --paper-row-surface: var(--navigation-tree-hover-surface); transition-duration: var(--duration-fast); }
+.paper-row.active { --paper-row-surface: var(--navigation-tree-selected-surface); }
+/* The button is the whole row under its text, so its ring is the row's;
+   the text it lies under passes every click through to it. */
+.paper-open { position: absolute; inset: 0; padding: 0; border-radius: var(--radius-icon); background: transparent; }
+/* The row spans the scrolling list edge to edge, so a ring outside it would be
+   cut off there and pass under the overlay scrollbar: it is drawn inside. */
+.paper-open:focus-visible { outline-offset: calc(-1 * var(--focus-ring-width)); }
+.paper-row > :is(.paper-glyph, .paper-title, .paper-cell, .paper-uses, .paper-meta) { pointer-events: none; }
+.paper-row.cited-only .paper-open { cursor: default; }
+.paper-glyph { grid-column: 1; grid-row: 1; height: var(--type-subtitle-line-height); display: grid; place-items: center; color: var(--text-secondary); }
+.paper-glyph > svg { stroke-width: 1.5; }
+/* A paper's title is set in the interface face, as the Project tree sets a
+   file's name, and in the primary ink whether or not it has been downloaded:
+   the glyph says that. A narrow panel gets a second line before the
+   ellipsis. */
+.paper-list .paper-title { grid-column: 2; grid-row: 1; display: -webkit-box; overflow: hidden; -webkit-box-orient: vertical; -webkit-line-clamp: 2; line-clamp: 2; color: var(--text-primary); font-size: var(--type-body-size); line-height: var(--type-subtitle-line-height); font-weight: var(--weight-regular); overflow-wrap: anywhere; text-wrap: pretty; }
+/* "6×", or "—" for a paper the manuscript does not cite yet. */
+.paper-uses { grid-column: 3; grid-row: 1; height: var(--type-subtitle-line-height); display: flex; align-items: center; color: var(--text-secondary); font-size: var(--type-caption-size); font-variant-numeric: tabular-nums; white-space: nowrap; }
+.paper-uses:empty { display: none; }
+.paper-cell { display: none; }
+.paper-row > :is(.paper-meta, .paper-hits, .paper-tags) { grid-column: 2 / -1; }
+.paper-list small { margin-top: var(--space-2); display: block; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; color: var(--text-secondary); font-size: var(--type-tree-size); line-height: var(--type-tree-line-height); }
+/* The byline line. At rest it is who, when and where; a lit row (hovered,
+   focused or open) shows its citation key and actions on the same line, one
+   line tall whatever it holds, so revealing them never moves the rows below.
+   A wide row keeps the byline and adds them at its end, where the venue and
+   the key give way first; a narrow one shows them in its place, as a mail
+   list shows a message's actions in place of its date. The year never gives
+   way. */
+.paper-meta { height: var(--type-tree-line-height); min-width: 0; margin-top: var(--space-2); display: flex; align-items: center; gap: var(--space-3); }
+.paper-list .paper-byline { min-width: min(100%, 10em); margin-top: 0; flex: 0 1 auto; display: flex; }
+.paper-byline > span { min-width: 0; overflow: hidden; text-overflow: ellipsis; }
+.paper-byline > .paper-year { flex: none; }
+/* The venue gives way before the authors, so a lit row's key and actions
+   never squeeze who wrote it to a clipped letter. Shrinking with the venue,
+   even a fraction of a pixel, would cost them an ellipsis; instead they keep
+   their width, up to what leaves the year in view. */
+.paper-byline > .paper-authors { flex: none; max-width: calc(100% - var(--space-6) - 5ch); }
+.paper-byline > .paper-venue { flex: 0 1 auto; }
+.paper-byline > :is(.paper-year, .paper-venue, .paper-source):not(:first-child)::before { content: "·"; width: var(--space-6); display: inline-block; text-align: center; }
+.paper-year, .paper-cell-year { font-variant-numeric: tabular-nums; }
+:where(.paper-rows[data-row-below~="260"]) .paper-byline > .paper-venue { display: none; }
+/* A search's matching lines under its paper, best first: each a control
+   above the row's hit area that opens the paper at that line, one line tall
+   (a 24px target) and ellipsized, quoted from the paper so it reads as one, its match marked
+   as the Find dialog marks it. The fill sits a step out from the text, which
+   stays on the title's edge. */
+.paper-hits { min-width: 0; margin: var(--space-1) 0 0; padding: 0; display: grid; list-style: none; }
+.paper-hits > li { min-width: 0; }
+.paper-hit, .paper-hit-more { position: relative; z-index: 1; max-width: calc(100% + var(--space-3)); min-height: var(--hit-area-min); margin-inline-start: calc(-1 * var(--space-3)); padding: calc((var(--hit-area-min) - var(--type-tree-line-height)) / 2) var(--space-3); border: 0; border-radius: var(--radius-compact); background: transparent; display: block; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; color: var(--text-secondary); font-size: var(--type-tree-size); line-height: var(--type-tree-line-height); text-align: start; cursor: pointer; }
+.paper-hit { width: calc(100% + var(--space-3)); font-family: var(--reading-font); font-style: italic; }
+/* A mark is an atomic box, so the ellipsis hides one that does not fit
+   whole; as an inline it kept painting its fill past the ellipsis. */
+.paper-hit-text { display: block; overflow: hidden; text-overflow: ellipsis; }
+.paper-hit:hover, .paper-hit-more:hover { background: var(--tone-hover-surface); color: var(--text-primary); }
+.paper-hit mark { display: inline-block; border-radius: 2px; background: var(--highlight-match-surface); color: inherit; }
+.paper-hit-more { font-size: var(--type-caption-size); }
+/* The row's citation-health notice. */
+.paper-tags { min-width: 0; margin-top: var(--space-3); display: flex; flex-wrap: wrap; align-items: center; gap: var(--space-2) var(--space-3); }
+.paper-list .paper-tag { max-width: 100%; display: block; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; line-height: var(--badge-height-compact); }
+/* A citation-health notice: the chip, then who reported it and when. One
+   that links out is its own control above the row's hit area. The chip's ink
+   is its status one step towards the text, so it reads at AA on its wash. */
+.paper-citation-health { min-width: 0; max-width: 100%; display: inline-flex; align-items: center; gap: var(--space-3); }
+.paper-list .paper-citation-health > .paper-tag { flex: none; display: inline-flex; align-items: center; gap: var(--space-1); color: color-mix(in srgb, var(--status-warning) 78%, var(--text-primary)); }
+.paper-citation-health > .paper-tag > svg { stroke-width: 1.75; }
+.paper-list .paper-row.citation-retracted .paper-citation-health > .paper-tag { background-color: var(--status-danger-soft); color: color-mix(in srgb, var(--status-danger) 80%, var(--text-primary)); }
+.paper-citation-health-detail { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; color: var(--text-secondary); font-size: var(--type-micro-size); line-height: var(--badge-height-compact); }
+button.paper-citation-health { position: relative; z-index: 1; padding: 0; border: 0; border-radius: var(--radius-compact); background: transparent; color: inherit; font-family: inherit; text-align: left; cursor: pointer; }
+button.paper-citation-health:hover > .paper-tag { background-image: linear-gradient(var(--tone-hover-surface), var(--tone-hover-surface)); }
+button.paper-citation-health:hover > .paper-citation-health-detail { color: var(--text-secondary); }
+/* A lit row's key and actions, above the row's hit area. The key is the
+   exact one a \cite{} needs, and a click copies it. A row with no byline has
+   no line to join, so they surface over the end of its last line instead, on
+   a backing as opaque as the row they sit in. The actions may shrink below
+   their content: a key's whole text (an arXiv-style
+   "diao2024unveilingencoderfreevisionlanguagemodels" runs past 300px) is
+   their min-content, which kept the key from ellipsizing and pushed the
+   icons out of the row. Their floor is instead what the key's 6em and three
+   icons need, so the byline gives way before they do. */
+.paper-row-actions { position: relative; z-index: 1; min-width: 0; margin-inline-start: auto; flex: 0 1 auto; display: none; justify-content: flex-end; align-items: center; pointer-events: auto; animation: paper-row-actions-in var(--motion-fast); }
+.paper-row:is(:hover, :focus-within, .active) .paper-row-actions { display: flex; }
+.paper-row-actions:has(> .paper-cite-key) { min-width: calc(6 * var(--type-micro-size) + 3 * 24px); }
+@keyframes paper-row-actions-in { from { opacity: 0; } }
+:where(.paper-rows[data-row-below~="300"]) .paper-row:is(:hover, :focus-within, .active) .paper-byline { display: none; }
+:where(.paper-rows[data-row-below~="300"]) .paper-row-actions { flex-grow: 1; }
+:where(.paper-rows[data-row-below~="300"]) .paper-row-actions > .paper-cite-key { margin-inline: calc(-1 * var(--space-2)) auto; }
+/* Placed on no grid line, so its box is the row's, not the byline column's;
+   it grows leftwards from the row's end, so it is capped at the row. */
+.paper-row > .paper-meta:not(:has(> .paper-byline)) { grid-column: auto; position: absolute; z-index: 1; inset-block-end: calc(var(--paper-row-padding) - var(--space-2)); inset-inline-end: var(--space-3); max-width: calc(100% - 2 * var(--space-3)); margin: 0; }
+.paper-meta:not(:has(> .paper-byline)) > .paper-row-actions { padding-inline-start: var(--space-8); border-radius: var(--radius-compact); background-color: var(--surface-sidebar); background-image: linear-gradient(var(--paper-row-surface), var(--paper-row-surface)); -webkit-mask-image: linear-gradient(to right, transparent, #000 var(--space-8)); mask-image: linear-gradient(to right, transparent, #000 var(--space-8)); }
+.paper-cite-key { min-width: 6em; height: 24px; padding: 0 var(--space-2); border-radius: var(--radius-compact); background: transparent; color: var(--text-tertiary); display: inline-flex; align-items: center; gap: var(--space-2); font: var(--type-micro-size)/1 var(--editor-font); }
+/* The key button sets line-height 1 to centre its icon; a clipping box that tight cuts descenders (g, j, p, q, y), so the code gets a full line box inside the fixed 24px button. */
+.paper-cite-key > code { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font: inherit; line-height: var(--type-tree-line-height); }
+.paper-cite-key .copy-button-icon { width: 11px; height: 11px; }
+.paper-cite-key .copy-button-icon > svg { stroke-width: 1.5; }
+.paper-row.active .paper-cite-key { color: var(--text-secondary); }
+.paper-cite-key:hover { background: var(--control-hover-surface); color: var(--text-primary); }
+/* At the panel's narrowest the key alone would push Edit and Remove out of
+   the row, so it keeps only its copy icon; its name and tooltip still say
+   which key it copies. Four icons fit any row the panel can hold. */
+:where(.paper-rows[data-row-below~="200"]) .paper-row-actions:has(> .paper-cite-key) { min-width: 0; }
+:where(.paper-rows[data-row-below~="200"]) .paper-row-actions > .paper-cite-key { width: 24px; min-width: 0; margin-inline: calc(-1 * var(--space-3)) auto; padding: 0; justify-content: center; }
+:where(.paper-rows[data-row-below~="200"]) .paper-cite-key > code { display: none; }
+.row-delete, .row-edit-bib, .row-open-link { position: relative; width: 24px !important; height: 24px !important; flex: none; padding: 0 !important; border-radius: var(--radius-compact) !important; background: transparent !important; color: var(--text-tertiary) !important; display: grid !important; place-items: center; }
+.row-delete svg, .row-edit-bib svg, .row-open-link svg { stroke-width: 1.5; }
+.row-edit-bib:hover, .row-open-link:hover { background: var(--control-active-soft) !important; color: var(--control-active) !important; }
+.row-delete:hover { background: color-mix(in srgb, var(--status-danger) 10%, transparent) !important; color: var(--status-danger) !important; }
+/* Grouped, each group is a counted caption over its own list. */
+.paper-group { min-width: 0; margin: var(--space-8) var(--space-4) var(--space-2); display: flex; align-items: baseline; gap: var(--space-3); color: var(--text-primary); font-size: var(--type-caption-size); line-height: var(--type-caption-line-height); font-weight: var(--weight-medium); }
+.paper-rows > .paper-group:first-of-type { margin-top: var(--space-2); }
+.paper-group-name { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.paper-group-count { flex: none; color: var(--text-secondary); font-weight: var(--weight-regular); font-variant-numeric: tabular-nums; }
+/* A wide list (a maximised panel) is a table: a header that stays in view
+   and sorts by any column, then one line per paper, Title · Authors · Year ·
+   Venue · Cited. A notice or a search hit takes a second line under the
+   title. A lit row's actions surface over the end of its line. */
+.paper-table-head { display: none; }
+:where(.paper-list[data-table]) .paper-table-head, :where(.paper-list[data-table]) .paper-row { --paper-table-columns: 16px minmax(0, 1fr) minmax(0, min(200px, 22%)) 52px minmax(0, min(170px, 18%)) 52px; }
+:where(.paper-list[data-table]) .paper-table-head { position: sticky; top: 0; z-index: 2; margin-bottom: var(--space-1); padding: var(--space-2) var(--space-6); display: grid; grid-template-columns: var(--paper-table-columns); column-gap: var(--space-6); align-items: center; background: var(--surface-sidebar); box-shadow: 0 1px 0 var(--border-subtle); }
+:where(.paper-list[data-table]) .paper-table-sort { min-width: 0; height: 24px; margin-inline: calc(-1 * var(--space-2)); padding: 0 var(--space-2); border-radius: var(--radius-compact); display: inline-flex; align-items: center; gap: var(--space-1); justify-self: start; background: transparent; color: var(--text-secondary); font-size: var(--type-caption-size); line-height: var(--type-caption-line-height); }
+:where(.paper-list[data-table]) .paper-table-sort > span { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+:where(.paper-list[data-table]) .paper-table-sort > svg { flex: none; }
+:where(.paper-list[data-table]) .paper-table-sort:hover { background: var(--control-hover-surface); color: var(--text-primary); }
+:where(.paper-list[data-table]) .paper-table-sort[aria-pressed="true"] { color: var(--text-primary); }
+:where(.paper-list[data-table]) .paper-table-head > :last-child { justify-self: end; }
+:where(.paper-list[data-table]) .paper-row { --paper-row-padding: var(--space-4); --paper-row-padding-inline: var(--space-6); grid-template-columns: var(--paper-table-columns); column-gap: var(--space-6); }
+.paper-list:where([data-table]) .paper-row > .paper-title { -webkit-line-clamp: 1; line-clamp: 1; }
+:where(.paper-list[data-table]) .paper-row > .paper-cell { grid-row: 1; display: block; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; color: var(--text-secondary); font-size: var(--type-caption-size); line-height: var(--type-subtitle-line-height); }
+:where(.paper-list[data-table]) .paper-row > .paper-cell-authors { grid-column: 3; }
+:where(.paper-list[data-table]) .paper-row > .paper-cell-year { grid-column: 4; }
+:where(.paper-list[data-table]) .paper-row > .paper-cell-venue { grid-column: 5; }
+:where(.paper-list[data-table]) .paper-row > .paper-uses { grid-column: 6; justify-content: flex-end; }
+:where(.paper-list[data-table]) .paper-row > :is(.paper-tags, .paper-hits) { grid-column: 2 / span 4; }
+.paper-list:where([data-table]) .paper-row > .paper-hits { margin-top: var(--space-1); }
+:where(.paper-list[data-table]) .paper-row > .paper-tags { margin-top: var(--space-2); }
+/* The byline's facts are the columns; the line keeps only the actions,
+   over the end of the title's line. */
+:where(.paper-list[data-table]) .paper-row > .paper-meta { grid-column: auto; position: absolute; z-index: 1; inset-block: calc(var(--paper-row-padding) + (var(--type-subtitle-line-height) - 24px) / 2) auto; inset-inline-end: var(--space-4); max-width: calc(100% - 2 * var(--space-4)); height: 24px; margin: 0; }
+:where(.paper-list[data-table]) .paper-row > .paper-meta > .paper-byline { display: none; }
+:where(.paper-list[data-table]) .paper-row > .paper-meta > .paper-row-actions { padding-inline-start: var(--space-8); border-radius: var(--radius-compact); background-color: var(--surface-sidebar); background-image: linear-gradient(var(--paper-row-surface), var(--paper-row-surface)); -webkit-mask-image: linear-gradient(to right, transparent, #000 var(--space-8)); mask-image: linear-gradient(to right, transparent, #000 var(--space-8)); }
+:where(.paper-list[data-table]) .paper-group { margin-inline: var(--space-6); }
+/* What the box will add, said before it happens (the add row), and the
+   import under way (the pending row): soft plates above the list, on the
+   rows' own inset, whose secondary line gives way first in a narrow panel. */
+.paper-add { margin-bottom: var(--space-3); display: grid; gap: var(--space-2); container: paper-add / inline-size; }
+.paper-add-row, .paper-pending { position: relative; width: 100%; min-width: 0; padding: var(--space-4); border-radius: var(--radius-icon); display: grid; grid-template-columns: 16px minmax(0, 1fr) auto auto; column-gap: var(--space-3); align-items: center; text-align: left; background: color-mix(in srgb, var(--text-primary) 4%, transparent); color: var(--text-primary); font: inherit; }
+/* The duplicate row is a plate, not a button; it lights as the button rows do. */
+div.paper-add-row { transition: background-color var(--motion-fast); }
+button.paper-add-row:hover { background: var(--control-hover-surface); }
+.paper-add-row[data-quiet] { background: transparent; }
+.paper-add-row[data-quiet]:hover { background: var(--navigation-tree-hover-surface); }
+.paper-add-icon { display: grid; place-items: center; color: var(--text-secondary); stroke-width: 1.5; }
+.paper-add-row[data-duplicate] .paper-add-icon { color: var(--status-success); }
+.paper-add-text { min-width: 0; display: grid; }
+button.paper-add-text { padding: 0; border-radius: var(--radius-compact); background: transparent; color: inherit; font: inherit; text-align: left; }
+.paper-add-row[data-duplicate]:has(> button.paper-add-text:hover) { background: var(--control-hover-surface); }
+.paper-add-title { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: var(--type-body-size); line-height: var(--type-subtitle-line-height); font-weight: var(--weight-medium); }
+.paper-add-title > q { font-weight: var(--weight-regular); }
+.paper-add-detail { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; color: var(--text-secondary); font-size: var(--type-caption-size); line-height: var(--type-caption-line-height); }
+.paper-add-detail[data-code] { font: var(--type-micro-size)/var(--type-caption-line-height) var(--editor-font); }
+.paper-add-kind { height: 18px; padding: 0 var(--space-3); border-radius: var(--radius-compact); display: inline-flex; align-items: center; background: color-mix(in srgb, var(--text-primary) 6%, transparent); color: var(--text-secondary); font-size: var(--type-micro-size); line-height: var(--type-micro-line-height); white-space: nowrap; }
+.paper-add-enter { color: var(--text-tertiary); }
+.paper-add-action { height: 24px; padding: 0 var(--space-4); border-radius: var(--radius-compact); display: inline-flex; align-items: center; gap: var(--space-2); background: transparent; color: var(--text-primary); font-size: var(--type-caption-size); white-space: nowrap; }
+.paper-add-action:hover { background: var(--control-hover-surface); }
+.paper-pending { grid-template-columns: 16px minmax(0, 1fr) auto; row-gap: var(--space-2); padding-bottom: calc(var(--space-4) + 2px); overflow: hidden; }
+.paper-pending > .paper-add-title { font-weight: var(--weight-regular); }
+.paper-pending-steps { grid-column: 2 / -1; grid-row: 2; margin: 0; padding: 0; list-style: none; display: flex; flex-wrap: wrap; gap: var(--space-1) var(--space-5); color: var(--text-tertiary); font-size: var(--type-caption-size); line-height: var(--type-caption-line-height); }
+.paper-pending-steps > li { display: inline-flex; align-items: center; gap: var(--space-2); white-space: nowrap; }
+.paper-pending-steps > li[data-state="done"] { color: var(--text-secondary); }
+.paper-pending-steps > li[data-state="current"] { color: var(--text-primary); }
+.paper-pending-dot { width: 6px; height: 6px; border-radius: 50%; box-shadow: inset 0 0 0 1px currentColor; }
+.paper-pending-steps > li[data-state="current"] > .paper-pending-dot { background: currentColor; }
+.paper-pending-cancel { grid-column: 3; grid-row: 1; width: 24px; height: 24px; margin: calc(-1 * var(--space-1)) calc(-1 * var(--space-1)) 0 0; display: grid; place-items: center; border-radius: var(--radius-compact); background: transparent; color: var(--text-secondary); }
+.paper-pending-cancel:hover { background: var(--control-hover-surface); color: var(--text-primary); }
+.paper-pending-track { position: absolute; inset: auto 0 0; height: 2px; }
+.paper-pending-track > span { display: block; height: 100%; background: var(--text-secondary); }
+.paper-text-search { min-height: 28px; margin-bottom: var(--space-3); padding: 0 var(--space-4); display: grid; grid-template-columns: 16px minmax(0, 1fr) auto; column-gap: var(--space-3); align-items: center; color: var(--text-secondary); font-size: var(--type-caption-size); line-height: var(--type-caption-line-height); }
+/* Wraps rather than truncates: in a narrow panel the reason is the point of the row. */
+.paper-text-search-text { min-width: 0; padding-block: var(--space-2); overflow-wrap: anywhere; }
+.paper-text-search[data-state="failed"] .paper-add-icon { color: var(--status-warning); }
+@container paper-add (width < 240px) {
+  .paper-add-enter { display: none; }
+  .paper-add-row:not([data-duplicate]) { grid-template-columns: 16px minmax(0, 1fr) auto; }
+}
+@container paper-add (width < 200px) {
+  .paper-add-kind { display: none; }
+  .paper-add-action-label { position: absolute; width: 1px; height: 1px; overflow: hidden; clip-path: inset(50%); white-space: nowrap; }
+}
+/* A paper this window just added keeps its key and actions out, as a lit
+   row does, until the next add, and arrives in the accent's wash, which
+   fades once: the row says it is new without a badge. */
+.paper-row.just-added .paper-row-actions { display: flex; }
+/* The wash holds a second (the delay fills backwards), then fades on the slow tier. */
+.paper-row.just-added { animation: paper-just-added var(--motion-slow) calc(var(--duration-slow) * 4) both; }
+@keyframes paper-just-added { from { background-color: var(--accent-soft); } }
+:where(.paper-rows[data-row-below~="300"]) .paper-row.just-added .paper-byline { display: none; }
+/* The empty library: the card-index drawing over its heading, its line and
+   the action that takes the writer to the import field above, filling the
+   room under that field like every other empty panel. The list's top padding
+   matches the section's bottom one, so the state centres between the field
+   and the panel's edge. Straight on the panel: the panel is already the card. */
+.paper-list-content:has(> .papers-empty-state) { padding-block: var(--space-5) 0; }
+.papers-empty-state { --art-paper: var(--lattice-panel-surface, var(--surface-app)); padding: var(--space-6) var(--space-4); }
+.papers-empty-state .research-art { width: 64px; }
+.papers-empty-state .ui-button { max-width: 100%; }
+/* A short list (the startup layout on a small screen, `data-short`) keeps the
+   words and the action and lets the drawing go, rather than scrolling the
+   button away. */
+:where(.paper-list[data-short]) .papers-empty-state .ui-empty-state-icon { display: none; }
+/* The library before its list is read: one line on the rows' icon gutter and
+   inset, in the secondary ink, where the first row will be. It holds back a
+   moment before showing, so a list read at once never flashes it; a read that
+   failed says why on a second line that ellipsizes, and offers a retry. */
+.papers-load-status { margin: 0 var(--space-1); padding: var(--space-5) var(--space-4); display: grid; grid-template-columns: 16px minmax(0, 1fr) auto; column-gap: var(--space-3); align-items: center; color: var(--text-secondary); font-size: var(--type-body-size); line-height: var(--type-subtitle-line-height); animation: papers-load-in var(--motion-fast) var(--duration-moderate) both; }
+.papers-load-status[data-state="error"] { align-items: start; animation: none; }
+.papers-load-icon { height: var(--type-subtitle-line-height); display: grid; place-items: center; }
+.papers-load-status[data-state="error"] .papers-load-icon { color: var(--status-danger); stroke-width: 1.5; }
+.papers-load-text { min-width: 0; display: grid; overflow-wrap: anywhere; }
+.papers-load-text strong { color: var(--text-primary); font-weight: var(--weight-medium); }
+.papers-load-detail { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: var(--type-caption-size); line-height: var(--type-caption-line-height); }
+.papers-load-status .ui-button { align-self: center; }
+/* Too narrow for the retry beside the reason, it takes a line of its own under it. */
+:where(.paper-list[data-below~="240"]) .papers-load-status[data-state="error"] .ui-button { grid-column: 2 / -1; justify-self: start; margin-top: var(--space-3); }
+@keyframes papers-load-in { from { opacity: 0; } }
+.import-box { overflow: hidden; }
+.import-box button { width: 24px; height: 24px; border-radius: var(--radius-icon); display: grid; place-items: center; background: transparent; color: var(--control-active); }
+.import-box button:hover:not(:disabled) { background: var(--control-active-soft); }
+
+.canvas-toolbar {
+  /* Measured against itself, not the window: the editor pane can be narrow in a
+     wide window once the side panels take their share. */
+  container-type: inline-size;
+  container-name: canvas-toolbar;
+  height: 44px;
+  flex: none;
+  padding: 0 var(--space-5) 0 14px;
+  border-bottom: 1px solid var(--border-subtle);
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto minmax(0, 1fr);
+  align-items: center;
+  gap: var(--space-4);
+  background: var(--surface-panel);
+  overflow: hidden;
+}
+.active-document { min-width: 0; display: flex; align-items: center; gap: var(--space-3); color: var(--text-secondary); font-size: var(--type-caption-size); overflow: hidden; }
+.active-document span { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.active-document i { width: 5px; height: 5px; border-radius: 50%; background: var(--control-active); flex: none; }
+.canvas-actions { justify-self: end; min-width: 0; display: flex; align-items: center; gap: var(--space-1); flex-wrap: nowrap; justify-content: flex-end; overflow: hidden; }
+.canvas-actions button { width: var(--control-size-icon); height: var(--control-size-icon); border-radius: var(--radius-icon); display: grid; place-items: center; background: transparent; color: var(--text-secondary); position: relative; }
+.canvas-actions button:hover:not(:disabled) { background: var(--border-subtle); color: var(--text-primary); }
+.canvas-actions button.active { background: var(--control-active-soft); color: var(--control-active); }
+.overleaf-toolbar-group { display: flex; align-items: center; flex: none; }
+.canvas-actions .overleaf-toolbar-group .overleaf-toolbar-primary { border-radius: var(--radius-icon) 0 0 var(--radius-icon); }
+.canvas-actions .overleaf-toolbar-group .overleaf-toolbar-menu-button { width: 18px; border-radius: 0 var(--radius-icon) var(--radius-icon) 0; }
+.canvas-actions .overleaf-toolbar-menu-button:focus-visible { background: var(--chrome-hover-surface); color: var(--text-primary); }
+.overleaf-toolbar-menu-item { font-size: var(--type-body-compact-size); line-height: var(--type-body-compact-line-height); white-space: nowrap; }
+.animated-product-icon, .animated-product-icon > span, .animated-product-icon > span > div, .animated-product-icon svg { display: block; line-height: 0; }
+.canvas-actions .animated-product-icon--chat .ct-pop > path { stroke-width: 21.333; }
+.canvas-actions .animated-product-icon--git-branch .lg-branch { stroke-width: 20; }
+.canvas-actions .animated-product-icon--clock-back .ck-hour,
+.canvas-actions .animated-product-icon--clock-back .ck-min { stroke-width: 20; }
+.canvas-actions .animated-product-icon--clock-back .ck-arrow { stroke: currentColor; stroke-width: 4; stroke-linejoin: round; paint-order: stroke fill; }
+/* The Overleaf button's state at a glance: green while live or syncing, a
+   breathing amber while the live channel connects, red when it failed (sync
+   carries on; the tooltip says why), and an accent dot for manual-mode work
+   waiting on Overleaf. Ringed in the titlebar's own surface so the dot reads
+   as cut out of the button rather than stuck on it. */
+.overleaf-status-dot, .overleaf-channel-dot { position: absolute; top: 3px; right: 3px; width: 7px; height: 7px; border-radius: var(--radius-pill); background: var(--status-success); box-shadow: 0 0 0 1.5px var(--surface-titlebar); pointer-events: none; }
+.overleaf-channel-dot[data-state="connecting"] { background: var(--status-warning); animation: overleaf-channel-breathe 1.6s ease-in-out infinite; }
+.overleaf-channel-dot[data-state="error"] { background: var(--status-danger); }
+.canvas-actions .overleaf-pending-badge { top: 3px; right: 3px; min-width: 0; width: 7px; height: 7px; padding: 0; border-radius: var(--radius-pill); background: var(--control-active); box-shadow: 0 0 0 1.5px var(--surface-titlebar); color: transparent; font-size: 0; }
+@keyframes overleaf-channel-breathe { 50% { opacity: .35; } }
+/* The channel's moments, once each. Coming online sends one ripple out of the
+   green dot; dropping to an error pops the red one. Both dots are the same
+   element across states, so the animation starts when the class or state
+   changes, not on every render, and nothing repeats while the writer works. */
+.overleaf-status-dot::after { content: ""; position: absolute; inset: 0; border-radius: inherit; corner-shape: inherit; box-shadow: 0 0 0 1.5px var(--status-success); opacity: 0; animation: overleaf-dot-ripple var(--motion-flourish) both; }
+.overleaf-channel-dot[data-state="error"] { animation: overleaf-dot-pop var(--motion-slow) both; }
+@keyframes overleaf-dot-ripple {
+  from { opacity: .9; transform: scale(1); }
+  to { opacity: 0; transform: scale(2.6); }
+}
+@keyframes overleaf-dot-pop {
+  from { transform: scale(.4); }
+  60% { transform: scale(1.35); }
+  to { transform: scale(1); }
+}
+
+/* Tighter still: the view switcher gives up its padding before anything is
+   allowed to collide. */
+@container canvas-toolbar (max-width: 420px) {
+  .canvas-toolbar { padding-left: var(--space-5); gap: var(--space-2); }
+}
+
+/* The interface size pill (⌘+, ⌘−, ⌘0): top centre, under the titlebar, for
+   a moment after each change. It eases in a few pixels down and out the same
+   way; hidden, it takes no pointer and holds no focus (inert). */
+.interface-zoom-hud { position: fixed; z-index: var(--z-toast); top: 44px; left: 50%; translate: -50% calc(var(--space-2) * -1); opacity: 0; pointer-events: none; height: 32px; padding: 0 var(--space-2); border-radius: var(--radius-pill); background: var(--surface-panel-raised); box-shadow: var(--elevation-popover); color: var(--text-primary); font-size: var(--type-caption-size); display: inline-flex; align-items: center; gap: var(--space-1); transition: opacity var(--motion-moderate), translate var(--motion-moderate); }
+.interface-zoom-hud[data-shown] { opacity: 1; translate: -50% 0; pointer-events: auto; }
+.interface-zoom-hud button { height: 24px; min-width: 24px; border: 0; border-radius: var(--radius-pill); padding: 0 var(--space-3); background: transparent; color: var(--text-secondary); font: inherit; display: inline-flex; align-items: center; justify-content: center; gap: var(--space-2); transition: background-color var(--motion-fast), color var(--motion-fast); }
+.interface-zoom-hud button:hover:not(:disabled) { background: var(--control-hover-surface); color: var(--text-primary); }
+.interface-zoom-hud button:disabled { opacity: .4; }
+.interface-zoom-value { min-width: 40px; text-align: center; font-weight: var(--weight-semibold); font-variant-numeric: tabular-nums; }
+.interface-zoom-divider { width: 1px; height: 14px; margin: 0 var(--space-1); background: var(--border-subtle); }
+.interface-zoom-reset .ui-keycaps { color: var(--text-tertiary); }

@@ -1,0 +1,42 @@
+.ui-infinity-loader {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  flex: none;
+  overflow: visible;
+  vertical-align: middle;
+}
+
+.ui-infinity-loader > img {
+  display: block;
+  width: 100%;
+  height: 100%;
+  opacity: 0.72;
+}
+
+:root[data-theme="dark"] .ui-infinity-loader > img {
+  filter: invert(1);
+}
+
+.ui-reload-icon {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  flex: none;
+  transform-origin: center;
+}
+
+/* Busy reload actions stay visually whole instead of fading the entire button
+ * while its icon and label are changing state. */
+.ui-reload-button[aria-busy="true"]:disabled {
+  opacity: 1;
+  color: var(--text-secondary);
+}
+
+.ui-reload-icon--once {
+  animation: ui-reload-once var(--motion-draw);
+}
+
+@keyframes ui-reload-once {
+  to { transform: rotate(360deg); }
+}

@@ -1,0 +1,2233 @@
+import { createHash, randomBytes, timingSafeEqual } from "node:crypto";
+import { createReadStream, createWriteStream, promises as fs, realpathSync } from "node:fs";
+import http from "node:http";
+import path from "node:path";
+import { Transform } from "node:stream";
+import { pipeline } from "node:stream/promises";
+import { fileURLToPath } from "node:url";
+import { createViteConfig } from "@open-slide/core/vite";
+import { createServer as createViteServer, optimizeDeps, resolveConfig } from "vite";
+import { OPEN_SLIDE_CONFIG, transformOpenSlideAgentEntryPoints } from "./agent-chat.mjs";
+import { createAgentActivityChannel, transformOpenSlideAgentPresence } from "./agent-presence.mjs";
+import { DECK_ERROR_OVERLAY_MODULE, DECK_ERROR_OVERLAY_SOURCE } from "./deck-error-overlay.mjs";
+import { moduleFilePath, replaceRequired, requireContract } from "./patch-contract.mjs";
+import { transformOpenSlideConnectionCopy } from "./locale-copy.mjs";
+import { PREBUNDLED_DEPENDENCIES } from "./prebundled-dependencies.mjs";
+
+export { transformOpenSlideConnectionCopy };
+
+const VERSION = "2.3.1";
+const RUNTIME_ROOT = fileURLToPath(new URL(".", import.meta.url));
+const PREVIOUS_CONTENT_LIMIT = 2 * 1024 * 1024;
+const PREVIOUS_CONTENT_TOTAL_LIMIT = 8 * 1024 * 1024;
+const EVENT_HISTORY_LIMIT = 8 * 1024 * 1024;
+const ECHO_TTL_MS = 5_000;
+const TRANSFORM_IDLE_MS = 10_000;
+const BLOCKED_ROUTES = new Set(["/__update-check", "/__update-package", "/__restart-server", "/__server-status"]);
+const MUTATION_ROUTE_PREFIXES = [
+  "/__assets",
+  "/__comments",
+  "/__design",
+  "/__edit",
+  "/__folders",
+  "/__lattice/rename-asset",
+  "/__notes",
+  "/__slides",
+];
+
+const LATTICE_EDITOR_STYLES = `
+
+/* Open Slide uses brand for editor interactions: the Present button, active
+   page number, selected thumbnail, resize affordance, and focus indicators.
+   Lattice's subtle active surface gives those controls a light-gray treatment;
+   destructive/status colors remain semantically distinct. */
+:root {
+  --brand: var(--accent);
+  --brand-foreground: var(--accent-foreground);
+  --brand-soft: var(--accent);
+  --ring: var(--muted-foreground);
+  --sidebar-ring: var(--muted-foreground);
+}
+
+/* Keep small labels such as the active page number legible while backgrounds
+   and selection outlines use the lighter active surface above. */
+.text-brand {
+  color: var(--muted-foreground);
+}
+
+/* The split Present control is a flat Lattice surface. Open Slide's brand
+   button adds a bottom shadow that reads as a stray border, and brightens an
+   already-light neutral on hover. Preserve only the divider between halves. */
+[data-lattice-present] > button {
+  box-shadow: none;
+  filter: none;
+}
+[data-lattice-present] > button + button {
+  box-shadow: inset 1px 0 0 oklch(0 0 0 / 0.12);
+}
+[data-lattice-present] > button:hover {
+  background: color-mix(in oklch, var(--brand) 94%, black);
+  filter: none;
+}
+[data-lattice-present] > button:active {
+  background: color-mix(in oklch, var(--brand) 90%, black);
+  filter: none;
+}
+
+/* Comment mode outlines its targets in brand, which the light active surface
+   above leaves nearly invisible on a white page. Draw those outlines in the
+   edit overlay's blue instead; the pins and buttons keep Lattice's surface. */
+[data-comment-layer] .border-brand {
+  border-color: var(--color-blue-500);
+}
+[data-comment-layer] .border-brand\\/70 {
+  border-color: color-mix(in oklch, var(--color-blue-500) 70%, transparent);
+}
+[data-comment-layer] .border-brand\\/50 {
+  border-color: color-mix(in oklch, var(--color-blue-500) 50%, transparent);
+}
+[data-comment-layer] .bg-brand\\/10 {
+  background-color: color-mix(in oklch, var(--color-blue-500) 10%, transparent);
+}
+[data-comment-layer] .bg-brand\\/5 {
+  background-color: color-mix(in oklch, var(--color-blue-500) 5%, transparent);
+}
+
+/* The save action sits inside an already elevated card. Its brand variant's
+   extra bottom shadow reads as a dark border rather than useful depth. */
+[data-lattice-save-card] [data-variant="brand"] {
+  box-shadow: none;
+  filter: none;
+}
+
+/* Match Lattice's quiet, hover-revealed PDF and editor scrollbar. */
+@media (pointer: fine) {
+  [data-slot="scroll-area"]:has([data-slot="scroll-area-viewport"] aside)
+    > [data-slot="scroll-area-scrollbar"] {
+    padding: 0;
+    border: 0;
+    opacity: 0;
+    transition: opacity 120ms ease-out 160ms;
+  }
+  [data-slot="scroll-area"]:has([data-slot="scroll-area-viewport"] aside)
+    > [data-slot="scroll-area-scrollbar"][data-hovering],
+  [data-slot="scroll-area"]:has([data-slot="scroll-area-viewport"] aside)
+    > [data-slot="scroll-area-scrollbar"][data-scrolling] {
+    opacity: 1;
+    transition-duration: 160ms;
+    transition-delay: 0ms;
+  }
+  [data-slot="scroll-area"]:has([data-slot="scroll-area-viewport"] aside)
+    > [data-slot="scroll-area-scrollbar"] > [data-slot="scroll-area-thumb"] {
+    flex: none;
+    width: 4px;
+    margin: 8px auto;
+    transform: translateX(-2px);
+    background: color-mix(in srgb, var(--foreground) 8%, transparent);
+    transition: background-color 160ms ease-in-out, width 160ms ease-in-out;
+  }
+  [data-slot="scroll-area"]:has([data-slot="scroll-area-viewport"] aside)
+    > [data-slot="scroll-area-scrollbar"]:hover > [data-slot="scroll-area-thumb"] {
+    width: 6px;
+    background: color-mix(in srgb, var(--foreground) 12%, transparent);
+  }
+  [data-slot="scroll-area"]:has([data-slot="scroll-area-viewport"] aside)
+    > [data-slot="scroll-area-scrollbar"] > [data-slot="scroll-area-thumb"]:active {
+    background: color-mix(in srgb, var(--foreground) 16%, transparent);
+  }
+}
+`;
+
+function sendJson(res, status, body, headers = {}) {
+  res.writeHead(status, { ...headers, "content-type": "application/json" }).end(JSON.stringify(body));
+}
+
+export function transformOpenSlideEditorStyles(source, id) {
+  const modulePath = moduleFilePath(id);
+  if (!modulePath.endsWith("/@open-slide/core/src/app/styles.css")) return null;
+  const fontImport = '@import "@fontsource-variable/geist";';
+  requireContract(source, [fontImport, '"Geist Variable"'], "editor font");
+  const withLatticeFont = source
+    .replace(fontImport, '@import "@fontsource-variable/inter";')
+    .replaceAll('"Geist Variable"', '"Inter Variable"');
+  // Tailwind scans files on disk, not the transformed TSX. Include this file
+  // explicitly so Lattice-only utilities also exist in the staged runtime.
+  const overridesSource = JSON.stringify(path.join(RUNTIME_ROOT, "server.mjs").replaceAll("\\", "/"));
+  return `${withLatticeFont}\n@source ${overridesSource};\n${LATTICE_EDITOR_STYLES}`;
+}
+
+export function transformOpenSlideThumbnailRail(source, id) {
+  const modulePath = moduleFilePath(id);
+  if (!modulePath.endsWith("/@open-slide/core/src/app/components/thumbnail-rail.tsx")) return null;
+  const roomyGap = "group/thumb flex w-full items-start gap-2.5 rounded-[6px]";
+  const trailingNumber = "mt-1.5 flex w-7 shrink-0 flex-col items-end gap-1";
+  requireContract(source, [roomyGap, trailingNumber], "thumbnail rail layout");
+  // Center the preview itself inside the hover surface and place the folio in
+  // the resulting left gutter. Keeping both items in normal flex flow makes
+  // the much wider preview look right-heavy even when their bounds are centered.
+  return source
+    .replace(
+      roomyGap,
+      "group/thumb relative flex w-full items-start justify-center gap-1 rounded-[6px] pl-2",
+    )
+    .replace(
+      trailingNumber,
+      "absolute left-2 mt-1.5 flex w-7 shrink-0 flex-col items-start gap-1",
+    );
+}
+
+export function transformOpenSlideComments(source, id) {
+  const modulePath = moduleFilePath(id);
+  if (modulePath.endsWith("/@open-slide/core/src/app/lib/inspector/use-comments.ts")) {
+    const silentRemove = `      const res = await fetch(\`/__comments/\${id}?slideId=\${encodeURIComponent(slideId)}\`, {
+        method: 'DELETE',
+      });
+      if (!res.ok) throw new Error(\`DELETE /__comments/\${id} → \${res.status}\`);
+      await refetch();`;
+    requireContract(source, [silentRemove], "comment removal");
+    // The comment layer toasts a failed delete, but upstream only reports the
+    // HTTP status. Carry the server's explanation (such as a read-only
+    // project) into that toast; the pin and its open editor stay in place.
+    return source.replace(silentRemove, `      const res = await fetch(\`/__comments/\${id}?slideId=\${encodeURIComponent(slideId)}\`, {
+        method: 'DELETE',
+      });
+      if (!res.ok) {
+        const body = (await res.json().catch(() => ({}))) as { error?: string };
+        throw new Error(body.error ?? \`DELETE /__comments/\${id} → \${res.status}\`);
+      }
+      await refetch();`);
+  }
+
+  if (modulePath.endsWith("/@open-slide/core/src/app/components/inspector/comment-layer.tsx")) {
+    const hintRow = '<div className="absolute inset-x-0 bottom-3 flex justify-center">';
+    const hintText = "'col-start-1 row-start-1 w-max whitespace-nowrap',";
+    const previewCard = '"island-arrive pointer-events-none absolute w-72 origin-top-left';
+    const card = "'island-arrive pointer-events-auto absolute w-72 origin-top-left";
+    requireContract(source, [hintRow, hintText, previewCard, card], "comment layer");
+    // The hint pill never wraps upstream, which clips the longer Lattice copy
+    // (agent-chat.mjs puts an Apply button in it) in a narrow editor pane:
+    // bound each line by the hint row's width instead, which unlike the
+    // pill's own animated width does not depend on the text being measured. The 288 px cards likewise overrun a
+    // pane narrower than that and hide their send button; the layer places
+    // them by their measured size, so capping the width keeps them inside.
+    return source
+      .replace(hintRow, '<div className="@container absolute inset-x-0 bottom-3 flex justify-center">')
+      .replace(hintText, "'col-start-1 row-start-1 w-max max-w-[calc(100cqw-2rem-26px)] whitespace-normal',")
+      .replace(previewCard, `${previewCard.slice(0, -"origin-top-left".length)}max-w-[calc(100%-1rem)] origin-top-left`)
+      .replace(card, `${card.slice(0, -"origin-top-left".length)}max-w-[calc(100%-1rem)] origin-top-left`);
+  }
+
+  return null;
+}
+
+export function transformOpenSlideInspectorPanel(source, id) {
+  const modulePath = moduleFilePath(id);
+  if (!modulePath.endsWith("/@open-slide/core/src/app/components/inspector/inspector-panel.tsx")) return null;
+  const agentImport = "import { useAgentSocketConnected } from '@/lib/use-agent-socket';\n";
+  const badgeCall = "          <AgentWatchingBadge />\n";
+  const badgeStart = "function AgentWatchingBadge() {";
+  const badgeEnd = "function readSnapshot(el: HTMLElement): ElementSnapshot {";
+  requireContract(source, [
+    agentImport,
+    badgeCall,
+    badgeStart,
+    badgeEnd,
+  ], "inspector agent badge");
+  // Lattice shows included context beside the agent composer. A second badge
+  // inside the inspector claims the agent is actively watching and duplicates
+  // connection state without giving the user another action.
+  let transformed = source
+    .replace(agentImport, "")
+    .replace(badgeCall, "");
+  const start = transformed.indexOf(badgeStart);
+  const end = transformed.indexOf(badgeEnd, start);
+  transformed = `${transformed.slice(0, start)}${transformed.slice(end)}`;
+  return transformed;
+}
+
+export function transformOpenSlideInspectorDefault(source, id) {
+  const modulePath = moduleFilePath(id);
+  if (!modulePath.endsWith("/@open-slide/core/src/app/components/inspector/inspector-provider.tsx")) return null;
+  const widthDefault = `  const [panelOpen, setPanelOpen] = useState(
+    () => typeof window !== 'undefined' && window.innerWidth >= 1024,
+  );`;
+  requireContract(source, [widthDefault], "inspector panel default");
+  // Since 2.0.0-beta.5 the format sidebar opens whenever the frame is at least
+  // 1024 px wide, which in Lattice's editor pane means nearly every deck opens
+  // with it covering the canvas. Start closed; the Format toggle still opens it.
+  return source.replace(widthDefault, "  const [panelOpen, setPanelOpen] = useState(false);");
+}
+
+export function transformOpenSlideSaveFeedback(source, id) {
+  const modulePath = moduleFilePath(id);
+  if (modulePath.endsWith("/@open-slide/core/src/app/components/inspector/save-bar.tsx")) {
+    const swallowedFailure = `    // Each provider surfaces its own errors via toast; swallow here so
+    // one failure doesn't reject the combined save.
+    await Promise.all(tasks).catch(() => {});`;
+    requireContract(source, [swallowedFailure], "combined save");
+    return source.replace(swallowedFailure, `    // Each provider owns its detailed error toast, but the rejection must
+    // reach SaveCard so a failed write is never announced as saved.
+    await Promise.all(tasks);`);
+  }
+  if (modulePath.endsWith("/@open-slide/core/src/app/components/panel/save-card.tsx")) {
+    const optimisticSave = `  const handleSave = async () => {
+    await onSave();
+    setJustSaved(true);
+  };`;
+    const cardRoot = `    <div
+      {...dataAttrs}
+      className={cn(`;
+    requireContract(source, [optimisticSave, cardRoot], "save card");
+    return source
+      .replace(optimisticSave, `  const handleSave = async () => {
+    try {
+      await onSave();
+      setJustSaved(true);
+    } catch {
+      // The provider already displayed the detailed failure. Keep the draft
+      // dirty and avoid replacing that truthful state with a Saved message.
+    }
+  };`)
+      .replace(cardRoot, `    <div
+      {...dataAttrs}
+      data-lattice-save-card=""
+      className={cn(`);
+  }
+  if (modulePath.endsWith("/@open-slide/core/src/app/components/inspector/inspector-provider.tsx")) {
+    const reportedPartialFailure = "      if (failures.length > 0) toast.error(`${t.inspector.saveFailed} ${failures.join('; ')}`);";
+    requireContract(source, [reportedPartialFailure], "inspector partial-save");
+    // A batch can return HTTP 200 while individual edits fail. Reject that
+    // outcome too, so the save card keeps the remaining edits marked dirty.
+    return source.replace(
+      reportedPartialFailure,
+      "      if (failures.length > 0) throw new Error(failures.join('; '));",
+    );
+  }
+  if (modulePath.endsWith("/@open-slide/core/src/app/components/style-panel/design-provider.tsx")) {
+    const reportedDesignFailure = "    if (!r.ok) toast.error(r.error ?? 'Failed to save');";
+    requireContract(source, [reportedDesignFailure], "design save");
+    return source.replace(reportedDesignFailure, `    if (!r.ok) {
+      const message = r.error ?? 'Failed to save';
+      toast.error(message);
+      throw new Error(message);
+    }`);
+  }
+  return null;
+}
+
+export function transformOpenSlideSelection(source, id) {
+  const modulePath = moduleFilePath(id);
+  if (!modulePath.endsWith("/@open-slide/core/src/app/components/inspector/inspector-provider.tsx")) return null;
+  const reattach = `        const anchor = target.anchor.isConnected
+          ? target.anchor
+          : (findRememberedTarget(root, target.canvasPath) ??
+            root.querySelector<HTMLElement>(\`[data-slide-loc="\${target.line}:\${target.column}"]\`));
+        if (!anchor) return target;`;
+  const selectionEnd = `      });
+      if (changed) setSelection(next);`;
+  requireContract(source, [reattach, selectionEnd], "selection recovery");
+  // A comment causes HMR to replace DOM instances. Shared components have the
+  // same source location, and canvas paths can point at a sibling after a
+  // reorder. Recover only an unchanged, unique instance; preserve connected
+  // targets and drop ambiguous detached targets from beta.5's multi-selection.
+  return source.replace(reattach, `        let anchor: HTMLElement | null = target.anchor;
+        if (!anchor.isConnected) {
+          const matches = Array.from(root.querySelectorAll<HTMLElement>(
+            \`[data-slide-loc="\${target.line}:\${target.column}"]\`,
+          )).filter((element) =>
+            element.tagName === target.anchor.tagName
+            && element.textContent === target.anchor.textContent
+          );
+          anchor = matches.length === 1 ? matches[0] : null;
+          if (!anchor) {
+            changed = true;
+            return null;
+          }
+        }`).replace(selectionEnd, `      }).filter((target): target is SelectedTarget => target !== null);
+      if (changed) setSelection(next);`);
+}
+
+export function transformOpenSlideToolbar(source, id) {
+  const modulePath = moduleFilePath(id);
+  if (!modulePath.endsWith("/@open-slide/core/src/app/routes/slide.tsx")) return null;
+  const presentGroup = '<div className="inline-flex items-stretch">';
+  const badgeCall = "{import.meta.env.DEV && <AgentConnectedBadge />}";
+  const badgeStart = "function AgentConnectedBadge() {";
+  const badgeEnd = "function SelectionReporter() {";
+  const selectionReporter = `function SelectionReporter() {
+  const { selected } = useInspector();
+  useEffect(() => {
+    if (!import.meta.hot) return;
+    const selection = selected
+      ? {
+          line: selected.line,
+          column: selected.column,
+          tagName: selected.anchor.tagName.toLowerCase(),
+          text: (selected.anchor.textContent ?? '').replace(/\\s+/g, ' ').trim().slice(0, 120),
+        }
+      : null;
+    import.meta.hot.send('open-slide:current', { selection });
+  }, [selected]);
+  return null;
+}`;
+  const menuModes = `  const { active, toggle, panelOpen, panelHidden, togglePanel } = useInspector();
+  return (
+    <>
+      <DropdownMenuGroup>
+        <DropdownMenuRadioGroup
+          value={active ? 'edit' : 'preview'}
+          onValueChange={(value) => {
+            if ((value === 'edit') !== active) toggle();
+          }}
+        >
+          <DropdownMenuRadioItem value="preview">{t.inspector.previewMode}</DropdownMenuRadioItem>
+          <DropdownMenuRadioItem value="edit">{t.inspector.editMode}</DropdownMenuRadioItem>
+        </DropdownMenuRadioGroup>`;
+  requireContract(source, [
+    presentGroup,
+    badgeCall,
+    badgeStart,
+    badgeEnd,
+    selectionReporter,
+    menuModes,
+  ], "toolbar layout");
+  let transformed = source.replace(
+    presentGroup,
+    '<div data-lattice-present className="inline-flex items-stretch">',
+  );
+  // Below 640 px the mode switcher moves into the More menu, which upstream
+  // never taught the comment mode: the menu shows Preview while commenting and
+  // cannot leave it. Lattice's editor pane is often that narrow, so offer all
+  // three modes there.
+  transformed = transformed.replace(menuModes, `  const { mode, setMode, active, panelOpen, panelHidden, togglePanel } = useInspector();
+  return (
+    <>
+      <DropdownMenuGroup>
+        <DropdownMenuRadioGroup
+          value={mode}
+          onValueChange={(value) => setMode(value as typeof mode)}
+        >
+          <DropdownMenuRadioItem value="preview">{t.inspector.previewMode}</DropdownMenuRadioItem>
+          <DropdownMenuRadioItem value="edit">{t.inspector.editMode}</DropdownMenuRadioItem>
+          <DropdownMenuRadioItem value="comment">{t.inspector.commentMode}</DropdownMenuRadioItem>
+        </DropdownMenuRadioGroup>`);
+  transformed = transformed.replace(
+    badgeCall,
+    "{import.meta.env.DEV && <AgentConnectionWarning />}",
+  );
+  const start = transformed.indexOf(badgeStart);
+  const end = transformed.indexOf(badgeEnd, start);
+  const warning = `function AgentConnectionWarning() {
+  const t = useLocale();
+  const connected = useAgentSocketConnected();
+  if (connected) return null;
+  return (
+    <TooltipProvider delay={200}>
+      <Tooltip>
+        <TooltipTrigger
+          render={
+            <button
+              type="button"
+              className="ml-1 flex shrink-0 cursor-help items-center gap-1.5 rounded-[3px] border border-hairline bg-card px-1.5 py-0.5 text-[10.5px] text-foreground/85 outline-none transition-colors duration-150 hover:bg-muted/50 focus-visible:ring-2 focus-visible:ring-ring/30"
+            >
+              <span aria-hidden className="relative inline-flex size-1.5 rounded-full bg-rose-500" />
+              {t.slide.agentDisconnected}
+            </button>
+          }
+        />
+        <TooltipContent
+          side="bottom"
+          align="start"
+          className="w-max max-w-[min(520px,calc(100vw-2rem))] text-center leading-relaxed"
+        >
+          {t.slide.agentDisconnectedTooltip}
+        </TooltipContent>
+      </Tooltip>
+    </TooltipProvider>
+  );
+}
+
+`;
+  transformed = `${transformed.slice(0, start)}${warning}${transformed.slice(end)}`;
+  return transformed.replace(
+    selectionReporter,
+    selectionReporter
+      .replace(".slice(0, 120)", ".slice(0, 12_000)")
+      .replace(
+        "const { selected } = useInspector();",
+        "const { slideId, selected, pendingCount, comments } = useInspector();",
+      )
+      .replace(
+        "{ selection });",
+        "{ slideId, selection, pendingEdits: pendingCount > 0, pendingComments: comments });",
+      )
+      .replace("}, [selected]);", "}, [comments, pendingCount, selected, slideId]);"),
+  );
+}
+
+export function transformOpenSlideAssets(source, id) {
+  const modulePath = moduleFilePath(id);
+  let transformed = source;
+  const replace = (before, after) => {
+    transformed = replaceRequired(transformed, before, after, "project asset");
+  };
+
+  if (modulePath.endsWith("/@open-slide/core/src/app/lib/assets.ts")) {
+    replace(
+      `  unused: boolean;
+};`,
+      `  unused: boolean;
+  usedInPresentation?: boolean;
+};`,
+    );
+    replace(
+      `export type UploadOptions = { overwrite?: boolean };
+
+export async function listAssets(slideId: string): Promise<AssetEntry[]> {
+  const res = await fetch(\`/__assets/\${slideId}\`);
+  if (!res.ok) throw new Error(\`GET /__assets/\${slideId} \${res.status}\`);
+  const data = (await res.json()) as { assets?: AssetEntry[] };
+  return data.assets ?? [];
+}`,
+      `export type UploadOptions = { overwrite?: boolean };
+
+export async function listAssets(slideId: string): Promise<AssetEntry[]> {
+  const res = await fetch(\`/__assets/\${GLOBAL_ASSET_SCOPE}\`);
+  if (!res.ok) throw new Error(\`GET /__assets/\${GLOBAL_ASSET_SCOPE} \${res.status}\`);
+  const data = (await res.json()) as { assets?: AssetEntry[] };
+  const assets = data.assets ?? [];
+  if (slideId === GLOBAL_ASSET_SCOPE) return assets;
+
+  const usageRes = await fetch(
+    \`/__lattice/assets-used?slideId=\${encodeURIComponent(slideId)}\`,
+  );
+  if (!usageRes.ok) {
+    throw new Error(\`GET /__lattice/assets-used \${usageRes.status}\`);
+  }
+  const usageData = (await usageRes.json()) as { names?: string[] };
+  const used = new Set(usageData.names ?? []);
+  return assets.map((asset) => ({
+    ...asset,
+    usedInPresentation: used.has(asset.name),
+  }));
+}`,
+    );
+    replace(
+      `async function renameAsset(slideId: string, from: string, to: string): Promise<Response> {
+  return fetch(\`/__assets/\${slideId}/\${encodeURIComponent(from)}\`, {
+    method: 'PATCH',
+    headers: { 'content-type': 'application/json' },
+    body: JSON.stringify({ name: to }),
+  });
+}`,
+      `async function renameAsset(_slideId: string, from: string, to: string): Promise<Response> {
+  return fetch('/__lattice/rename-asset', {
+    method: 'POST',
+    headers: { 'content-type': 'application/json' },
+    body: JSON.stringify({ from, to }),
+  });
+}`,
+    );
+    const scopedUrl = "/__assets/${slideId}/";
+    if (!transformed.includes(scopedUrl)) {
+      throw new Error("Open Slide's project asset routes changed");
+    }
+    transformed = transformed.replaceAll(scopedUrl, "/__assets/${GLOBAL_ASSET_SCOPE}/");
+    replace("const list = await listAssets(slideId);", "const list = await listAssets(GLOBAL_ASSET_SCOPE);");
+    replace(
+      "if (!data || data.slideId === slideId) {",
+      "if (!data || data.slideId === GLOBAL_ASSET_SCOPE || data.slideId === slideId) {",
+    );
+    return transformed;
+  }
+
+  if (modulePath.endsWith("/@open-slide/core/src/app/components/asset-view.tsx")) {
+    replace(
+      `  const t = useLocale();
+
+  const deferredQuery = useDeferredValue(query);`,
+      `  const t = useLocale();
+  const scopedAssets = useMemo(
+    () => (scope === 'slide' ? assets.filter((asset) => asset.usedInPresentation) : assets),
+    [assets, scope],
+  );
+
+  const deferredQuery = useDeferredValue(query);`,
+    );
+    replace("filterAssets(assets, {", "filterAssets(scopedAssets, {");
+    replace(
+      "[assets, deferredQuery, sort.direction, sort.key, typeFilter, usageFilter],",
+      "[deferredQuery, scope, scopedAssets, sort.direction, sort.key, typeFilter, usageFilter],",
+    );
+    replace(
+      "else toast.success(format(t.asset.toastUploadedAs, { name: next.name }));",
+      `else {
+        toast.success(format(t.asset.toastUploadedAs, { name: next.name }));
+        if (!lockedToGlobal) setScope('global');
+      }`,
+    );
+    replace(
+      "else toast.success(format(t.asset.toastUploaded, { name: file.name }));",
+      `else {
+      toast.success(format(t.asset.toastUploaded, { name: file.name }));
+      if (!lockedToGlobal) setScope('global');
+    }`,
+    );
+    replace(
+      "{scope === 'global' ? 'assets/' : `slides/${slideId}/assets/`}",
+      "assets/",
+    );
+    replace(
+      "{format(assets.length === 1 ? t.asset.fileCount.one : t.asset.fileCount.other, {",
+      "{format(scopedAssets.length === 1 ? t.asset.fileCount.one : t.asset.fileCount.other, {",
+    );
+    replace(
+      "count: pad2(assets.length),",
+      "count: pad2(scopedAssets.length),",
+    );
+    replace("        ) : assets.length === 0 ? (", "        ) : scopedAssets.length === 0 ? (");
+    replace(
+      `            const assetPath =
+              scope === 'global' ? \`@assets/\${target.name}\` : \`./assets/\${target.name}\`;`,
+      "            const assetPath = `@assets/${target.name}`;",
+    );
+    replace(
+      "const importPath = scope === 'global' ? `@assets/${asset.name}` : `./assets/${asset.name}`;",
+      "const importPath = `@assets/${asset.name}`;",
+    );
+    return transformed;
+  }
+
+  if (modulePath.endsWith("/@open-slide/core/src/app/components/inspector/asset-picker-dialog.tsx")) {
+    replace(
+      "const images = assets.filter((a) => a.mime.startsWith('image/'));",
+      `const images = assets.filter(
+    (asset) => asset.mime.startsWith('image/') && (scope === 'global' || asset.usedInPresentation),
+  );`,
+    );
+    replace(
+      "const path = scope === 'global' ? 'assets/' : `slides/${slideId}/assets/`;",
+      "const path = 'assets/';",
+    );
+    replace("onPick(entry, scope);", "onPick(entry, 'global');");
+    replace("onClick={() => onPick(asset, scope)}", "onClick={() => onPick(asset, 'global')}");
+    return transformed;
+  }
+
+  if (modulePath.endsWith("/@open-slide/core/src/app/components/image-placeholder.tsx")) {
+    replace(
+      "ops: [{ kind: 'replace-placeholder-with-image', assetPath: `./assets/${entry.name}` }],",
+      "ops: [{ kind: 'replace-placeholder-with-image', assetPath: `@assets/${entry.name}` }],",
+    );
+    return transformed;
+  }
+
+  const localeReplacements = modulePath.endsWith("/@open-slide/core/src/locale/en.ts")
+    ? [
+        ["sectionAria: 'Slide assets'", "sectionAria: 'Presentation assets'"],
+        ["scopeSlide: 'This slide'", "scopeSlide: 'This presentation'"],
+        [
+          "deleteAssetDescription: 'Delete {name}? Imports referencing this file in the slide will break.'",
+          "deleteAssetDescription: 'Delete {name} from the project assets folder? This cannot be undone.'",
+        ],
+      ]
+    : modulePath.endsWith("/@open-slide/core/src/locale/zh-cn.ts")
+      ? [
+          ["sectionAria: '幻灯片素材'", "sectionAria: '演示文稿素材'"],
+          ["scopeSlide: '当前幻灯片'", "scopeSlide: '当前演示文稿'"],
+          [
+            "deleteAssetDescription: '要删除 {name} 吗?幻灯片中引用此文件的导入将失效。'",
+            "deleteAssetDescription: '要从项目 assets 文件夹中删除 {name} 吗？此操作无法撤销。'",
+          ],
+        ]
+      : null;
+  if (!localeReplacements) return null;
+  for (const [before, after] of localeReplacements) replace(before, after);
+  return transformed;
+}
+
+export function transformOpenSlideHomeChrome(source, id) {
+  const modulePath = moduleFilePath(id);
+  let transformed = source;
+  const remove = (fragment) => {
+    transformed = replaceRequired(transformed, fragment, "", "home chrome");
+  };
+  const removeRange = (start, end) => {
+    const startIndex = transformed.indexOf(start);
+    const endIndex = transformed.indexOf(end, startIndex + start.length);
+    if (startIndex < 0 || endIndex < 0) {
+      throw new Error("Open Slide's home chrome contract changed");
+    }
+    transformed = transformed.slice(0, startIndex) + transformed.slice(endIndex);
+  };
+
+  if (modulePath.endsWith("/@open-slide/core/src/app/routes/home.tsx")) {
+    const spaciousGrid = "grid grid-cols-[repeat(auto-fill,minmax(240px,1fr))] gap-x-6 gap-y-9 md:grid-cols-[repeat(auto-fill,minmax(300px,1fr))]";
+    requireContract(transformed, [spaciousGrid], "home content");
+    // V2 already uses compact section titles; only the card density needs an override.
+    return transformed
+      .replace(
+        spaciousGrid,
+        "grid grid-cols-[repeat(auto-fill,minmax(200px,1fr))] gap-x-4 gap-y-7 md:grid-cols-[repeat(auto-fill,minmax(220px,1fr))]",
+      );
+  }
+
+  if (modulePath.endsWith("/@open-slide/core/src/app/routes/home-shell.tsx")) {
+    remove("import { Menu } from 'lucide-react';\n");
+    remove("import { LanguageToggle } from '@/components/language-toggle';\n");
+    remove("import { ThemeToggle } from '@/components/theme-toggle';\n");
+    remove(`import {
+  DropdownMenu,
+  DropdownMenuContent,
+  DropdownMenuItem,
+  DropdownMenuTrigger,
+} from '@/components/ui/dropdown-menu';
+`);
+    remove("import { CommandMenuTrigger } from '../components/command/command-menu';\n");
+    remove("import { HomeCommandMenu } from '../components/command/home-command-menu';\n");
+    remove("import { SystemViewIcon } from '../components/sidebar/folder-item';\n");
+    remove(`  const [commandOpen, setCommandOpen] = useState(false);
+  const openCommandMenu = useCallback(() => setCommandOpen(true), []);
+
+`);
+    remove("          onOpenCommandMenu={openCommandMenu}\n");
+    removeRange(
+      "          <div className=\"flex items-center justify-between border-b border-hairline bg-sidebar px-4 py-3 md:hidden\">\n",
+      "          <div\n            className={cn(\n",
+    );
+    remove(`
+      <HomeCommandMenu
+        open={commandOpen}
+        onOpenChange={setCommandOpen}
+        folders={manifest.folders}
+        titleMap={titleMap}
+        onSelectView={selectFolder}
+      />
+`);
+    const reactImport = "import { useCallback, useEffect, useMemo, useState } from 'react';\n";
+    const resizableReactImport = "import { type KeyboardEvent as ReactKeyboardEvent, type PointerEvent as ReactPointerEvent, type ReactNode, useCallback, useEffect, useMemo, useRef, useState } from 'react';\n";
+    const homeShellStart = "export function HomeShell() {";
+    const sidebarStart = "      <div className=\"hidden md:block\">\n        <Sidebar\n";
+    const sidebarEnd = "        />\n      </div>\n\n      <div className=\"relative flex min-w-0 flex-1 flex-col md:py-2 md:pr-2\">";
+    requireContract(transformed, [
+      reactImport,
+      homeShellStart,
+      sidebarStart,
+      sidebarEnd,
+    ], "home layout");
+    const resizableSidebar = `const HOME_SIDEBAR_WIDTH_STORAGE_KEY = 'open-slide:home-sidebar-width';
+const DEFAULT_HOME_SIDEBAR_WIDTH = 264;
+const MIN_HOME_SIDEBAR_WIDTH = 200;
+const MAX_HOME_SIDEBAR_WIDTH = 480;
+const HOME_SIDEBAR_RESIZE_LABELS: Record<string, string> = {
+  en: 'Resize sidebar',
+  'zh-CN': '调整侧边栏宽度',
+  'zh-TW': '調整側邊欄寬度',
+  ja: 'サイドバーの幅を調整',
+};
+
+function readStoredHomeSidebarWidth(): number {
+  if (typeof window === 'undefined') return DEFAULT_HOME_SIDEBAR_WIDTH;
+  const raw = window.localStorage.getItem(HOME_SIDEBAR_WIDTH_STORAGE_KEY);
+  const parsed = raw == null ? Number.NaN : Number(raw);
+  if (!Number.isFinite(parsed)) return DEFAULT_HOME_SIDEBAR_WIDTH;
+  return Math.min(MAX_HOME_SIDEBAR_WIDTH, Math.max(MIN_HOME_SIDEBAR_WIDTH, parsed));
+}
+
+function ResizableHomeSidebar({ children }: { children: ReactNode }) {
+  const t = useLocale();
+  const [width, setWidth] = useState<number>(readStoredHomeSidebarWidth);
+  const [resizing, setResizing] = useState(false);
+  const dragRef = useRef<{ startX: number; startWidth: number } | null>(null);
+
+  useEffect(() => {
+    window.localStorage.setItem(HOME_SIDEBAR_WIDTH_STORAGE_KEY, String(width));
+  }, [width]);
+
+  useEffect(() => {
+    if (!resizing) return;
+    const previousCursor = document.body.style.cursor;
+    const previousUserSelect = document.body.style.userSelect;
+    document.body.style.cursor = 'col-resize';
+    document.body.style.userSelect = 'none';
+    return () => {
+      document.body.style.cursor = previousCursor;
+      document.body.style.userSelect = previousUserSelect;
+    };
+  }, [resizing]);
+
+  const stopResize = () => {
+    dragRef.current = null;
+    setResizing(false);
+  };
+
+  const onPointerDown = (event: ReactPointerEvent<HTMLDivElement>) => {
+    event.preventDefault();
+    event.currentTarget.setPointerCapture(event.pointerId);
+    dragRef.current = { startX: event.clientX, startWidth: width };
+    setResizing(true);
+  };
+
+  const onPointerMove = (event: ReactPointerEvent<HTMLDivElement>) => {
+    if (!dragRef.current) return;
+    const next = dragRef.current.startWidth + event.clientX - dragRef.current.startX;
+    setWidth(Math.min(MAX_HOME_SIDEBAR_WIDTH, Math.max(MIN_HOME_SIDEBAR_WIDTH, next)));
+  };
+
+  const onPointerUp = (event: ReactPointerEvent<HTMLDivElement>) => {
+    if (event.currentTarget.hasPointerCapture(event.pointerId)) {
+      event.currentTarget.releasePointerCapture(event.pointerId);
+    }
+    stopResize();
+  };
+
+  const onKeyDown = (event: ReactKeyboardEvent<HTMLDivElement>) => {
+    const step = event.shiftKey ? 32 : 8;
+    if (event.key === 'ArrowLeft') {
+      event.preventDefault();
+      event.stopPropagation();
+      setWidth((current) => Math.max(MIN_HOME_SIDEBAR_WIDTH, current - step));
+    } else if (event.key === 'ArrowRight') {
+      event.preventDefault();
+      event.stopPropagation();
+      setWidth((current) => Math.min(MAX_HOME_SIDEBAR_WIDTH, current + step));
+    } else if (event.key === 'Home') {
+      event.preventDefault();
+      event.stopPropagation();
+      setWidth(DEFAULT_HOME_SIDEBAR_WIDTH);
+    }
+  };
+
+  return (
+    <div className="relative hidden shrink-0 md:block" style={{ width }}>
+      {children}
+      <div
+        role="separator"
+        aria-orientation="vertical"
+        aria-label={HOME_SIDEBAR_RESIZE_LABELS[t.id] ?? HOME_SIDEBAR_RESIZE_LABELS.en}
+        aria-valuenow={width}
+        aria-valuemin={MIN_HOME_SIDEBAR_WIDTH}
+        aria-valuemax={MAX_HOME_SIDEBAR_WIDTH}
+        tabIndex={0}
+        onPointerDown={onPointerDown}
+        onPointerMove={onPointerMove}
+        onPointerUp={onPointerUp}
+        onPointerCancel={onPointerUp}
+        onLostPointerCapture={stopResize}
+        onKeyDown={onKeyDown}
+        onDoubleClick={() => setWidth(DEFAULT_HOME_SIDEBAR_WIDTH)}
+        className={cn(
+          'group/resize absolute inset-y-0 right-0 z-20 w-1.5 translate-x-1/2 cursor-col-resize touch-none outline-none',
+          'focus-visible:bg-brand/20',
+        )}
+      >
+        <span
+          aria-hidden
+          className={cn(
+            'pointer-events-none absolute inset-y-0 left-1/2 w-px -translate-x-1/2 bg-brand opacity-0 transition-opacity duration-150',
+            'group-hover/resize:opacity-100 group-focus-visible/resize:opacity-100',
+            resizing && 'opacity-100',
+          )}
+        />
+      </div>
+    </div>
+  );
+}
+
+`;
+    return transformed
+      .replace(reactImport, resizableReactImport)
+      .replace(homeShellStart, `${resizableSidebar}${homeShellStart}`)
+      .replace(sidebarStart, "      <ResizableHomeSidebar>\n        <Sidebar\n")
+      .replace(sidebarEnd, sidebarEnd.replace("</div>", "</ResizableHomeSidebar>"));
+  }
+
+  if (modulePath.endsWith("/@open-slide/core/src/app/components/sidebar/sidebar.tsx")) {
+    remove("import logo from '@/assets/open-slide.svg';\n");
+    remove("import { COMMAND_MENU_SHORTCUT } from '../command/command-menu';\n");
+    remove("import { SidebarFooter } from './sidebar-footer';\n");
+    remove("  onOpenCommandMenu,\n");
+    remove("  onOpenCommandMenu: () => void;\n");
+    removeRange(
+      "      <div className=\"flex items-center gap-2.5 px-4 pt-4 pb-3\">\n",
+      "      <div className=\"space-y-0.5 px-2\">\n",
+    );
+    remove("      <SidebarFooter />\n");
+    const fixedWidth = "relative flex h-full w-[16.5rem] shrink-0 flex-col";
+    const navigationStart = "      <div className=\"space-y-0.5 px-2\">\n";
+    requireContract(transformed, [fixedWidth, navigationStart], "home layout");
+    return transformed
+      .replace(fixedWidth, "relative flex h-full w-full shrink-0 flex-col")
+      .replace(navigationStart, "      <div className=\"space-y-0.5 px-2 pt-3\">\n");
+  }
+
+  if (modulePath.endsWith("/@open-slide/core/src/app/components/command/command-menu.tsx")) {
+    remove("import { Check, Languages, Loader2, Monitor, Moon, RotateCw, Search, Sun } from 'lucide-react';\n");
+    transformed = "import { Check, Loader2, RotateCw, Search } from 'lucide-react';\n" + transformed;
+    remove("import { useTheme } from 'next-themes';\n");
+    remove("import { LOCALE_OPTIONS, setLocale } from '@/lib/locale-store';\n");
+    remove("import { format, useLocale } from '@/lib/use-locale';\n");
+    transformed = transformed.replace(
+      "import { useRestartServer } from '@/lib/use-restart-server';\n",
+      "import { useLocale } from '@/lib/use-locale';\nimport { useRestartServer } from '@/lib/use-restart-server';\n",
+    );
+    remove("  const { theme, setTheme } = useTheme();\n");
+    remove(`    const appearance: CommandSpec[] = [
+      {
+        id: 'theme-light',
+        label: format(t.commandMenu.themeItem, { name: t.themeToggle.light }),
+        icon: <Sun />,
+        keywords: ['theme', 'light', 'appearance'],
+        active: theme === 'light',
+        run: () => setTheme('light'),
+      },
+      {
+        id: 'theme-dark',
+        label: format(t.commandMenu.themeItem, { name: t.themeToggle.dark }),
+        icon: <Moon />,
+        keywords: ['theme', 'dark', 'appearance'],
+        active: theme === 'dark',
+        run: () => setTheme('dark'),
+      },
+      {
+        id: 'theme-system',
+        label: format(t.commandMenu.themeItem, { name: t.themeToggle.system }),
+        icon: <Monitor />,
+        keywords: ['theme', 'system', 'appearance'],
+        active: theme === 'system',
+        run: () => setTheme('system'),
+      },
+      ...LOCALE_OPTIONS.map((option) => ({
+        id: \`locale-\${option.id}\`,
+        label: format(t.commandMenu.languageItem, { name: option.label }),
+        icon: <Languages />,
+        keywords: ['language', 'locale', option.id],
+        active: t.id === option.id,
+        run: () => setLocale(option.id),
+      })),
+    ];
+
+`);
+    remove("      { id: 'appearance', heading: t.commandMenu.groupAppearance, items: appearance },\n");
+    const dependencies = "  }, [t, theme, setTheme, canRestart, restarting, restartServer]);\n";
+    requireContract(transformed, [dependencies], "home chrome");
+    return transformed.replace(
+      dependencies,
+      "  }, [t, canRestart, restarting, restartServer]);\n",
+    );
+  }
+
+  return null;
+}
+
+export function safeRelativePath(value) {
+  if (typeof value !== "string" || value.includes("\0") || path.isAbsolute(value)) return null;
+  const normalized = value.replaceAll("\\", "/").replace(/^\.\//, "");
+  if (!normalized || normalized.split("/").some((part) => part === ".." || part === "")) return null;
+  return normalized;
+}
+
+const PRESENTATION_ID_RE = /^[a-z0-9]+(?:-[a-z0-9]+)*$/i;
+const OPEN_SLIDE_COMMENT_ID_RE = /^c-[a-f0-9]+$/;
+const ASSET_FORBIDDEN_RE = /[/\\:*?"<>|]/;
+
+export function removeOpenSlideCommentMarker(source, id) {
+  if (typeof source !== "string" || !OPEN_SLIDE_COMMENT_ID_RE.test(id)) return null;
+  const marker = new RegExp(
+    `\\{\\/\\*\\s*@slide-comment\\s+id="${id}"\\s+ts="[^"]+"\\s+text="[A-Za-z0-9_\\-]+={0,2}"\\s*\\*\\/\\}`,
+  );
+  const match = marker.exec(source);
+  if (!match) return null;
+
+  let from = match.index;
+  let to = from + match[0].length;
+  const lineEnd = source.indexOf("\n", to);
+  const remainder = source.slice(to, lineEnd === -1 ? source.length : lineEnd);
+  // Upstream inserts only a leading newline, so a marker inside an otherwise
+  // ordinary `<h1>Title</h1>` shares its line with `Title`. In that case remove
+  // the marker itself while preserving the line's indentation and JSX.
+  if (!/^[ \t\r]*$/.test(remainder)) {
+    return source.slice(0, from) + source.slice(to);
+  }
+  const lineStart = source.lastIndexOf("\n", from - 1) + 1;
+  if (/^[ \t]*$/.test(source.slice(lineStart, from))) {
+    if (lineStart > 0) {
+      from = source[lineStart - 2] === "\r" ? lineStart - 2 : lineStart - 1;
+    } else {
+      from = 0;
+      if (source.startsWith("\r\n", to)) to += 2;
+      else if (source[to] === "\n") to += 1;
+    }
+  }
+  return source.slice(0, from) + source.slice(to);
+}
+
+function validAssetName(value) {
+  if (typeof value !== "string") return null;
+  const trimmed = value.trim();
+  if (trimmed.length < 1 || trimmed.length > 120) return null;
+  if (
+    ASSET_FORBIDDEN_RE.test(trimmed)
+    || [...trimmed].some((character) => character.charCodeAt(0) <= 31 || character.charCodeAt(0) === 127)
+    || trimmed.startsWith(".")
+    || trimmed.startsWith("~")
+  ) return null;
+  const dot = trimmed.lastIndexOf(".");
+  return dot > 0 && dot < trimmed.length - 1 ? trimmed : null;
+}
+
+async function presentationEntries(root) {
+  const slidesRoot = path.join(root, "slides");
+  let entries;
+  try {
+    entries = await fs.readdir(slidesRoot, { withFileTypes: true });
+  } catch (error) {
+    if (error.code === "ENOENT") return [];
+    throw error;
+  }
+  return entries
+    .filter((entry) => entry.isDirectory() && PRESENTATION_ID_RE.test(entry.name))
+    .map((entry) => ({
+      id: entry.name,
+      entry: path.join(slidesRoot, entry.name, "index.tsx"),
+      assets: path.join(slidesRoot, entry.name, "assets"),
+    }))
+    .sort((left, right) => left.id.localeCompare(right.id));
+}
+
+function replaceQuotedAssetPath(source, before, after) {
+  let transformed = source;
+  for (const quote of ["'", "\"", "`"]) {
+    transformed = transformed.replaceAll(`${quote}${before}${quote}`, `${quote}${after}${quote}`);
+  }
+  return transformed;
+}
+
+export async function listUsedGlobalAssetNames(root, slideId) {
+  if (!PRESENTATION_ID_RE.test(slideId)) throw new Error("Invalid presentation ID");
+  const source = await fs.readFile(path.join(root, "slides", slideId, "index.tsx"), "utf8");
+  let entries;
+  try {
+    entries = await fs.readdir(path.join(root, "assets"), { withFileTypes: true });
+  } catch (error) {
+    if (error.code === "ENOENT") return [];
+    throw error;
+  }
+  return entries
+    .filter((entry) => entry.isFile() && validAssetName(entry.name))
+    .map((entry) => entry.name)
+    .filter((name) => ["'", "\"", "`"].some((quote) => (
+      source.includes(`${quote}@assets/${name}${quote}`)
+    )))
+    .sort((left, right) => left.localeCompare(right));
+}
+
+export async function renameGlobalAsset(root, from, to, queue = null) {
+  from = validAssetName(from);
+  to = validAssetName(to);
+  if (!from || !to) return { ok: false, status: 400, error: "Invalid asset name" };
+  if (from === to) return { ok: true, status: 200, name: to, updatedSlides: [] };
+  const assetsRoot = path.join(root, "assets");
+  const sourceAsset = path.join(assetsRoot, from);
+  const targetAsset = path.join(assetsRoot, to);
+  try {
+    const stat = await fs.stat(sourceAsset);
+    if (!stat.isFile()) return { ok: false, status: 404, error: "Asset not found" };
+  } catch (error) {
+    if (error.code === "ENOENT") return { ok: false, status: 404, error: "Asset not found" };
+    throw error;
+  }
+  try {
+    await fs.access(targetAsset);
+    return { ok: false, status: 409, error: "Target already exists" };
+  } catch (error) {
+    if (error.code !== "ENOENT") throw error;
+  }
+
+  const sourcePath = `@assets/${from}`;
+  const targetPath = `@assets/${to}`;
+  const updates = [];
+  for (const presentation of await presentationEntries(root)) {
+    let source;
+    try {
+      source = await fs.readFile(presentation.entry, "utf8");
+    } catch (error) {
+      if (error.code === "ENOENT") continue;
+      throw error;
+    }
+    const transformed = replaceQuotedAssetPath(source, sourcePath, targetPath);
+    if (transformed !== source) updates.push({ ...presentation, source, transformed });
+  }
+
+  await fs.rename(sourceAsset, targetAsset);
+  const written = [];
+  try {
+    for (const update of updates) {
+      await fs.writeFile(update.entry, update.transformed);
+      written.push(update);
+    }
+  } catch (error) {
+    for (const update of written.reverse()) {
+      await fs.writeFile(update.entry, update.source).catch(() => undefined);
+    }
+    await fs.rename(targetAsset, sourceAsset).catch(() => undefined);
+    throw error;
+  }
+
+  if (queue) {
+    await queue.enqueue("create", targetAsset);
+    for (const update of updates) await queue.enqueue("write", update.entry);
+    await queue.enqueue("delete", sourceAsset);
+  }
+  return {
+    ok: true,
+    status: 200,
+    name: to,
+    updatedSlides: updates.map((update) => update.id),
+  };
+}
+
+async function fileDigest(file) {
+  const digest = createHash("sha256");
+  for await (const chunk of createReadStream(file)) digest.update(chunk);
+  return digest.digest("hex");
+}
+
+async function filesEqual(left, right) {
+  const [leftStat, rightStat] = await Promise.all([fs.stat(left), fs.stat(right)]);
+  if (leftStat.size !== rightStat.size) return false;
+  const [leftDigest, rightDigest] = await Promise.all([fileDigest(left), fileDigest(right)]);
+  return leftDigest === rightDigest;
+}
+
+function availableAssetCopyName(name, occupied) {
+  const dot = name.lastIndexOf(".");
+  const stem = name.slice(0, dot);
+  const extension = name.slice(dot);
+  for (let index = 1; ; index += 1) {
+    const suffix = `-${index}`;
+    const candidate = `${stem.slice(0, 120 - extension.length - suffix.length)}${suffix}${extension}`;
+    if (!occupied.has(candidate)) return candidate;
+  }
+}
+
+export async function migrateLegacySlideAssets(root, queue = null) {
+  const assetsRoot = path.join(root, "assets");
+  await fs.mkdir(assetsRoot, { recursive: true });
+  const occupied = new Set(
+    (await fs.readdir(assetsRoot, { withFileTypes: true }))
+      .filter((entry) => entry.isFile())
+      .map((entry) => entry.name),
+  );
+  const copied = [];
+  const rewritten = [];
+  const removals = [];
+
+  for (const presentation of await presentationEntries(root)) {
+    let localEntries;
+    try {
+      localEntries = await fs.readdir(presentation.assets, { withFileTypes: true });
+    } catch (error) {
+      if (error.code === "ENOENT") continue;
+      throw error;
+    }
+    let source = null;
+    try {
+      source = await fs.readFile(presentation.entry, "utf8");
+    } catch (error) {
+      if (error.code !== "ENOENT") throw error;
+    }
+    const originalSource = source;
+
+    for (const entry of localEntries.sort((left, right) => left.name.localeCompare(right.name))) {
+      if (!entry.isFile() || !validAssetName(entry.name)) continue;
+      const localAsset = path.join(presentation.assets, entry.name);
+      const localPath = `./assets/${entry.name}`;
+      let targetName = entry.name;
+      let targetAsset = path.join(assetsRoot, targetName);
+      // Move only an asset whose import this same step rewrites. Authors, the
+      // agent above all, write a deck's assets before the entry that imports
+      // them; moving such a file away left that import unresolvable the
+      // moment the entry was written.
+      if (!source?.includes(localPath)) continue;
+      if (occupied.has(targetName) && !await filesEqual(localAsset, targetAsset)) {
+        targetName = availableAssetCopyName(entry.name, occupied);
+        targetAsset = path.join(assetsRoot, targetName);
+      }
+      const next = replaceQuotedAssetPath(source, localPath, `@assets/${targetName}`);
+      // Preserve unusual dynamic references rather than deleting the file
+      // underneath syntax that Open Slide cannot safely rewrite.
+      if (next === source || next.includes(localPath)) continue;
+      source = next;
+      if (!occupied.has(targetName)) {
+        await fs.copyFile(localAsset, targetAsset);
+        occupied.add(targetName);
+        copied.push(targetAsset);
+      }
+      removals.push({ file: localAsset, directory: presentation.assets });
+    }
+    if (source !== null && source !== originalSource) {
+      rewritten.push({ file: presentation.entry, source });
+    }
+  }
+
+  for (const update of rewritten) await fs.writeFile(update.file, update.source);
+  for (const removal of removals) await fs.unlink(removal.file);
+  for (const directory of new Set(removals.map((removal) => removal.directory))) {
+    await fs.rmdir(directory).catch(() => undefined);
+  }
+  if (queue) {
+    for (const file of copied) await queue.enqueue("create", file);
+    for (const update of rewritten) await queue.enqueue("write", update.file);
+    for (const removal of removals) await queue.enqueue("delete", removal.file);
+  }
+  return { copied: copied.length, rewritten: rewritten.length, removed: removals.length };
+}
+
+function equalSecret(actual, expected) {
+  const a = Buffer.from(actual || "");
+  const b = Buffer.from(expected);
+  return a.length === b.length && timingSafeEqual(a, b);
+}
+
+function bearer(req) {
+  return req.headers.authorization?.replace(/^Bearer /, "") || "";
+}
+
+/**
+ * `previewUrl(slideId, pageNumber)` names the agent-facing preview entry for a
+ * page; the current-page context carries it when the runtime supplies one.
+ */
+export function createMutationQueue(root, controlToken, { previewUrl = null } = {}) {
+  const clients = new Set();
+  const pending = new Map();
+  const echoes = new Map();
+  const known = new Map();
+  const history = [];
+  let historyBytes = 0;
+  let knownContentBytes = 0;
+  let sequence = 0;
+  let timer;
+  let currentSlide = null;
+  const digest = (data) => createHash("sha256").update(data).digest("hex");
+  const remember = (data) => data
+    ? { digest: digest(data), size: data.length, data: data.length <= PREVIOUS_CONTENT_LIMIT ? data : null }
+    : null;
+  const rememberKnown = (relative, entry) => {
+    const previous = known.get(relative);
+    if (previous?.data) knownContentBytes -= previous.data.length;
+    known.delete(relative);
+    if (!entry) return;
+    known.set(relative, entry);
+    if (entry.data) knownContentBytes += entry.data.length;
+    if (knownContentBytes <= PREVIOUS_CONTENT_TOTAL_LIMIT) return;
+    for (const value of known.values()) {
+      if (!value.data || value === entry) continue;
+      knownContentBytes -= value.data.length;
+      value.data = null;
+      if (knownContentBytes <= PREVIOUS_CONTENT_TOTAL_LIMIT) break;
+    }
+  };
+  const rememberFile = async (absolute) => {
+    const stat = await fs.stat(absolute);
+    if (stat.size <= PREVIOUS_CONTENT_LIMIT) return remember(await fs.readFile(absolute));
+    const hash = createHash("sha256");
+    for await (const chunk of createReadStream(absolute)) hash.update(chunk);
+    return { digest: hash.digest("hex"), size: stat.size, data: null };
+  };
+  const expectEcho = (relative, signatures) => {
+    echoes.set(relative, { signatures, expiresAt: Date.now() + ECHO_TTL_MS });
+  };
+  const consumeEcho = (relative, signature) => {
+    const echo = echoes.get(relative);
+    if (!echo) return false;
+    if (echo.expiresAt <= Date.now()) {
+      echoes.delete(relative);
+      return false;
+    }
+    if (!echo.signatures.has(signature)) return false;
+    echoes.delete(relative);
+    return true;
+  };
+  const broadcast = (event) => {
+    sequence += 1;
+    const frame = `id: ${sequence}\ndata: ${JSON.stringify({ id: sequence, ...event })}\n\n`;
+    const frameBytes = Buffer.byteLength(frame);
+    if (frameBytes <= EVENT_HISTORY_LIMIT) {
+      history.push({ id: sequence, frame, bytes: frameBytes });
+      historyBytes += frameBytes;
+      while (historyBytes > EVENT_HISTORY_LIMIT && history.length > 1) {
+        historyBytes -= history.shift().bytes;
+      }
+    }
+    for (const response of clients) {
+      // `write()` returning false means Node buffered the complete frame and
+      // wants the producer to observe backpressure; it does not mean the SSE
+      // client disconnected. Destroying here cut large source-change events
+      // short, so comments appeared to save and then raised "network error".
+      response.write(frame);
+    }
+  };
+  async function enqueue(kind, absolute) {
+    const relative = safeRelativePath(path.relative(root, absolute));
+    if (!relative || path.basename(relative).startsWith(".lattice-sync-")) return;
+    let data;
+    try { data = kind === "delete" ? null : await fs.readFile(absolute); } catch { kind = "delete"; }
+    const signature = `${kind}:${data ? digest(data) : ""}`;
+    if (consumeEcho(relative, signature)) return;
+    const previous = pending.get(relative)?.previous ?? known.get(relative)?.data ?? null;
+    const current = known.get(relative);
+    if (
+      (data && current?.size === data.length && current.digest === digest(data))
+      || (!data && !current)
+    ) return;
+    pending.set(relative, { kind, data, previous });
+    clearTimeout(timer);
+    timer = setTimeout(flush, 40);
+  }
+  function flush() {
+    clearTimeout(timer);
+    timer = undefined;
+    for (const [relative, event] of pending) {
+      const utf8 = event.data?.toString("utf8");
+      const text = event.data && Buffer.from(utf8, "utf8").equals(event.data) ? utf8 : undefined;
+      const previousUtf8 = event.previous?.toString("utf8");
+      const previousText = event.previous && Buffer.from(previousUtf8, "utf8").equals(event.previous)
+        ? previousUtf8
+        : undefined;
+      broadcast({
+        path: relative,
+        kind: event.kind,
+        ...(event.data ? (text === undefined ? { base64: event.data.toString("base64") } : { text }) : {}),
+        ...(event.previous
+          ? (previousText === undefined
+              ? { previousBase64: event.previous.toString("base64") }
+              : { previousText })
+          : {}),
+      });
+      rememberKnown(relative, remember(event.data));
+    }
+    pending.clear();
+  }
+  function reportCurrent(raw) {
+    if (raw == null || typeof raw !== "object") return;
+    // Context derived from a file change (especially a just-added or removed
+    // comment) must follow that mutation on the bridge. The host consumes SSE
+    // serially, so this ordering makes the canonical source durable before the
+    // next Agent message can include the new comment state.
+    if (pending.size > 0) flush();
+    const next = currentSlide ? { ...currentSlide } : {
+      slideId: "",
+      pageIndex: 0,
+      pageNumber: 1,
+      totalPages: 1,
+      slideTitle: "",
+      view: "slides",
+      pagePath: "",
+      pendingEdits: false,
+      pendingComments: [],
+      selection: null,
+    };
+    if (typeof raw.slideId === "string") {
+      if (!/^[a-z0-9]+(?:-[a-z0-9]+)*$/i.test(raw.slideId)) return;
+      const currentForSlide = currentSlide?.slideId === raw.slideId ? currentSlide : null;
+      const totalPages = typeof raw.totalPages === "number"
+        && Number.isFinite(raw.totalPages)
+        && raw.totalPages > 0
+        ? Math.floor(raw.totalPages)
+        : currentForSlide?.totalPages ?? 1;
+      const pageIndex = Math.max(0, Math.min(
+        totalPages - 1,
+        typeof raw.pageIndex === "number" && Number.isFinite(raw.pageIndex)
+          ? Math.floor(raw.pageIndex)
+          : currentForSlide?.pageIndex ?? 0,
+      ));
+      if (currentSlide?.slideId !== raw.slideId || currentSlide.pageIndex !== pageIndex) {
+        next.selection = null;
+      }
+      if (currentSlide?.slideId !== raw.slideId) next.pendingComments = [];
+      next.slideId = raw.slideId;
+      next.pageIndex = pageIndex;
+      next.pageNumber = pageIndex + 1;
+      next.totalPages = totalPages;
+      next.slideTitle = typeof raw.slideTitle === "string"
+        ? raw.slideTitle.slice(0, 200)
+        : currentForSlide?.slideTitle ?? raw.slideId;
+      next.view = raw.view === "assets" || raw.view === "slides"
+        ? raw.view
+        : currentForSlide?.view ?? "slides";
+      next.pagePath = `slides/${raw.slideId}/index.tsx`;
+    }
+    if (Object.hasOwn(raw, "selection")) {
+      const selection = raw.selection;
+      next.selection = selection
+        && typeof selection === "object"
+        && typeof selection.line === "number"
+        && Number.isFinite(selection.line)
+        && typeof selection.column === "number"
+        && Number.isFinite(selection.column)
+        ? {
+            line: Math.max(1, Math.floor(selection.line)),
+            column: Math.max(0, Math.floor(selection.column)),
+            tagName: typeof selection.tagName === "string"
+              ? selection.tagName.toLowerCase().slice(0, 32)
+              : "unknown",
+            text: typeof selection.text === "string"
+              ? selection.text.replace(/\s+/g, " ").trim().slice(0, 12_000)
+              : "",
+          }
+        : null;
+    }
+    if (typeof raw.pendingEdits === "boolean") {
+      next.pendingEdits = raw.pendingEdits;
+    }
+    if (Object.hasOwn(raw, "pendingComments")) {
+      const comments = [];
+      const ids = new Set();
+      let textLength = 0;
+      for (const value of Array.isArray(raw.pendingComments) ? raw.pendingComments : []) {
+        if (comments.length >= 100) break;
+        if (!value || typeof value !== "object") continue;
+        const id = typeof value.id === "string" ? value.id : "";
+        const note = typeof value.note === "string" ? value.note.trim().slice(0, 2_000) : "";
+        const hint = typeof value.hint === "string" ? value.hint.trim().slice(0, 500) : "";
+        if (
+          !OPEN_SLIDE_COMMENT_ID_RE.test(id)
+          || ids.has(id)
+          || typeof value.line !== "number"
+          || !Number.isFinite(value.line)
+          || value.line < 1
+          || typeof value.ts !== "string"
+          || !note
+        ) continue;
+        if (textLength + note.length + hint.length > 24_000) break;
+        ids.add(id);
+        textLength += note.length + hint.length;
+        // Since 2.2.0 a comment can cover a dragged region of the 1920 x 1080
+        // page instead of one element, and records its page; without both the
+        // agent would apply a region note to the whole enclosing element.
+        const rect = value.rect && typeof value.rect === "object"
+          && ["x", "y", "w", "h"].every((key) => Number.isFinite(value.rect[key]))
+          && value.rect.w > 0
+          && value.rect.h > 0
+          ? {
+              x: Math.round(value.rect.x),
+              y: Math.round(value.rect.y),
+              w: Math.round(value.rect.w),
+              h: Math.round(value.rect.h),
+            }
+          : null;
+        comments.push({
+          id,
+          line: Math.floor(value.line),
+          ts: value.ts.slice(0, 128),
+          note,
+          ...(hint ? { hint } : {}),
+          ...(rect ? { rect } : {}),
+          ...(Number.isFinite(value.page) && value.page >= 0 ? { page: Math.floor(value.page) } : {}),
+        });
+      }
+      next.pendingComments = comments;
+    }
+    if (!next.slideId) return;
+    if (previewUrl) next.previewUrl = previewUrl(next.slideId, next.pageNumber);
+    currentSlide = next;
+    broadcast({
+      type: "context",
+      context: { ...next, updatedAt: new Date().toISOString() },
+    });
+  }
+  async function sync(operations) {
+    for (const operation of operations) {
+      const relative = safeRelativePath(operation.path);
+      if (!relative || !["write", "create", "delete"].includes(operation.kind)) throw new Error("Invalid sync operation");
+      const target = path.join(root, relative);
+      if (operation.kind === "delete") {
+        expectEcho(relative, new Set(["delete:"]));
+        rememberKnown(relative, null);
+        await fs.rm(target, { recursive: true, force: true });
+      } else {
+        const data = operation.base64 !== undefined ? Buffer.from(operation.base64, "base64") : Buffer.from(operation.text ?? "");
+        const signature = digest(data);
+        const current = known.get(relative);
+        if (current?.size === data.length && current.digest === signature) continue;
+        // Watchers do not reliably distinguish create from write, so accept either echo kind.
+        expectEcho(relative, new Set([`create:${signature}`, `write:${signature}`]));
+        rememberKnown(relative, remember(data));
+        await fs.mkdir(path.dirname(target), { recursive: true });
+        await fs.writeFile(target, data);
+      }
+    }
+  }
+  async function syncFile(relative, readable) {
+    relative = safeRelativePath(relative);
+    if (!relative) throw new Error("Invalid sync path");
+    const target = path.join(root, relative);
+    await fs.mkdir(path.dirname(target), { recursive: true });
+    const temporary = path.join(
+      path.dirname(target),
+      `.lattice-sync-${randomBytes(12).toString("hex")}`,
+    );
+    const hash = createHash("sha256");
+    const chunks = [];
+    let size = 0;
+    const inspect = new Transform({
+      transform(chunk, _encoding, callback) {
+        size += chunk.length;
+        if (size > 256 * 1024 * 1024) {
+          callback(new Error("Synced files cannot exceed 256 MiB"));
+          return;
+        }
+        hash.update(chunk);
+        if (size <= PREVIOUS_CONTENT_LIMIT) chunks.push(Buffer.from(chunk));
+        else chunks.length = 0;
+        callback(null, chunk);
+      },
+    });
+    try {
+      await pipeline(readable, inspect, createWriteStream(temporary, { flags: "wx" }));
+      const signature = hash.digest("hex");
+      expectEcho(relative, new Set([`create:${signature}`, `write:${signature}`]));
+      rememberKnown(relative, {
+        digest: signature,
+        size,
+        data: size <= PREVIOUS_CONTENT_LIMIT ? Buffer.concat(chunks) : null,
+      });
+      await fs.rename(temporary, target);
+    } catch (error) {
+      await fs.rm(temporary, { force: true }).catch(() => undefined);
+      throw error;
+    }
+  }
+  async function seed() {
+    const visit = async (directory) => {
+      for (const entry of await fs.readdir(directory, { withFileTypes: true })) {
+        if ([".git", ".research", "dist", "node_modules"].includes(entry.name)) continue;
+        const absolute = path.join(directory, entry.name);
+        if (entry.isDirectory()) await visit(absolute);
+        else if (entry.isFile()) {
+          const relative = safeRelativePath(path.relative(root, absolute));
+          if (relative) rememberKnown(relative, await rememberFile(absolute));
+        }
+      }
+    };
+    await visit(root);
+  }
+  return {
+    enqueue,
+    reportCurrent,
+    sync,
+    syncFile,
+    seed,
+    attach(response, lastEventId = null) {
+      clients.add(response);
+      response.on("close", () => clients.delete(response));
+      // A missing Last-Event-ID denotes a new iframe/host bridge, not a
+      // reconnect. Replaying the previous iframe's page here could overwrite
+      // the page restored for the new tab before that iframe finished loading.
+      // Any present value, including 0, is a bridge resuming from its cursor:
+      // a mutation broadcast while it had no stream open is only ever applied
+      // to the project through this replay.
+      if (lastEventId !== null) {
+        for (const event of history) {
+          if (event.id > lastEventId) response.write(event.frame);
+        }
+      }
+      // The caller announces this so a fresh bridge learns its resume cursor
+      // before it has seen any event.
+      return sequence;
+    },
+    connected: () => clients.size > 0,
+    authorized: (req) => equalSecret(bearer(req), controlToken),
+  };
+}
+
+export function createAccessPolicy() {
+  const leases = new Map();
+  return {
+    update(leaseId, writable) {
+      if (typeof leaseId !== "string" || !/^[a-f0-9-]{36}$/i.test(leaseId)) {
+        throw new Error("Invalid presentation lease");
+      }
+      if (writable === null) leases.delete(leaseId);
+      else leases.set(leaseId, writable === true);
+    },
+    writable() {
+      return leases.size > 0 && [...leases.values()].every(Boolean);
+    },
+  };
+}
+
+function safeBootstrapTarget(value) {
+  if (!value || !value.startsWith("/") || value.startsWith("//") || value.includes("\\")) return "/";
+  try {
+    const url = new URL(value, "http://127.0.0.1");
+    return url.origin === "http://127.0.0.1" ? `${url.pathname}${url.search}${url.hash}` : "/";
+  } catch {
+    return "/";
+  }
+}
+
+function scriptJson(value) {
+  return JSON.stringify(value).replaceAll("<", "\\u003c").replaceAll("\u2028", "\\u2028").replaceAll("\u2029", "\\u2029");
+}
+
+export function isSameOriginBrowserRequest(req, host) {
+  const expected = `http://${host}`;
+  if (req.headers.origin === expected) return true;
+  try {
+    if (new URL(req.headers.referer).origin === expected) return true;
+  } catch {
+    // Requests without a referrer still carry Fetch Metadata in modern WebViews.
+  }
+  return req.headers["sec-fetch-site"] === "same-origin";
+}
+
+function normalizeOpenSlidePreferences(preferences = {}) {
+  return {
+    locale: preferences.locale === "en" || preferences.locale === "zh-CN"
+      ? preferences.locale
+      : null,
+    theme: preferences.theme === "light" || preferences.theme === "dark"
+      ? preferences.theme
+      : null,
+  };
+}
+
+export function createBootstrapDocument(next, preferences = {}) {
+  const normalizedPreferences = normalizeOpenSlidePreferences(preferences);
+  return `<!doctype html>
+<html><head><meta charset="utf-8"><title>Starting Open Slide</title></head>
+<body><script>
+const next = ${scriptJson(next)};
+const preferences = ${scriptJson(normalizedPreferences)};
+try {
+  if (preferences.locale) localStorage.setItem("open-slide:locale", preferences.locale);
+  if (preferences.theme) localStorage.setItem("theme", preferences.theme);
+} catch {}
+const navigate = () => location.replace(next);
+if (!("serviceWorker" in navigator)) navigate();
+else navigator.serviceWorker.getRegistrations()
+  .then((registrations) => Promise.all(registrations.map((registration) => registration.unregister())))
+  .then(navigate, navigate);
+</script></body></html>`;
+}
+
+/**
+ * Where `/__lattice/preview/<slideId>` sends a browser: Open Slide's dev-only,
+ * chrome-less page route. Only the page and step selectors pass through, so the
+ * entry can open nothing but a preview.
+ */
+function previewTarget(slideId, searchParams) {
+  if (!PRESENTATION_ID_RE.test(slideId)) return null;
+  const target = new URL(`/s/${slideId}/preview`, "http://127.0.0.1");
+  for (const name of ["p", "step"]) {
+    const value = searchParams.get(name);
+    if (value !== null) target.searchParams.set(name, value);
+  }
+  return `${target.pathname}${target.search}`;
+}
+
+/**
+ * What Vite reports while compiling `slides/<slideId>/index.tsx` and every
+ * project file it imports, located relative to `root`. A deck that fails to
+ * compile reaches the preview page only as WebKit's "Importing a module script
+ * failed.", so the agent's page preview asks for these first: an unresolved
+ * import, such as an asset that is not where the deck imports it from, then
+ * arrives with its file, line and source line. Import analysis stops at a
+ * module's first unresolved import, so a module yields at most one error.
+ */
+export async function deckBuildErrors(environment, root, slideId) {
+  const errors = [];
+  const visited = new Set();
+  const projectFile = (file) => (
+    typeof file === "string"
+    && file.startsWith(`${root}/`)
+    && !file.slice(root.length).includes("/node_modules/")
+  );
+  const visit = async (url) => {
+    if (visited.has(url)) return;
+    visited.add(url);
+    try {
+      await environment.transformRequest(url);
+    } catch (error) {
+      const file = (error?.loc?.file ?? error?.id ?? "").split("?")[0];
+      const line = error?.loc?.line ?? null;
+      // Vite's own code frame quotes the module after its JSX transform,
+      // whose lines no longer match the file; quote the file's line instead.
+      const text = line && projectFile(file)
+        ? (await fs.readFile(file, "utf8").catch(() => "")).split("\n")[line - 1]
+        : undefined;
+      errors.push({
+        file: projectFile(file) ? path.relative(root, file) : null,
+        line,
+        column: error?.loc?.column ?? null,
+        message: String(error?.message ?? error),
+        frame: text === undefined ? null : `${line} | ${text}`,
+      });
+      return;
+    }
+    const module = await environment.moduleGraph.getModuleByUrl(url);
+    for (const imported of module?.importedModules ?? []) {
+      if (projectFile(imported.file)) await visit(imported.url);
+    }
+  };
+  // Open Slide's dev server roots Vite in its own app and imports each deck
+  // by file system path, as `virtual:open-slide/slides` does.
+  await visit(`/@fs${root}/slides/${slideId}/index.tsx`);
+  return errors;
+}
+
+const PREVIEW_PAGE_RE = /^\/s\/[^/]+\/preview$/;
+const PREVIEW_CAPTURE_MODULE = "\0virtual:lattice-preview-capture";
+
+/**
+ * Loaded only by preview pages. Lattice opens a preview entry in a hidden
+ * 1920 × 1080 frame and asks it, over postMessage, for the settled page; the
+ * page answers its opener with itself as an image, or with Open Slide's
+ * preview error. The opener is another origin and cannot read this frame, so
+ * the page rasterizes itself, with html-to-image as Open Slide's own image
+ * export does. Previewing never touches the deck, so answering a parent that
+ * already holds the session token reveals nothing it could not render itself.
+ */
+const PREVIEW_CAPTURE_SOURCE = `
+const SETTLE_TIMEOUT_MS = 20_000;
+
+function settledPreview() {
+  const read = () => {
+    const root = document.querySelector("[data-osd-preview]");
+    const state = root?.getAttribute("data-osd-preview");
+    return state === "ready" || state === "error" ? root : null;
+  };
+  return new Promise((resolve) => {
+    const observer = new MutationObserver(() => {
+      const root = read();
+      if (root) finish(root);
+    });
+    const timer = setTimeout(() => finish(null), SETTLE_TIMEOUT_MS);
+    const finish = (root) => {
+      observer.disconnect();
+      clearTimeout(timer);
+      resolve(root);
+    };
+    observer.observe(document.documentElement, {
+      subtree: true, childList: true, attributes: true, attributeFilter: ["data-osd-preview"],
+    });
+    const root = read();
+    if (root) finish(root);
+  });
+}
+
+const count = (root, name) => {
+  const value = Number(root.getAttribute(name));
+  return Number.isInteger(value) && value > 0 ? value : null;
+};
+
+async function capture() {
+  const root = await settledPreview();
+  if (!root) return { ok: false, message: "The page did not settle within 20 seconds." };
+  const page = count(root, "data-osd-preview-page");
+  const total = count(root, "data-osd-preview-total");
+  if (root.getAttribute("data-osd-preview") === "error") {
+    const message = root.querySelector("[data-osd-preview-error]")?.textContent?.trim();
+    return { ok: false, page, total, message: message || "The page could not be previewed." };
+  }
+  const { toCanvas } = await import("html-to-image");
+  const options = {
+    width: root.clientWidth, height: root.clientHeight, pixelRatio: 1, skipAutoScale: true, cacheBust: true,
+  };
+  // WebKit can paint the SVG foreignObject before the images inlined into it
+  // decode, so its first rasterization may miss them; the second reuses them.
+  if (!/Chrome|Chromium|Edg\\//.test(navigator.userAgent)) await toCanvas(root, options);
+  const canvas = await toCanvas(root, options);
+  return {
+    ok: true, page, total, width: canvas.width, height: canvas.height,
+    dataUrl: canvas.toDataURL("image/jpeg", 0.9),
+  };
+}
+
+if (window.parent !== window) {
+  addEventListener("message", (event) => {
+    const request = event.data;
+    if (event.source !== window.parent || request?.type !== "lattice:preview-capture") return;
+    if (typeof request.id !== "string" || request.id.length === 0 || request.id.length > 128) return;
+    void capture()
+      .catch((error) => ({ ok: false, message: String(error?.message ?? error) }))
+      .then((result) => event.source.postMessage(
+        { type: "lattice:preview-capture-result", version: 1, id: request.id, ...result },
+        event.origin,
+      ));
+  });
+}
+`;
+
+export function createOpenSlideSessionScript(sessionToken, preferences = {}) {
+  return `(() => {
+  const sessionToken = ${scriptJson(sessionToken)};
+  const preferences = ${scriptJson(normalizeOpenSlidePreferences(preferences))};
+  try {
+    if (preferences.locale) localStorage.setItem("open-slide:locale", preferences.locale);
+    if (preferences.theme) localStorage.setItem("theme", preferences.theme);
+  } catch {}
+  const nativeOpen = window.open.bind(window);
+  window.open = (value, target, features) => {
+    if (typeof value === "string") {
+      try {
+        const requested = new URL(value, location.href);
+        if (requested.origin === location.origin && requested.pathname !== "/__lattice/bootstrap") {
+          const next = requested.pathname + requested.search + requested.hash;
+          const bootstrap = new URL("/__lattice/bootstrap", location.origin);
+          bootstrap.searchParams.set("token", sessionToken);
+          bootstrap.searchParams.set("next", next);
+          value = bootstrap.href;
+        }
+      } catch {}
+    }
+    return nativeOpen(value, target, features);
+  };
+})();`;
+}
+
+export async function start({ root = process.env.OPEN_SLIDE_SHADOW_ROOT, controlToken = process.env.OPEN_SLIDE_CONTROL_TOKEN } = {}) {
+  if (!root || !controlToken) throw new Error("Managed shadow root and control token are required");
+  root = await fs.realpath(root);
+  const cacheDir = process.env.OPEN_SLIDE_CACHE_ROOT;
+  if (!cacheDir) throw new Error("Managed Vite cache root is required");
+  await fs.mkdir(cacheDir, { recursive: true });
+  const sessionToken = randomBytes(32).toString("base64url");
+  let server;
+  // The agent screenshots this URL after it edits a page. It reuses the
+  // session token rather than minting a narrower one: every HTML page this
+  // origin serves already embeds that token, and the agent edits the deck's
+  // files directly, so the token grants it nothing it does not already have.
+  const previewUrl = (slideId, pageNumber) => {
+    const url = new URL(`/__lattice/preview/${slideId}`, `http://127.0.0.1:${server.address().port}`);
+    url.searchParams.set("token", sessionToken);
+    url.searchParams.set("p", String(pageNumber));
+    return url.href;
+  };
+  const queue = createMutationQueue(root, controlToken, { previewUrl });
+  const access = createAccessPolicy();
+  const agentActivity = createAgentActivityChannel();
+  await queue.seed();
+  let receivedHostSync = false;
+  // The deck-local assets this runtime started with migrate once. Files that
+  // arrive while it runs stay where they were written: the agent writes an
+  // asset, then an entry importing it as `./assets/...`, and often rewrites
+  // that entry whole from its own copy, which would bring back an import the
+  // migration had just moved out from under it.
+  let legacyMigrationNeeded = true;
+  let legacyMigrationPromise = null;
+  const migrateAssetsIfReady = async () => {
+    if (
+      !receivedHostSync
+      || !legacyMigrationNeeded
+      || !access.writable()
+      || !queue.connected()
+    ) return;
+    if (legacyMigrationPromise) return legacyMigrationPromise;
+    legacyMigrationPromise = (async () => {
+      legacyMigrationNeeded = false;
+      await migrateLegacySlideAssets(root, queue);
+    })();
+    try {
+      await legacyMigrationPromise;
+    } catch (error) {
+      legacyMigrationNeeded = true;
+      throw error;
+    } finally {
+      legacyMigrationPromise = null;
+    }
+  };
+  let vite;
+  let sessionActivated = false;
+  let sessionPreferences = {};
+  let transformIdleTimer;
+  const scheduleTransformIdle = () => {
+    clearTimeout(transformIdleTimer);
+    transformIdleTimer = setTimeout(() => {
+      // Vite 8 transforms in-process; collect the temporary transform graph
+      // once the user is only reading or presenting the deck.
+      globalThis.gc?.();
+    }, TRANSFORM_IDLE_MS);
+    transformIdleTimer.unref();
+  };
+  server = http.createServer(async (req, res) => {
+    const host = req.headers.host || "";
+    if (!/^127\.0\.0\.1:\d+$/.test(host)) { res.writeHead(403).end(); return; }
+    scheduleTransformIdle();
+    const url = new URL(req.url, `http://${host}`);
+    if (url.pathname === "/__lattice/bootstrap" && equalSecret(url.searchParams.get("token"), sessionToken)) {
+      sessionActivated = true;
+      sessionPreferences = {
+        locale: url.searchParams.get("locale"),
+        theme: url.searchParams.get("theme"),
+      };
+      res.writeHead(200, {
+        "cache-control": "no-store",
+        "content-type": "text/html; charset=utf-8",
+        // The origin-only referrer lets the loopback server distinguish its
+        // own module graph from cross-site drive-by requests without exposing
+        // the bootstrap token in subsequent requests.
+        "referrer-policy": "origin",
+        "x-content-type-options": "nosniff",
+      }).end(createBootstrapDocument(
+        safeBootstrapTarget(url.searchParams.get("next")),
+        sessionPreferences,
+      ));
+      return;
+    }
+    const previewEntry = /^\/__lattice\/preview\/([^/]+)$/.exec(url.pathname);
+    if (previewEntry && req.method === "GET" && equalSecret(url.searchParams.get("token"), sessionToken)) {
+      const target = previewTarget(previewEntry[1], url.searchParams);
+      if (!target) { res.writeHead(404).end(); return; }
+      // An outside browser (the agent's) enters the same way Lattice's iframe
+      // does, but leaves the iframe's appearance preferences alone.
+      sessionActivated = true;
+      res.writeHead(200, {
+        "cache-control": "no-store",
+        "content-type": "text/html; charset=utf-8",
+        "referrer-policy": "origin",
+        "x-content-type-options": "nosniff",
+      }).end(createBootstrapDocument(target));
+      return;
+    }
+    if (url.pathname.startsWith("/__lattice/") && req.method === "OPTIONS") {
+      res.writeHead(204, {
+        "access-control-allow-origin": "*",
+        "access-control-allow-headers": "authorization, content-type, last-event-id",
+        "access-control-allow-methods": "GET, POST, OPTIONS",
+      }).end(); return;
+    }
+    if (url.pathname === "/__lattice/events" && queue.authorized(req)) {
+      res.writeHead(200, {
+        "content-type": "text/event-stream",
+        "cache-control": "no-cache",
+        "access-control-allow-origin": "*",
+        connection: "keep-alive",
+      });
+      const resumeFrom = req.headers["last-event-id"];
+      const sequence = queue.attach(
+        res,
+        /^\d{1,15}$/.test(resumeFrom ?? "") ? Number(resumeFrom) : null,
+      );
+      // Carries no SSE `id:` field: it names the cursor rather than being an
+      // event, so it is never recorded in or replayed from history.
+      res.write(`data: ${JSON.stringify({ id: sequence, type: "ready" })}\n\n`);
+      // Asset migration can emit binaries larger than the bounded replay
+      // history. Wait for the durable host bridge so no canonical copy exists
+      // only in this disposable shadow workspace.
+      void migrateAssetsIfReady().catch((error) => console.error("Open Slide asset migration failed", error));
+      return;
+    }
+    const buildCheck = /^\/__lattice\/build-errors\/([^/]+)$/.exec(url.pathname);
+    if (buildCheck && req.method === "GET" && queue.authorized(req)) {
+      const cors = { "access-control-allow-origin": "*", "cache-control": "no-store" };
+      const slideId = buildCheck[1];
+      try {
+        if (!PRESENTATION_ID_RE.test(slideId)) throw new Error("Invalid presentation ID");
+        await fs.access(path.join(root, "slides", slideId, "index.tsx"));
+        sendJson(res, 200, { errors: await deckBuildErrors(vite.environments.client, root, slideId) }, cors);
+      } catch (error) {
+        sendJson(res, error.code === "ENOENT" ? 404 : 400, { error: error.message }, cors);
+      }
+      return;
+    }
+    if (url.pathname === "/__lattice/agent-activity" && req.method === "POST" && queue.authorized(req)) {
+      await agentActivity.receive(req, res);
+      return;
+    }
+    if (url.pathname === "/__lattice/access" && req.method === "POST" && queue.authorized(req)) {
+      try {
+        const chunks = [];
+        for await (const chunk of req) chunks.push(chunk);
+        const body = JSON.parse(Buffer.concat(chunks));
+        access.update(body.leaseId, body.remove === true ? null : body.writable === true);
+        await migrateAssetsIfReady();
+        res.writeHead(204, { "access-control-allow-origin": "*" }).end();
+      } catch (error) {
+        res.writeHead(400, { "access-control-allow-origin": "*" }).end(String(error.message));
+      }
+      return;
+    }
+    if (url.pathname === "/__lattice/sync" && req.method === "POST" && queue.authorized(req)) {
+      try {
+        const chunks = [];
+        let size = 0;
+        for await (const chunk of req) {
+          size += chunk.length;
+          if (size > 40 * 1024 * 1024) throw new Error("Sync request is too large");
+          chunks.push(chunk);
+        }
+        const body = JSON.parse(Buffer.concat(chunks));
+        const operations = Array.isArray(body.operations) ? body.operations : [];
+        await queue.sync(operations);
+        receivedHostSync = true;
+        await migrateAssetsIfReady();
+        res.writeHead(204, { "access-control-allow-origin": "*" }).end();
+      } catch (error) {
+        res.writeHead(400, { "access-control-allow-origin": "*" }).end(String(error.message));
+      }
+      return;
+    }
+    if (url.pathname === "/__lattice/file" && req.method === "PUT" && queue.authorized(req)) {
+      try {
+        const relative = safeRelativePath(url.searchParams.get("path"));
+        await queue.syncFile(relative, req);
+        res.writeHead(204, { "access-control-allow-origin": "*" }).end();
+      } catch (error) {
+        res.writeHead(400, { "access-control-allow-origin": "*" }).end(String(error.message));
+      }
+      return;
+    }
+    if (BLOCKED_ROUTES.has(url.pathname)) { res.writeHead(404).end(); return; }
+    if (!sessionActivated || !isSameOriginBrowserRequest(req, host)) {
+      res.writeHead(401, {
+        "cache-control": "no-store",
+        "content-type": "text/html; charset=utf-8",
+      }).end("<!doctype html><title>Open Slide session expired</title><body><h1>Open Slide session expired</h1><p>Close and reopen this presentation in Lattice.</p></body>");
+      return;
+    }
+    if (
+      req.method !== "GET"
+      && req.method !== "HEAD"
+      && MUTATION_ROUTE_PREFIXES.some((prefix) => (
+        url.pathname === prefix || url.pathname.startsWith(`${prefix}/`)
+      ))
+      && !access.writable()
+    ) {
+      sendJson(res, 403, { error: "This Lattice project is read-only." });
+      return;
+    }
+    const commentDelete = /^\/__comments\/(c-[a-f0-9]+)$/.exec(url.pathname);
+    if (commentDelete && req.method === "DELETE") {
+      const slideId = url.searchParams.get("slideId") || "";
+      if (!PRESENTATION_ID_RE.test(slideId)) {
+        sendJson(res, 400, { error: "invalid slideId" });
+        return;
+      }
+      const file = path.join(root, "slides", slideId, "index.tsx");
+      try {
+        const source = await fs.readFile(file, "utf8");
+        const next = removeOpenSlideCommentMarker(source, commentDelete[1]);
+        if (next !== null) await fs.writeFile(file, next, "utf8");
+        // Deletion is idempotent. A stale HMR response can briefly retain a
+        // comment after its marker is gone; treating that retry as success lets
+        // the panel refetch the source instead of getting stuck on 404.
+        sendJson(res, 200, { ok: true }, { "cache-control": "no-store" });
+      } catch (error) {
+        const status = error.code === "ENOENT" ? 404 : 500;
+        sendJson(res, status, { error: error.message });
+      }
+      return;
+    }
+    if (url.pathname === "/__lattice/assets-used" && req.method === "GET") {
+      try {
+        const names = await listUsedGlobalAssetNames(root, url.searchParams.get("slideId") || "");
+        sendJson(res, 200, { names }, { "cache-control": "no-store" });
+      } catch (error) {
+        const status = error.code === "ENOENT" ? 404 : 400;
+        sendJson(res, status, { error: error.message });
+      }
+      return;
+    }
+    if (url.pathname === "/__lattice/rename-asset" && req.method === "POST") {
+      try {
+        const chunks = [];
+        let size = 0;
+        for await (const chunk of req) {
+          size += chunk.length;
+          if (size > 16 * 1024) throw new Error("Rename request is too large");
+          chunks.push(chunk);
+        }
+        const body = JSON.parse(Buffer.concat(chunks));
+        const result = await renameGlobalAsset(root, body.from, body.to, queue);
+        sendJson(res, result.status, result);
+      } catch (error) {
+        sendJson(res, 400, { error: error.message });
+      }
+      return;
+    }
+    vite.middlewares(req, res);
+  });
+  server.prependListener("upgrade", (req, socket) => {
+    const host = req.headers.host || "";
+    if (!/^127\.0\.0\.1:\d+$/.test(host) || !sessionActivated || req.headers.origin !== `http://${host}`) socket.destroy();
+    else scheduleTransformIdle();
+  });
+  // Lattice owns the workspace layout. Passing an explicit config prevents
+  // Open Slide from executing a project-provided open-slide.config.ts inside
+  // this unsandboxed Node process.
+  const config = await createViteConfig({ userCwd: root, mode: "serve", config: OPEN_SLIDE_CONFIG });
+  const viteConfig = {
+    ...config,
+    cacheDir,
+    configFile: false,
+    plugins: [
+      {
+        name: "lattice:session-bridge",
+        enforce: "pre",
+        transformIndexHtml: {
+          order: "pre",
+          handler(_html, { originalUrl }) {
+            const previewPage = PREVIEW_PAGE_RE.test(new URL(originalUrl ?? "/", "http://127.0.0.1").pathname);
+            return [{
+              tag: "script",
+              children: createOpenSlideSessionScript(sessionToken, sessionPreferences),
+              injectTo: "head-prepend",
+            }, {
+              tag: "script",
+              attrs: { type: "module", src: `/@id/${DECK_ERROR_OVERLAY_MODULE.replace("\0", "__x00__")}` },
+              injectTo: "head",
+            }, ...(previewPage ? [{
+              tag: "script",
+              attrs: { type: "module", src: `/@id/${PREVIEW_CAPTURE_MODULE.replace("\0", "__x00__")}` },
+              injectTo: "head",
+            }] : [])];
+          },
+        },
+        resolveId(id) {
+          for (const module of [PREVIEW_CAPTURE_MODULE, DECK_ERROR_OVERLAY_MODULE]) {
+            if (id === module || id === module.slice(1)) return module;
+          }
+          return undefined;
+        },
+        load(id) {
+          if (id === PREVIEW_CAPTURE_MODULE) return PREVIEW_CAPTURE_SOURCE;
+          return id === DECK_ERROR_OVERLAY_MODULE ? DECK_ERROR_OVERLAY_SOURCE : undefined;
+        },
+      },
+      {
+        name: "lattice:embedded-ui",
+        enforce: "pre",
+        transform(source, id) {
+          let transformed = source;
+          let changed = false;
+          for (const transform of [
+            transformOpenSlideEditorStyles,
+            transformOpenSlideThumbnailRail,
+            transformOpenSlideComments,
+            transformOpenSlideInspectorPanel,
+            transformOpenSlideInspectorDefault,
+            transformOpenSlideSaveFeedback,
+            transformOpenSlideSelection,
+            transformOpenSlideToolbar,
+            transformOpenSlideAgentEntryPoints,
+            transformOpenSlideAgentPresence,
+            transformOpenSlideConnectionCopy,
+            transformOpenSlideAssets,
+            transformOpenSlideHomeChrome,
+          ]) {
+            const next = transform(transformed, id);
+            if (next !== null) {
+              transformed = next;
+              changed = true;
+            }
+          }
+          return changed ? { code: transformed, map: null } : undefined;
+        },
+      },
+      ...(config.plugins ?? []),
+      agentActivity.plugin,
+      {
+        name: "lattice:current-slide-context",
+        apply: "serve",
+        configureServer(viteServer) {
+          viteServer.ws.on("open-slide:current", (raw) => queue.reportCurrent(raw));
+        },
+      },
+    ],
+    resolve: {
+      ...config.resolve,
+      alias: [
+        {
+          find: /^@open-slide\/core$/,
+          replacement: path.join(RUNTIME_ROOT, "node_modules/@open-slide/core/dist/index.js"),
+        },
+        {
+          find: /^@fontsource-variable\/inter$/,
+          replacement: path.join(RUNTIME_ROOT, "node_modules/@fontsource-variable/inter/index.css"),
+        },
+        {
+          find: /^lucide-react$/,
+          replacement: path.join(RUNTIME_ROOT, "lucide-open-slide.mjs"),
+        },
+        {
+          find: /^katex$/,
+          replacement: path.join(RUNTIME_ROOT, "node_modules/katex/dist/katex.mjs"),
+        },
+        {
+          find: /^katex\/dist\/katex\.min\.css$/,
+          replacement: path.join(RUNTIME_ROOT, "node_modules/katex/dist/katex.min.css"),
+        },
+        ...Object.entries(config.resolve?.alias ?? {}).map(([find, replacement]) => ({ find, replacement })),
+      ],
+    },
+    // stdout is the parent-process readiness protocol. Vite's informational
+    // optimizer messages would otherwise race the JSON handshake after an app
+    // update invalidates the cache.
+    logLevel: "error",
+    optimizeDeps: {
+      ...config.optimizeDeps,
+      entries: [],
+      noDiscovery: true,
+      include: PREBUNDLED_DEPENDENCIES,
+    },
+    server: {
+      ...(config.server || {}),
+      fs: {
+        ...config.server?.fs,
+        allow: [...(config.server?.fs?.allow ?? []), path.join(RUNTIME_ROOT, "node_modules")],
+      },
+      middlewareMode: true,
+      hmr: { server },
+    },
+  };
+  // Finish the dependency bundle before the webview connects, avoiding Vite's
+  // first-navigation reload and releasing the one-shot Rolldown optimizer.
+  const resolvedConfig = await resolveConfig(viteConfig, "serve");
+  await optimizeDeps(resolvedConfig, false, true);
+  vite = await createViteServer(viteConfig);
+  globalThis.gc?.();
+  vite.watcher.on("add", (file) => {
+    scheduleTransformIdle();
+    void queue.enqueue("create", file);
+  });
+  vite.watcher.on("change", (file) => {
+    scheduleTransformIdle();
+    void queue.enqueue("write", file);
+  });
+  vite.watcher.on("unlink", (file) => {
+    scheduleTransformIdle();
+    void queue.enqueue("delete", file);
+  });
+  await new Promise((resolve, reject) => server.listen(0, "127.0.0.1", resolve).once("error", reject));
+  const port = server.address().port;
+  process.stdout.write(`${JSON.stringify({ ready: true, port, sessionToken, controlToken, version: VERSION })}\n`);
+  let stopping = false;
+  const stop = async () => {
+    if (stopping) return;
+    stopping = true;
+    clearTimeout(transformIdleTimer);
+    setTimeout(() => process.exit(0), 750);
+    server.closeAllConnections?.();
+    await vite.close().catch(() => undefined);
+    await new Promise((resolve) => server.close(resolve));
+    process.exit(0);
+  };
+  process.once("SIGTERM", stop); process.once("SIGINT", stop);
+  if (process.env.OPEN_SLIDE_PARENT_PIPE === "1") {
+    process.stdin.once("end", stop);
+    process.stdin.once("error", stop);
+    process.stdin.resume();
+  }
+  return { server, vite, port, sessionToken, controlToken };
+}
+
+// Compare real file paths, not a URL pathname: the URL form percent-encodes
+// spaces, so an app installed under a name with a space ("Lattice Beta.app")
+// exited without a handshake. Node resolves symlinks in import.meta.url but not
+// in argv[1], so resolve both sides.
+if (process.argv[1] && realpathSync(process.argv[1]) === fileURLToPath(import.meta.url)) {
+  start().catch((error) => { console.error(error); process.exit(1); });
+}

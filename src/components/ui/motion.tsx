@@ -1,0 +1,219 @@
+// Shared motion primitives (Framer Motion / `motion`). Micro-interactions in the
+// spirit of Amicro, tuned to stay light: only transform/opacity animate (GPU
+// composited) and springs are short, so they hold up on weak WebKit (the macOS
+// VM). Reach for these instead of hand-rolling motion props per call site.
+import { forwardRef, useId, useState, type ReactNode } from "react";
+import {
+  AnimatePresence,
+  motion,
+  useMotionValue,
+  useReducedMotion,
+  useSpring,
+  type HTMLMotionProps,
+} from "motion/react";
+import { MAGNET_SPRING, POP_SPRING, PRESS_SPRING, spring, springExit } from "./motion-values";
+import "./motion.css";
+
+type MotionButtonProps = HTMLMotionProps<"button"> & {
+  /** Gently pull the button toward the cursor while hovering (Amicro-style). */
+  magnetic?: boolean;
+};
+
+/** How far a magnetic button pulls, as a fraction of the cursor offset from center. */
+const MAGNET_STRENGTH = 0.3;
+
+/**
+ * Drop-in replacement for `<button>` that adds a subtle hover lift and an
+ * optional magnetic pull. Keeps the same className so
+ * existing styles apply unchanged; disabled buttons get no motion.
+ */
+export const MotionButton = forwardRef<HTMLButtonElement, MotionButtonProps>(
+  function MotionButton(
+    { magnetic = false, disabled, style, onMouseMove, onMouseLeave, children, ...rest },
+    forwardedRef,
+  ) {
+    const reduceMotion = useReducedMotion();
+    const x = useMotionValue(0);
+    const y = useMotionValue(0);
+    const springX = useSpring(x, MAGNET_SPRING);
+    const springY = useSpring(y, MAGNET_SPRING);
+    const active = magnetic && !disabled && !reduceMotion;
+
+    return (
+      <motion.button
+        ref={forwardedRef}
+        disabled={disabled}
+        style={active ? { ...style, x: springX, y: springY } : style}
+        whileHover={disabled || reduceMotion ? undefined : { scale: 1.03 }}
+        transition={PRESS_SPRING}
+        onMouseMove={(event) => {
+          if (active) {
+            const rect = event.currentTarget.getBoundingClientRect();
+            x.set((event.clientX - rect.left - rect.width / 2) * MAGNET_STRENGTH);
+            y.set((event.clientY - rect.top - rect.height / 2) * MAGNET_STRENGTH);
+          }
+          onMouseMove?.(event);
+        }}
+        onMouseLeave={(event) => {
+          if (active) {
+            x.set(0);
+            y.set(0);
+          }
+          onMouseLeave?.(event);
+        }}
+        {...rest}
+      >
+        {children}
+      </motion.button>
+    );
+  },
+);
+
+/** Replace status content immediately; never retain a stale label or action during exit. */
+export function StateSwap({ swapKey, children }: { swapKey: string; children: ReactNode }) {
+  const reduceMotion = useReducedMotion();
+  const [state, setState] = useState({ key: swapKey, changed: false });
+  if (state.key !== swapKey) setState({ key: swapKey, changed: true });
+  // AnimatePresence retains the old span for a frame even without an exit.
+  // Replace it directly so toolbar width and accessible text never duplicate.
+  return (
+    <motion.span
+      key={swapKey}
+      className="state-swap"
+      initial={state.changed ? { opacity: 0, y: reduceMotion ? 0 : 3 } : false}
+      animate={{ opacity: 1, y: 0 }}
+      transition={spring.moderate}
+    >
+      {children}
+    </motion.span>
+  );
+}
+
+/**
+ * Swaps one icon for another while the pointer is over the enclosing control,
+ * springing between them rather than cutting.
+ *
+ * Worth it on a single prominent button, where the change reads as an
+ * invitation — a folder that opens as you reach for it. Not worth it per row
+ * in a list: the mount/unmount cost is paid on every hover, and a dozen icons
+ * springing as the cursor crosses them is noise, not feedback.
+ */
+export function MorphIcon(props: { idle: ReactNode; hover: ReactNode; size?: number }) {
+  const [over, setOver] = useState(false);
+  const reduceMotion = useReducedMotion();
+  const size = props.size ?? 16;
+  return (
+    <span
+      className="morph-icon"
+      style={{ width: size, height: size }}
+      onMouseEnter={() => setOver(true)}
+      onMouseLeave={() => setOver(false)}
+    >
+      { }
+      <AnimatePresence mode="popLayout" initial={false}>
+        <motion.span
+          key={over ? "hover" : "idle"}
+          initial={reduceMotion ? { opacity: 0 } : { scale: 0.5, opacity: 0 }}
+          animate={{ scale: 1, opacity: 1 }}
+          exit={{ opacity: 0, ...(reduceMotion ? {} : { scale: 0.5 }), transition: springExit.moderate }}
+          transition={POP_SPRING}
+        >
+          {over ? props.hover : props.idle}
+        </motion.span>
+      </AnimatePresence>
+    </span>
+  );
+}
+
+export type SlidingTab = { value: string; label: ReactNode; title?: string; dataTour?: string };
+
+/**
+ * The selected tab's plate, which slides to whichever tab of the same strip
+ * (`stripId`, from useId) renders it next. A plain function rather than a
+ * component, so a strip renders nothing more for it.
+ */
+function slidingPill(stripId: string, reduceMotion: boolean | null) {
+  return (
+    <motion.span
+      aria-hidden
+      className="sliding-tab-pill"
+      layoutId={reduceMotion ? undefined : `${stripId}-pill`}
+      transition={reduceMotion ? { duration: 0 } : spring.moderate}
+    />
+  );
+}
+
+/** SlidingTabs' plate, for strips it cannot render: tabs that are also renamed, reordered or opened as a menu. */
+export function SlidingTabPill({ stripId }: { stripId: string }) {
+  return slidingPill(stripId, useReducedMotion());
+}
+
+/**
+ * A tab strip where the selected background slides from the old tab to the new
+ * one instead of blinking across.
+ *
+ * One element carries `layoutId`, so it is the *same* element before and after
+ * the selection changes and the library animates it between the two positions.
+ * That is what says "this moved here", which a class swap cannot: with the
+ * highlight simply appearing elsewhere, the eye has to find it again, and in a
+ * strip of five that is a real pause.
+ *
+ * `layoutId` is scoped per instance, or two strips on screen would animate
+ * their pills into each other.
+ */
+export function SlidingTabs(props: {
+  value: string;
+  onChange: (value: string) => void;
+  items: SlidingTab[];
+  ariaLabel: string;
+  /**
+   * What slides. "pill" is a filled background, for strips that sit on a
+   * panel; "none" leaves selection styling to the tab itself.
+   */
+  variant?: "pill" | "none";
+  /** The strip's own class, so each place keeps its existing styling. */
+  className?: string;
+  /** Class for each tab, for the same reason. */
+  tabClassName?: string;
+}) {
+  const pillId = useId();
+  const reduceMotion = useReducedMotion();
+  return (
+    <div className={`sliding-tabs${props.className ? ` ${props.className}` : ""}`} role="tablist" aria-label={props.ariaLabel}>
+      {props.items.map((item, index) => {
+        const selected = item.value === props.value;
+        return (
+          <button
+            key={item.value}
+            type="button"
+            role="tab"
+            aria-selected={selected}
+            tabIndex={selected ? 0 : -1}
+            title={item.title}
+            data-tour={item.dataTour}
+            className={`sliding-tab${selected ? " active" : ""}${props.tabClassName ? ` ${props.tabClassName}` : ""}`}
+            onClick={() => props.onChange(item.value)}
+            onKeyDown={(event) => {
+              const count = props.items.length;
+              const nextIndex = ({
+                ArrowRight: (index + 1) % count,
+                ArrowLeft: (index - 1 + count) % count,
+                Home: 0,
+                End: count - 1,
+              } as Record<string, number>)[event.key];
+              if (nextIndex === undefined) return;
+              event.preventDefault();
+              props.onChange(props.items[nextIndex].value);
+              const tabs = event.currentTarget.parentElement
+                ?.querySelectorAll<HTMLButtonElement>('[role="tab"]');
+              tabs?.[nextIndex]?.focus();
+            }}
+          >
+            {selected && props.variant !== "none" && slidingPill(pillId, reduceMotion)}
+            <span className="sliding-tab-label">{item.label}</span>
+          </button>
+        );
+      })}
+    </div>
+  );
+}

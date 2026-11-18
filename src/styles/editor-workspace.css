@@ -1,0 +1,1764 @@
+/* A drag writes the split's ratio, and the pull past a pane's minimum, on
+   every pointer move. Registered as non-inherited, a change restyles only the
+   boxes that read it: an inherited one restyled all a pane holds, every block
+   of a long visual document (18 ms a frame in WebKit). The offset is written
+   on each of the three children, which are what read it (split-resizer.ts). */
+@property --split-ratio { syntax: "<number>"; inherits: false; initial-value: 0.5; }
+@property --split-resizer-offset { syntax: "<length>"; inherits: false; initial-value: 0px; }
+.split-canvas > * { --split-resizer-offset: 0px; }
+.split-canvas { --split-ratio: 0.5; min-width: 0; min-height: 0; width: 100%; display: grid; grid-template-rows: minmax(0, 1fr); overflow: hidden; }
+.split-canvas > .source-workspace, .split-canvas > .pdf-column, .split-canvas > .markdown-preview, .split-canvas > .html-preview { min-width: 0; min-height: 0; overflow: hidden; }
+.source-workspace, .source-editor, .pdf-preview, .pdf-column, .html-preview { min-width: 0; min-height: 0; overflow: hidden; }
+.canvas-body > .source-workspace, .canvas-body > .source-editor, .canvas-body > .pdf-preview, .canvas-body > .pdf-column, .canvas-body > .split-canvas, .canvas-body > .markdown-preview, .canvas-body > .html-preview, .canvas-body > .asset-preview, .canvas-body > .paper-reader-shell { flex: 1 1 0; width: 100%; max-width: 100%; min-width: 0; height: 0; }
+.pdf-column { position: relative; display: flex; flex-direction: column; }
+.pdf-column > .compile-diagnostics { flex: none; }
+.pdf-column > .pdf-preview { flex: 1 1 0; width: 100%; min-height: 0; }
+/* Shell + placeholder live in the eager sheet, not pdf-viewer.css: the lazy PDF
+   chunk's Suspense fallback (PdfPreviewLoading) paints before that chunk's CSS
+   arrives, and unstyled it dropped the icon and label into the top-left corner. */
+/* PDF.js assigns very high local z-index values to parts of its annotation
+   layer, so contain that ladder before it can compete with app drawers. */
+.pdf-preview { position: relative; isolation: isolate; padding: 0; display: flex; flex-direction: column; background: var(--pdf-bg); }
+.pdf-placeholder { container-type: inline-size; --art-paper: var(--surface-panel); width: 100%; height: 100%; display: grid; place-content: center; justify-items: center; gap: var(--space-4); color: var(--text-tertiary); font-size: var(--type-caption-size); line-height: var(--type-caption-line-height); }
+/* The proof tray sits on the PDF panel's own surface, and narrows with it. */
+.pdf-placeholder .research-art { width: min(104px, 40cqw); }
+.pdf-placeholder .ui-empty-state-description { max-width: 31ch; }
+.pdf-placeholder .ui-button kbd { color: var(--text-tertiary); font: inherit; }
+.pdf-placeholder-detail { max-width: 36em; font-size: var(--type-micro-size); line-height: var(--type-micro-line-height); text-align: center; overflow-wrap: anywhere; user-select: text; }
+.pdf-load-error .ui-empty-state-icon { color: var(--status-danger); }
+.source-workspace { display: grid; grid-template-columns: minmax(0, 1fr); grid-template-rows: minmax(0, 1fr); width: 100%; max-width: 100%; height: 100%; background: var(--editor-bg); }
+.source-workspace > .source-main { grid-column: 1; grid-row: 1; min-width: 0; min-height: 0; }
+.source-main { min-width: 0; min-height: 0; display: flex; flex-direction: column; overflow: hidden; }
+.document-outline-popover { width: 190px; max-height: min(420px, 65vh); padding: var(--space-2); overflow: hidden; }
+.document-outline-header { flex: none; height: 30px; padding: 0 var(--pad-inline-control-tight); border-bottom: 1px solid var(--border-subtle); display: flex; align-items: center; gap: var(--space-3); color: var(--text-secondary); font-size: var(--type-micro-size); font-weight: 650; }
+.document-outline-list { list-style: none; margin: 0; padding: var(--space-2) 0; }
+.document-outline-scroll [data-slot="scroll-area-viewport"] { max-height: min(372px, 57vh); overscroll-behavior: contain; }
+.document-outline-list ul { list-style: none; margin: 0; padding: 0 0 0 var(--space-3); }
+.document-outline-list button { width: 100%; min-height: 26px; border: 0; border-radius: var(--radius-compact); padding: var(--space-2) 7px; background: transparent; color: var(--text-primary); display: flex; align-items: center; gap: var(--space-3); text-align: left; font-size: var(--type-micro-size); }
+.document-outline-popover { --fluid-hover-fill: var(--control-active-soft); }
+.document-outline-list button:hover, .document-outline-list button.active { background: var(--control-active-soft); color: var(--control-active); }
+.document-outline-list button.active { font-weight: 650; }
+.document-outline-list button span { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.document-outline-list li[data-level="4"] > button, .document-outline-list li[data-level="5"] > button { color: var(--text-secondary); }
+.document-outline-list li[data-kind="input"] > button { color: var(--control-active); font-family: var(--editor-font); }
+.document-outline-empty { margin: var(--space-6) var(--space-5); color: var(--text-tertiary); font-size: var(--type-micro-size); }
+.references-panel { flex: none; border-bottom: 1px solid var(--border-subtle); background: color-mix(in srgb, var(--control-active-soft) 55%, var(--surface-panel)); color: var(--text-primary); }
+.references-panel-bar { min-height: 34px; display: flex; align-items: center; gap: var(--space-3); padding: var(--space-2) var(--space-5) var(--space-2) var(--space-5); }
+.references-panel-title { flex: 1; min-width: 0; display: flex; align-items: center; gap: var(--gap-inline); color: var(--text-secondary); font-size: var(--type-caption-size); font-weight: 650; }
+.references-panel-title code { color: var(--control-active); font-family: var(--editor-font); font-size: var(--type-caption-size); }
+.references-panel-title small { color: var(--text-tertiary); font-weight: 600; }
+.references-panel-bar > button { height: 24px; border: 0; border-radius: var(--radius-icon); padding: 0 var(--pad-inline-control-tight); background: transparent; color: var(--text-secondary); display: inline-flex; align-items: center; gap: var(--space-2); font-size: var(--type-micro-size); font-weight: 600; }
+.references-panel-bar > button:hover { background: var(--control-active-soft); color: var(--control-active); }
+.references-panel-bar > button:last-child { width: 24px; padding: 0; justify-content: center; }
+.references-panel-list { list-style: none; margin: 0; padding: 0 var(--space-4) var(--space-4); max-height: 168px; overflow: auto; display: grid; gap: var(--space-2); }
+.references-panel-item { width: 100%; min-height: 30px; border: 1px solid var(--border-subtle); border-radius: var(--radius-chrome); padding: 5px var(--space-4); background: color-mix(in srgb, var(--surface-panel-raised) 88%, transparent); color: var(--text-primary); display: grid; grid-template-columns: auto auto minmax(0, 1fr); gap: var(--gap-inline); align-items: start; text-align: left; font-size: var(--type-caption-size); }
+.references-panel-item:hover { border-color: var(--control-active-border); background: var(--surface-panel-raised); }
+.references-role { text-transform: capitalize; color: var(--control-active); font-weight: 650; font-size: var(--type-micro-size); }
+.references-role.definition { color: var(--status-success); }
+.references-location { color: var(--text-secondary); font-weight: 650; white-space: nowrap; }
+.references-snippet { min-width: 0; color: var(--text-primary); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.document-outline-list button:focus-visible { outline: 2px solid var(--control-active); outline-offset: -2px; }
+.source-editor { position: relative; flex: 1 1 0; width: 100%; min-height: 0; background: var(--code-ground); }
+/* Placed with `translate`, so `.popup-motion` keeps `transform` for its entrance. */
+.latex-selection-toolbar-anchor {
+  position: fixed;
+  z-index: var(--z-selection-toolbar);
+  translate: -50% -100%;
+  pointer-events: none;
+}
+body:has(.modal-backdrop, .drawer-backdrop) :is(.latex-selection-toolbar-anchor, .pdf-citation-hover) { display: none; }
+.latex-selection-toolbar-anchor.below { translate: -50% 0; }
+.latex-selection-toolbar {
+  max-width: 100%;
+  padding: 3px;
+  border-radius: var(--radius-panel);
+  display: flex;
+  align-items: center;
+  overflow-x: auto;
+  scrollbar-width: none;
+  pointer-events: auto;
+}
+.latex-selection-toolbar::-webkit-scrollbar { display: none; }
+.latex-selection-tool { flex: none; display: inline-flex; }
+.latex-selection-tool.separated {
+  margin-left: 3px;
+  padding-left: 3px;
+  border-left: 1px solid var(--border-subtle);
+}
+.latex-selection-tool button {
+  width: 28px;
+  height: var(--control-height-compact);
+  padding: 0;
+  border: 0;
+  border-radius: var(--radius-icon);
+  background: transparent;
+  color: var(--text-secondary);
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+}
+.latex-selection-tool button:hover { background: var(--control-active-soft); color: var(--text-primary); }
+.latex-selection-tool button:focus-visible { outline: 2px solid var(--control-active); outline-offset: -2px; }
+.latex-tool-menu { width: 180px; padding: 5px; }
+.latex-tool-menu button { width: 100%; min-height: 28px; border-radius: var(--radius-icon); padding: 0 var(--pad-inline-control-tight); background: transparent; color: var(--text-secondary); display: flex; align-items: center; gap: var(--gap-inline); text-align: left; font-size: var(--type-micro-size); }
+.latex-tool-menu button:hover { background: var(--control-active-soft); color: var(--text-primary); }
+.heading-menu button { justify-content: space-between; }
+.heading-menu code { color: var(--text-tertiary); font-size: var(--type-micro-size); }
+.latex-highlight-picker { width: auto; padding: 0; border: 0; border-radius: var(--radius-surface); background: transparent; box-shadow: none; }
+.link-menu { width: 250px; display: flex; align-items: end; gap: var(--gap-inline-tight); }
+.link-menu label { min-width: 0; flex: 1; color: var(--text-tertiary); font-size: var(--type-micro-size); }
+.link-menu input { width: 100%; height: var(--control-height-compact); margin-top: var(--space-2); border-color: var(--field-control-border-color); border-radius: var(--field-control-radius); padding: 0 var(--field-control-padding-inline); background: var(--field-control-background); color: var(--text-primary); font-size: var(--type-micro-size); outline: none; }
+.link-menu input:focus { border-color: var(--field-control-interactive-border-color); box-shadow: none; }
+.link-menu > button { width: auto; flex: none; padding: 0 var(--pad-inline-control); background: var(--control-tinted-surface); color: var(--text-primary); }
+.link-menu > button:hover:not(:disabled) { background: var(--control-tinted-hover-surface); }
+/* Rewrite with an instruction (selection-instruction-menu.tsx): the field and
+   its button, then the recent instructions, or starting points before any. */
+.instruction-menu { width: 280px; display: grid; gap: var(--space-2); }
+.instruction-menu-form { display: flex; align-items: center; gap: var(--gap-inline-tight); }
+.instruction-menu-form input { flex: 1; min-width: 0; }
+.instruction-menu-form > button { width: auto; flex: none; padding: 0 var(--pad-inline-control); background: var(--control-tinted-surface); color: var(--text-primary); }
+.instruction-menu-form > button:hover:not(:disabled) { background: var(--control-tinted-hover-surface); }
+.instruction-menu-choices { display: grid; }
+.instruction-menu-heading { padding: var(--space-1) var(--pad-inline-control-tight); color: var(--text-tertiary); font-size: var(--type-micro-size); }
+.instruction-menu-choices button span { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.editor-comment-popover {
+  position: absolute;
+  z-index: var(--z-editor-popover);
+  left: 8px;
+  right: 8px;
+  bottom: 8px;
+  width: auto;
+  max-width: none;
+  max-height: min(280px, calc(100% - 16px));
+  padding: var(--space-5);
+  border-radius: var(--radius-surface);
+  display: grid;
+  gap: var(--space-4);
+  overflow-x: hidden;
+  overflow-y: auto;
+  min-width: 0;
+  box-sizing: border-box;
+}
+.editor-comment-quote {
+  margin: 0;
+  max-height: 3.6em;
+  overflow: hidden;
+  color: var(--text-secondary);
+  font-size: var(--type-caption-size);
+  line-height: 1.35;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
+.editor-comment-popover textarea {
+  width: 100%;
+  min-width: 0;
+  max-width: 100%;
+  box-sizing: border-box;
+  min-height: 72px;
+  resize: vertical;
+  border: var(--field-control-border-width) solid var(--field-control-border-color);
+  border-radius: var(--field-control-radius);
+  padding: var(--space-4);
+  background: var(--field-control-background);
+  color: var(--text-primary);
+  font: inherit;
+  font-size: var(--type-body-compact-size);
+  line-height: 1.4;
+  overflow-x: hidden;
+  overflow-wrap: anywhere;
+  white-space: pre-wrap;
+}
+.editor-comment-popover-actions {
+  display: flex;
+  justify-content: flex-end;
+  gap: var(--space-3);
+}
+.editor-comment-popover-actions button {
+  height: var(--control-height-compact);
+  padding: 0 var(--space-5);
+  border-radius: var(--radius-chrome);
+  border: 1px solid var(--border-subtle);
+  background: transparent;
+  color: var(--text-secondary);
+  font-size: var(--type-caption-size);
+  font-weight: 600;
+}
+.editor-comment-popover-actions button.primary {
+  background: var(--control-tinted-surface);
+  border-color: transparent;
+  color: var(--text-primary);
+}
+.editor-comment-popover-actions button.primary:hover:not(:disabled) { background: var(--control-tinted-hover-surface); }
+.editor-comment-popover-actions button.primary:disabled { opacity: .45; }
+/* Inline proofread (canvas/proofread-card.tsx): a frosted card in a CodeMirror
+   block widget under the selection it would replace, so the text below moves
+   down rather than hiding behind it. The surface comes from surfaces.css. */
+.source-editor .cm-proofread-source {
+  background: color-mix(in srgb, var(--accent) 12%, transparent);
+  border-radius: 2px;
+  box-decoration-break: clone;
+  -webkit-box-decoration-break: clone;
+}
+.cm-proofread-block { padding: var(--space-3) var(--space-2) var(--space-4); cursor: default; }
+.proofread-card {
+  container-type: inline-size;
+  max-width: 760px;
+  display: grid;
+  gap: var(--space-3);
+  padding: var(--space-3) var(--space-4) var(--space-3);
+  font: var(--type-body-compact-weight) var(--type-body-compact-size)/var(--type-body-compact-line-height) var(--ui-font);
+  white-space: normal;
+  user-select: text;
+  animation: proofread-card-unroll var(--motion-slow) backwards;
+}
+/* The card unrolls downward from the selection it answers. The clip reaches
+   past its edges, so its shadow comes with it; the clip is gone once it has. */
+@keyframes proofread-card-unroll {
+  from { opacity: 0; clip-path: inset(-24px -24px 100% -24px); }
+  to { opacity: 1; clip-path: inset(-24px); }
+}
+/* While the agent works: skeleton lines, the last one short, as a paragraph
+   ends (loading-status.css draws the sheen). */
+.proofread-card-placeholder {
+  --loading-sheen-surface: var(--surface-elevated);
+  display: grid;
+  gap: var(--space-4);
+  padding: var(--space-3) var(--gap-tight);
+  border-radius: var(--radius-compact);
+}
+.proofread-card-placeholder > span {
+  height: var(--space-4);
+  border-radius: var(--radius-pill);
+  background: var(--border-subtle);
+}
+.proofread-card-placeholder > span:last-child:not(:first-child) { width: 62%; }
+.proofread-card-placeholder > span:nth-child(2):not(:last-child) { width: 90%; }
+/* The answer: the passage comes up first, then each edit arrives on it in
+   turn, a few at most waiting their turn. */
+.proofread-card-text { animation: proofread-text-in var(--motion-moderate) both; }
+.proofread-card-text .inline-edit {
+  --inline-edit-index: 0; /* Each edit's own, set inline (inline-edits.tsx). */
+  animation: proofread-edit-in var(--motion-moderate) both;
+  animation-delay: calc(var(--duration-fast) + min(var(--inline-edit-index), 8) * var(--duration-stagger));
+}
+@keyframes proofread-text-in { from { opacity: 0; } }
+@keyframes proofread-edit-in { from { opacity: .15; } }
+.proofread-card-header { display: flex; flex-wrap: wrap; align-items: center; gap: var(--space-2) var(--space-3); min-width: 0; }
+.proofread-card-summary {
+  display: flex;
+  align-items: center;
+  gap: var(--gap-inline-tight);
+  min-width: 0;
+  margin-inline-start: auto;
+  color: var(--text-secondary);
+  font: var(--type-caption-weight) var(--type-caption-size)/var(--type-caption-line-height) var(--ui-font);
+}
+.proofread-card-summary-text,
+.proofread-card-model { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.proofread-card-model::before { content: "·"; margin-inline-end: var(--gap-inline-tight); }
+/* A rewrite's own instruction, where the strength switch would be. */
+.proofread-card-instruction { min-width: 0; flex: 0 1 auto; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; color: var(--text-primary); font-weight: var(--weight-medium); }
+/* The selection read in place (components/ui/inline-edits.tsx). */
+.proofread-card-text { padding-inline: var(--gap-tight); }
+.proofread-card-held,
+.proofread-card-error { margin: 0; }
+/* One rule above the answers, then the lead action and the rest. Narrow,
+   the keys go. */
+.proofread-card-actions {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--space-2);
+  padding-top: var(--space-3);
+  border-top: 1px solid var(--border-subtle);
+}
+.proofread-card-actions kbd { margin-inline-start: var(--gap-inline); color: var(--text-secondary); font: inherit; }
+@container (max-width: 300px) {
+  .proofread-card-actions kbd,
+  .proofread-card-model { display: none; }
+}
+/* The narrowest panel: the strength switch takes the row and tightens. */
+@container (max-width: 220px) {
+  .proofread-card-mode { flex: 1 1 auto; min-width: 0; }
+  .proofread-card-mode .ui-segmented-tab { flex: 1 1 0; padding-inline: var(--gap-inline-tight); overflow: hidden; white-space: nowrap; }
+}
+.editor-comments-drawer { width: min(420px, 100%); }
+.editor-comments-content .pdf-marks-toolbar { margin-top: var(--drawer-content-inset); }
+.editor-comments-content .ui-empty-state[data-density="compact"] {
+  padding-top: 0;
+}
+.pdf-mark-item.resolved { opacity: .72; }
+/* Unresolved editor comments — an Overleaf thread's per-author colours come
+   from inline styles; a local annotation is an amber highlighter stroke, blue
+   while the agent's proposal waits and violet while its question does. */
+.source-editor .cm-editor-comment {
+  border-radius: 2px;
+  box-decoration-break: clone;
+  -webkit-box-decoration-break: clone;
+  cursor: help;
+}
+.source-editor .cm-annotation {
+  --annotation-mark-ink: var(--annotation-ink);
+  background: var(--annotation-highlight);
+  box-shadow: inset 0 -2px 0 color-mix(in srgb, var(--annotation-mark-ink) 70%, transparent);
+}
+.source-editor .cm-annotation[data-annotation-status="proposed"] { --annotation-mark-ink: var(--annotation-proposed-ink); background: color-mix(in srgb, var(--annotation-proposed-ink) 10%, transparent); }
+.source-editor .cm-annotation[data-annotation-status="asked"] { --annotation-mark-ink: var(--annotation-asked-ink); background: color-mix(in srgb, var(--annotation-asked-ink) 10%, transparent); }
+/* Resolved from its card: the mark fades with the card before it is taken
+   away (an Overleaf thread's colours are inline, hence the importance). */
+.source-editor .cm-editor-comment.cm-editor-comment-resolving {
+  background-color: transparent !important;
+  border-bottom-color: transparent !important;
+  box-shadow: none;
+  transition: background-color var(--motion-moderate-exit), border-color var(--motion-moderate-exit), box-shadow var(--motion-moderate-exit);
+}
+/* Annotation pins in the gutter: editor/comments/annotation-gutter.css. */
+/* The proposal reviewed under its passage (canvas/annotation-review.tsx). */
+.source-editor .cm-annotation-review-source {
+  background: color-mix(in srgb, var(--annotation-proposed-ink) 12%, transparent);
+  border-radius: 2px;
+  box-decoration-break: clone;
+  -webkit-box-decoration-break: clone;
+}
+.cm-annotation-review-block { padding: var(--space-3) var(--space-2) var(--space-4); cursor: default; }
+/* Hover cards shown when the pointer rests on a suggestion or a comment mark.
+   Both draw their own card over CodeMirror's see-through tooltip, so its chrome
+   is stripped; the suggestion card's minimum width keeps Accept and Reject
+   inside its edges. The comment card is comments/comment-card.css. */
+.cm-tooltip.cm-tooltip-hover:has(.cm-tracked-change-tooltip),
+.cm-tooltip.cm-tooltip-hover:has(.cm-editor-comment-card-host) {
+  border: none;
+  background: transparent;
+}
+.cm-tracked-change-tooltip {
+  box-shadow: var(--elevation-popover);
+  /* Prose in the UI face, not the editor's monospace, which .cm-editor would
+     otherwise impose on everything inside it. */
+  font-family: var(--ui-font);
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-4);
+  padding: var(--space-5) var(--space-6);
+  border-radius: var(--radius-surface);
+  /* Opaque on purpose. A translucent card over body text is unreadable, and
+     these sit directly on the line they describe. */
+  background: var(--surface-panel);
+  color: var(--text-primary);
+  font-size: var(--type-body-compact-size);
+  line-height: 1.45;
+}
+.cm-tracked-change-tooltip { min-width: 220px; max-width: 340px; }
+.cm-tracked-change-tooltip-item { display: flex; flex-direction: column; gap: var(--space-2); }
+.cm-tracked-change-tooltip-item + .cm-tracked-change-tooltip-item {
+  padding-top: var(--space-4);
+  border-top: 1px solid var(--border-subtle);
+}
+.cm-tracked-change-tooltip-head { display: flex; align-items: center; gap: var(--space-3); }
+.cm-tracked-change-tooltip-dot { width: 8px; height: 8px; border-radius: 50%; flex: 0 0 auto; }
+.cm-tracked-change-tooltip-author { font-weight: 600; }
+.cm-tracked-change-tooltip-time { margin-left: auto; opacity: .6; font-size: var(--type-caption-size); }
+.cm-tracked-change-tooltip-body { white-space: pre-wrap; word-break: break-word; }
+.cm-tracked-change-tooltip-actions { display: flex; flex-wrap: wrap; gap: var(--space-3); margin-top: var(--space-1); }
+.cm-tracked-change-tooltip-actions button {
+  flex: 0 0 auto;
+  padding: 3px var(--space-6);
+  border: 1px solid var(--border-strong);
+  border-radius: var(--radius-icon);
+  background: color-mix(in srgb, var(--text-primary) 4%, transparent);
+  color: inherit;
+  font-size: var(--type-caption-size);
+  font-weight: 600;
+  cursor: pointer;
+}
+.cm-tracked-change-tooltip-actions button:hover:not(:disabled) {
+  background: var(--control-active-soft);
+  border-color: var(--control-active);
+}
+.cm-tracked-change-tooltip-actions button:disabled { opacity: .5; cursor: default; }
+/* Reply thread inside the comments panel. */
+.editor-comment-replies {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-4);
+  margin: var(--space-1) var(--space-2) var(--space-3);
+  padding-left: var(--space-5);
+  border-left: 2px solid var(--border-subtle);
+}
+.editor-comment-reply { display: flex; flex-direction: column; gap: var(--space-1); }
+.editor-comment-reply-meta {
+  display: flex;
+  gap: var(--space-4);
+  font-size: var(--type-micro-size);
+  opacity: .7;
+}
+.editor-comment-reply-meta span:first-child { font-weight: 600; }
+/* Sized to the comment body above it (.pdf-mark-body p), which a reply continues. */
+.editor-comment-reply p {
+  margin: 0;
+  font-size: var(--type-caption-size);
+  line-height: 1.5;
+  white-space: pre-wrap;
+  word-break: break-word;
+}
+/* Reply composer: part of the thread, styled like it. */
+.editor-comment-reply-compose {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-3);
+  margin: var(--space-1) var(--space-2) var(--space-3);
+  padding-left: var(--space-5);
+  border-left: 2px solid var(--control-active);
+}
+.editor-comment-reply-compose textarea {
+  width: 100%;
+  min-width: 0;
+  max-width: 100%;
+  box-sizing: border-box;
+  padding: 7px 9px;
+  border: var(--field-control-border-width) solid var(--field-control-border-color);
+  border-radius: var(--field-control-radius);
+  background: var(--field-control-background);
+  color: var(--text-primary);
+  font-family: inherit;
+  font-size: var(--type-caption-size);
+  line-height: 1.5;
+  resize: vertical;
+  overflow-x: hidden;
+  overflow-wrap: anywhere;
+  white-space: pre-wrap;
+}
+.editor-comment-reply-compose textarea:focus {
+  outline: none;
+  border-color: var(--field-control-interactive-border-color);
+  box-shadow: none;
+}
+.editor-comment-reply-actions { display: flex; gap: var(--space-3); }
+.editor-comment-reply-actions button {
+  height: 24px;
+  padding: 0 11px;
+  border: 1px solid var(--border-subtle);
+  border-radius: var(--radius-icon);
+  background: transparent;
+  color: var(--text-primary);
+  font-family: inherit;
+  font-size: var(--type-caption-size);
+  font-weight: 600;
+  cursor: pointer;
+}
+.editor-comment-reply-actions button:not(.primary):hover:not(:disabled) { background: var(--border-subtle); }
+/* Reply leads its row as the tinted Button does: the accent's wash, not a
+ * dark slab, and a deeper wash on hover rather than the secondary one. */
+.editor-comment-reply-actions button.primary {
+  border-color: transparent;
+  background: var(--control-tinted-surface);
+}
+.editor-comment-reply-actions button.primary:hover:not(:disabled) {
+  background: var(--control-tinted-hover-surface);
+}
+.editor-comment-reply-actions button:disabled { opacity: .5; cursor: default; }
+.pdf-mark-item.focused {
+  outline: 2px solid var(--control-active);
+  outline-offset: -1px;
+  border-radius: var(--radius-control);
+}
+.source-editor > .code-editor-root { position: absolute; inset: 0; width: 100%; height: 100%; min-height: 0; overflow: hidden; }
+.source-editor .cm-editor, .source-editor .cm-scroller { width: 100%; height: 100%; min-height: 0; background: var(--code-ground); }
+.source-editor .cm-scroller { overflow-x: hidden !important; overflow-y: auto !important; scrollbar-width: none; }
+.source-editor .cm-scroller::-webkit-scrollbar { display: none; }
+.cm-overlay-scrollbar {
+  position: absolute;
+  z-index: var(--z-editor-scrollbar);
+  top: 0;
+  right: 0;
+  width: 10px;
+  height: 100%;
+  opacity: 0;
+  pointer-events: none;
+  touch-action: none;
+  user-select: none;
+  transition: opacity var(--motion-fast) var(--duration-moderate);
+}
+.cm-overlay-scrollbar[data-overflow] { pointer-events: auto; }
+.cm-overlay-scrollbar[data-overflow]:hover,
+.cm-overlay-scrollbar[data-scrolling] { opacity: 1; transition-duration: var(--duration-moderate); transition-delay: 0ms; }
+.cm-overlay-scrollbar-thumb {
+  width: 4px;
+  min-height: 24px;
+  margin: 0 auto;
+  border-radius: 9999px;
+  background: color-mix(in srgb, var(--code-ink) 8%, transparent);
+  transition: background-color var(--motion-moderate), width var(--motion-moderate);
+}
+.cm-overlay-scrollbar:hover .cm-overlay-scrollbar-thumb { width: 6px; background: color-mix(in srgb, var(--code-ink) 12%, transparent); }
+.cm-overlay-scrollbar-thumb:active { background: color-mix(in srgb, var(--code-ink) 16%, transparent); }
+/* Focus mode: the source keeps a reading measure, centered on the page
+   however wide the panel is (the editor always wraps, so the column is the
+   text's). Padding on the scroller moves the gutter with the text, and the
+   editor's layers measure from the scroller's edge, not its content. */
+.focus-mode .trellis-editor-host .source-editor .cm-scroller { padding-inline: max(0px, calc((100% - var(--focus-mode-measure)) / 2)); }
+.source-editor .cm-content, .source-editor .cm-gutter { min-height: 100%; }
+/* Keep content transparent so CM's selection layer stays visible under collab. */
+.source-editor .cm-content { min-width: 0; background: transparent; font-variant-ligatures: none; font-feature-settings: "calt" 0, "liga" 0; caret-color: var(--code-caret); }
+.source-editor .cm-cursor,
+.source-editor .cm-dropCursor {
+  border-left: var(--editor-caret-width) solid var(--code-caret);
+  margin-left: calc(var(--editor-caret-width) / -2);
+}
+/* CodeMirror's base theme sets `.cm-scroller { font-family: monospace }`, which
+   overrides inheritance from `.cm-editor`. Set the face on scroller + content. */
+.source-editor .cm-editor,
+.source-editor .cm-scroller,
+.source-editor .cm-content {
+  color: var(--code-ink);
+  font-family: var(--editor-font) !important;
+  font-size: var(--editor-font-size) !important;
+  /* Override CodeMirror's base-theme 1.4 so source matches reading density. */
+  line-height: 1.6 !important;
+}
+/* Line numbers and fold markers read as one quiet column, the same in the live
+   editor and its Trellis snapshot (src/editor/source-gutter.ts). It shares the
+   editor's ground with no rule beside it; spacing alone sets it off. */
+/* The numbers sit a step under tertiary text, so the column recedes behind
+   the source; the current line's number carries the caret's place instead of
+   a band across the gutter. More contrast keeps them at tertiary. */
+.source-editor .cm-gutters { background: var(--code-ground); color: var(--code-line-number); border-right: 0; }
+@media (prefers-contrast: more) {
+  .source-editor .cm-gutters { color: var(--code-line-number-contrast); }
+}
+/* CodeMirror sizes this column to the widest line number, so the text shifted
+   whenever a document crossed 9 -> 10, 99 -> 100 or 999 -> 1,000 lines, and
+   between a short file and a long one. Reserve four digits up front (border-box
+   sizing, so the padding is inside the min-width); only a document of 10,000
+   lines or more is wider, by CodeMirror's spacer, which it measures from the
+   line count when the view opens. Tabular figures keep digits from jittering. */
+.source-editor .cm-lineNumbers .cm-gutterElement {
+  min-width: calc(4ch + var(--space-5) + var(--space-1));
+  padding: 0 var(--space-1) 0 var(--space-5);
+  font-variant-numeric: tabular-nums;
+}
+.source-editor .cm-lineNumbers .cm-activeLineGutter { color: var(--code-ink); }
+/* A fixed fold column, whatever the markers. A marker sits on a wrapped line's
+   first row, beside its line number, not halfway down the paragraph. */
+.source-editor .cm-foldGutter .cm-gutterElement {
+  width: 16px;
+  min-width: 16px;
+  padding: 0;
+}
+.source-editor .cm-foldGutter .cm-lattice-fold-marker {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  height: 1lh;
+  padding: 0;
+  color: var(--code-line-number-contrast);
+  cursor: pointer;
+  /* Quiet until the pointer is over the gutter; a folded range keeps its
+     marker, since otherwise only its placeholder says it is folded. */
+  opacity: 0;
+  transition: opacity var(--motion-fast), color var(--motion-fast);
+}
+.source-editor .cm-gutters:hover .cm-lattice-fold-marker,
+.source-editor .cm-foldGutter .cm-lattice-fold-marker[data-folded] { opacity: 1; }
+.source-editor .cm-foldGutter .cm-lattice-fold-marker:hover { color: var(--code-ink); }
+@media (hover: none) {
+  .source-editor .cm-foldGutter .cm-lattice-fold-marker { opacity: 1; }
+}
+.source-editor .cm-lattice-fold-marker svg {
+  width: 12px;
+  height: 12px;
+  fill: none;
+  stroke: currentColor;
+  stroke-width: 1.5;
+  stroke-linecap: round;
+  stroke-linejoin: round;
+}
+.source-editor .cm-lattice-fold-marker[data-folded] svg { transform: rotate(-90deg); }
+/* The folded range's stand-in, in the editor's own neutrals: CodeMirror's
+   light-grey chip glared in dark mode. */
+.source-editor .cm-foldPlaceholder {
+  margin: 0 var(--space-1);
+  padding: 0 var(--space-2);
+  border: 0;
+  border-radius: var(--radius-compact);
+  background: color-mix(in srgb, var(--code-ink) 5%, transparent);
+  color: var(--code-line-number-contrast);
+  transition: color var(--motion-fast);
+}
+.source-editor .cm-foldPlaceholder:hover { color: var(--code-ink); }
+/* The current line is a rounded wash inset from the panel's right edge, not
+   a band from edge to edge: drawn by a pseudo-element under the line's text
+   (the line isolates, so z-index -1 stays above the editor's ground), with
+   the line box itself, which CodeMirror measures, left untouched. The fill
+   sits above CM's selection layer and would hide selected text, so it shows
+   only while the caret is empty. The gutter keeps no band; its number speaks
+   for the line (above). */
+.source-editor .cm-activeLine { position: relative; isolation: isolate; background: transparent; }
+.source-editor .cm-activeLine::before {
+  content: "";
+  position: absolute;
+  z-index: -1;
+  inset: 0 var(--space-4) 0 0;
+  border-radius: var(--radius-compact);
+  background: var(--code-line);
+  pointer-events: none;
+}
+.source-editor .cm-editor.cm-lattice-has-selection .cm-activeLine::before { content: none; }
+.source-editor .cm-activeLineGutter { background: transparent; }
+/* A jump's target (editor-reveal.ts): held, then faded, in the find-match color.
+   An animated fill outranks the active-line and selection rules above. */
+.source-editor .cm-line.cm-reveal-flash { animation: reveal-flash var(--motion-linger); }
+@keyframes reveal-flash {
+  0%, 55% { background-color: var(--highlight-match-surface); }
+  100% { background-color: transparent; }
+}
+/* What changed under the writer (change-marks.ts). An outside edit's lines
+   (the agent's, another app's) come up on the success wash, hold it, and
+   let it go, as a jump's target does. */
+.source-editor .cm-line.cm-landed-line { animation: change-wash var(--motion-linger); }
+@keyframes change-wash {
+  0% { background-color: transparent; }
+  8%, 45% { background-color: var(--status-success-soft); }
+  100% { background-color: transparent; }
+}
+/* An accepted suggestion, one edit after another: the old words are struck
+   through, then fold away (a picture: the document already reads the new
+   ones), then the new words settle in on the wash. The fold runs from the
+   words' width, measured once drawn (`data-measured`). */
+.source-editor .cm-accept-ghost {
+  --change-mark-width: none; /* The words' drawn width, set once measured. */
+  --change-mark-delay: calc(var(--change-mark-order, 0) * var(--duration-stagger));
+  display: inline-block;
+  max-width: var(--change-mark-width);
+  overflow: hidden;
+  vertical-align: bottom;
+  color: var(--text-secondary);
+  white-space: pre;
+}
+.source-editor .cm-accept-ghost > span { position: relative; }
+.source-editor .cm-accept-ghost > span::after {
+  content: "";
+  position: absolute;
+  inset-inline: 0;
+  top: 55%;
+  height: 1px;
+  background: var(--status-danger);
+  transform-origin: left center;
+  animation: accept-strike var(--motion-moderate) both;
+  animation-delay: var(--change-mark-delay);
+}
+.source-editor .cm-accept-ghost[data-measured] {
+  animation: accept-fold var(--motion-moderate) both;
+  animation-delay: calc(var(--duration-moderate) + var(--change-mark-delay));
+}
+.source-editor .cm-accept-insert {
+  border-radius: 2px;
+  animation: accept-settle var(--motion-moderate) both, change-wash var(--motion-linger) both;
+  animation-delay: calc(var(--duration-moderate) + var(--duration-fast) + var(--change-mark-order, 0) * var(--duration-stagger));
+}
+@keyframes accept-strike { from { transform: scaleX(0); } }
+@keyframes accept-fold { to { max-width: 0; opacity: 0; } }
+@keyframes accept-settle { from { opacity: 0; } }
+.source-editor .cm-focused { outline: none; }
+.source-editor .cm-editor .cm-panels { z-index: var(--z-editor-overlay); background: var(--surface-panel-raised); border-color: var(--border-subtle); color: var(--text-secondary); }
+.source-editor .cm-panels.cm-panels-top { border-bottom: 1px solid var(--border-subtle); }
+.source-editor .cm-panels.cm-panels-bottom { border-top: 1px solid var(--border-subtle); }
+/* Two rows: the query with its navigation and options, then the replacement
+   with its two actions. The ::after break between them is a full-width flex
+   item, so CodeMirror's own markup order (and its <br>) never decides where
+   a row ends; a narrow editor still wraps within a row rather than scrolling,
+   since a fixed grid let the controls squeeze the query field to nothing. */
+.source-editor .cm-panel.cm-search {
+  position: relative;
+  padding: 7px 42px 7px var(--space-5);
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--space-3);
+  /* The panel sits inside the editor, which sets the code face; its controls
+     are interface, so they take the interface face back. */
+  font-family: var(--ui-font);
+  font-size: var(--type-caption-size);
+}
+.source-editor .cm-panel.cm-search > br { display: none; }
+.source-editor .cm-panel.cm-search::after { content: ""; order: 1; flex-basis: 100%; height: 0; margin-block-end: calc(-1 * var(--space-3)); }
+.source-editor .cm-panel.cm-search > :is(input[name="replace"], button[name="replace"], button[name="replaceAll"]) { order: 2; }
+/* With room for both rows whole, they share one grid: the two fields end at
+   one edge, Replace spans the count and arrows and Replace all the rest, so
+   both rows end at one edge too. The query row's eight controls fill the
+   eight columns in markup order. */
+.source-editor .cm-panels { container: editor-panels / inline-size; }
+@container editor-panels (min-width: 520px) {
+  .source-editor .cm-panel.cm-search { display: grid; grid-template-columns: minmax(0, 1fr) repeat(7, auto); }
+  .source-editor .cm-panel.cm-search::after { content: none; }
+  .source-editor .cm-panel.cm-search input.cm-textfield { min-width: 0; }
+  .source-editor .cm-panel.cm-search > button[name="replace"] { grid-column: span 3; }
+  .source-editor .cm-panel.cm-search > button[name="replaceAll"] { grid-column: span 4; }
+}
+.source-editor .cm-panel.cm-search input.cm-textfield {
+  height: var(--search-control-height-compact);
+  min-width: 0;
+  width: 100%;
+  border: var(--search-control-border-width) solid var(--search-control-border-color);
+  border-radius: var(--search-control-radius);
+  outline: none;
+  background: var(--search-control-background);
+  padding: 0 var(--search-control-padding-inline);
+  color: var(--text-primary);
+  font: var(--type-caption-size)/var(--type-caption-line-height) var(--ui-font);
+  overflow-x: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  /* Keeps a usable field, and takes a whole row of its own when space is tight. */
+  flex: 1 1 150px;
+  min-width: 120px;
+  width: auto;
+  transition: border-color var(--motion-fast);
+}
+.source-editor .cm-panel.cm-search input.cm-textfield:hover:not(:focus) {
+  border-color: var(--search-control-interactive-border-color);
+}
+.source-editor .cm-panel.cm-search input.cm-textfield:focus {
+  border-color: var(--search-control-interactive-border-color);
+  box-shadow: none;
+}
+.source-editor .cm-panel.cm-search .cm-search-count {
+  flex: 0 0 auto;
+  min-width: 36px;
+  color: var(--text-tertiary);
+  font: 500 var(--type-micro-size)/1 var(--ui-font);
+  text-align: center;
+  font-variant-numeric: tabular-nums;
+}
+/* Buttons are quiet fills rather than outlined boxes, so the query field,
+   the one bordered control, leads the row. */
+.source-editor .cm-panel.cm-search button {
+  flex: 0 0 auto;
+  min-width: 28px;
+  height: var(--control-height-compact);
+  border: 0;
+  border-radius: var(--radius-chrome);
+  background: color-mix(in srgb, var(--text-primary) 5%, transparent);
+  color: var(--text-secondary);
+  padding: 0 var(--pad-inline-control);
+  font-size: var(--type-caption-size);
+  font-weight: var(--weight-medium);
+  margin: 0;
+  white-space: nowrap;
+}
+.source-editor .cm-panel.cm-search button:hover { background: var(--control-active-soft); color: var(--control-active); }
+.source-editor .cm-panel.cm-search button[name="close"] {
+  position: absolute;
+  top: 9px;
+  right: 8px;
+  width: var(--control-size-icon);
+  height: var(--control-size-icon);
+  margin: 0;
+  padding: 0;
+  border: 0;
+  border-radius: var(--radius-chrome);
+  background: transparent;
+  color: var(--text-tertiary);
+  font: 400 var(--type-title-size)/1 var(--ui-font);
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+}
+.source-editor .cm-panel.cm-search button[name="close"]:hover { background: var(--chrome-hover-surface); color: var(--text-primary); }
+/* Match case, regular expression and whole word are toggle chips, not native
+   checkboxes (white squares in the dark theme). The checkbox stays in the
+   chip, invisible but covering it, so clicks, keyboard and screen readers
+   still reach the real control; the chip draws its state and focus. */
+.source-editor .cm-panel.cm-search label {
+  position: relative;
+  flex: 0 0 auto;
+  height: var(--control-height-compact);
+  display: inline-flex;
+  align-items: center;
+  margin: 0;
+  padding: 0 var(--space-3);
+  border-radius: var(--radius-chrome);
+  color: var(--text-tertiary);
+  font: var(--weight-medium) var(--type-caption-size)/1 var(--editor-font);
+  white-space: nowrap;
+  cursor: pointer;
+  transition: background-color var(--motion-fast), color var(--motion-fast);
+}
+.source-editor .cm-panel.cm-search label:hover { background: var(--chrome-hover-surface); color: var(--text-primary); }
+.source-editor .cm-panel.cm-search label:has(input:checked) { background: var(--control-active-soft); color: var(--control-active); }
+.source-editor .cm-panel.cm-search label:has(input:focus-visible:not([data-pointer-focus])) { outline: var(--focus-ring-width) solid var(--focus-ring); outline-offset: var(--focus-ring-offset); }
+.source-editor .cm-panel.cm-search input[type="checkbox"] { position: absolute; inset: 0; width: 100%; height: 100%; min-width: 0; margin: 0; opacity: 0; cursor: pointer; }
+.source-editor .cm-searchMatch { background: var(--highlight-match-surface); border-radius: 2px; }
+.source-editor .cm-searchMatch-selected { background: var(--highlight-match-current-surface); }
+/* CodeMirror's autocomplete theme scopes the list under its generated class
+   (`.ͼ1 .cm-tooltip.cm-tooltip-autocomplete > ul > li`), more specific than a
+   plain `.source-editor` rule, so the list rules carry `.cm-editor` to outrank
+   it; without that its monospace 1px rows were what showed. The card's edge
+   is the shared ring (surfaces.css), never CodeMirror's grey border. */
+.source-editor .cm-tooltip.cm-tooltip-autocomplete { border: 0; border-radius: var(--radius-panel); overflow: hidden; max-width: min(420px, 70vw); }
+.source-editor .cm-editor .cm-tooltip.cm-tooltip-autocomplete > ul { min-width: 230px; max-width: min(420px, 70vw); padding: var(--space-2); font-family: var(--editor-font); font-size: calc(var(--editor-font-size) - 1px); }
+.source-editor .cm-editor .cm-tooltip.cm-tooltip-autocomplete > ul > li { padding: 5px var(--space-4); border-radius: var(--radius-compact); color: var(--text-secondary); line-height: 1.35; text-align: left; display: flex; gap: var(--space-5); align-items: baseline; }
+.source-editor .cm-editor .cm-tooltip.cm-tooltip-autocomplete > ul > li[aria-selected] { background: var(--control-active-soft); color: var(--text-primary); }
+/* The typed letters read by weight and ink, not CodeMirror's underline. */
+.source-editor .cm-completionMatchedText { color: var(--text-primary); font-weight: var(--weight-medium); text-decoration: none; }
+.source-editor .cm-completionLabel { display: inline-block; min-width: 0; flex: none; text-align: left; }
+.source-editor .cm-completionDetail {
+  margin-left: auto;
+  min-width: 0;
+  max-width: 58%;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  color: var(--text-tertiary);
+  font-style: normal;
+  font-size: 0.92em;
+}
+/* Citation choices use the same title/subtitle hierarchy as Markdown's paper picker. */
+/* CodeMirror can set an inline height when editor space is limited. Shrink the
+   scroll viewport with that shell instead of clipping the list and scrollbar. */
+.source-editor .cm-tooltip.cm-citation-menu { display: flex; flex-direction: column; width: min(420px, 70vw); height: auto; border: 1px solid var(--border-subtle); border-radius: var(--surface-radius); background: var(--surface-panel-raised); }
+.source-editor .cm-tooltip.cm-tooltip-autocomplete.cm-citation-menu > ul { width: 100%; min-width: 0; height: auto; min-height: 0; max-height: 40vh; padding: var(--surface-inset); }
+.source-editor .cm-editor .cm-tooltip.cm-tooltip-autocomplete > ul > li.cm-citation-option { display: grid; grid-template-columns: 14px minmax(0, 1fr); align-items: start; column-gap: var(--space-4); row-gap: var(--space-1); padding: var(--space-4); border-radius: calc(var(--nested-radius) * var(--nested-corner-smoothing, 1)); corner-shape: var(--nested-corner-shape, round); font: var(--type-body-size)/var(--type-body-line-height) var(--ui-font); }
+.source-editor .cm-citation-icon { grid-column: 1; grid-row: 1 / span 2; width: 14px; height: 14px; margin-top: var(--space-1); fill: none; stroke: currentColor; stroke-width: 1.5; stroke-linecap: round; stroke-linejoin: round; color: var(--text-secondary); }
+.source-editor .cm-citation-option .cm-completionLabel { grid-column: 2; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; color: var(--text-primary); }
+.source-editor .cm-citation-option .cm-completionDetail { grid-column: 2; margin-left: 0; max-width: none; color: var(--text-secondary); font-size: var(--type-caption-size); line-height: var(--type-caption-line-height); }
+/* A tooltip CodeMirror placed above its anchor rises from it (see
+   `popupMotionTooltips` in latex-editor.ts). */
+.source-editor .cm-tooltip-above.popup-motion { --popup-motion-from: translateY(6px); --popup-motion-origin: bottom center; }
+/* Readable by default: a transparent host leaves any card without its own
+   background sitting directly on the document, with the prose showing through.
+   The cards that genuinely draw their own chrome strip it below. Its edge is
+   the shared ring (surfaces.css), not CodeMirror's grey tooltip border. */
+.source-editor .cm-tooltip-hover {
+  border: 0;
+  border-radius: var(--radius-panel);
+  overflow: hidden;
+}
+/* These three draw their own card, so the host must not draw a second one
+   around it. */
+.source-editor .cm-tooltip-hover:has(.cm-tooltip-lint),
+.source-editor .cm-tooltip-hover:has(.cm-editor-comment-card-host),
+.source-editor .cm-tooltip-hover:has(.cm-tracked-change-tooltip) {
+  border: 0;
+  background: transparent;
+  box-shadow: none;
+}
+/* Keep the hover arrow outside the host, but scroll the card within the
+   available height CodeMirror measures above or below the anchor. */
+.source-editor .cm-tooltip-hover:has(.cm-editor-comment-card-host) { overflow: visible; }
+/* `--comment-card-room` is the editor's width less its margins, set as the card opens. */
+.cm-editor-comment-card-host { --comment-card-room: 320px; display: flex; flex-direction: column; max-height: 100%; }
+.cm-editor-comment-card-host > .comment-card {
+  min-width: min(240px, var(--comment-card-room));
+  max-width: min(320px, var(--comment-card-room));
+  min-height: 0;
+  flex: 0 1 auto;
+}
+/* Above its line, the card rises into place instead of dropping. */
+.cm-tooltip-above .cm-editor-comment-card-host > .popup-motion { --popup-motion-from: translateY(6px); --popup-motion-origin: bottom center; }
+/* Lint diagnostics (e.g. "Unused label …") hover in a tooltip that carries
+   .cm-tooltip-lint. Match it on its own (not only combined with
+   .cm-tooltip-hover): hovering the gutter marker puts both classes on one
+   element, but hovering the underline nests the lint tooltip as a *child* of
+   the shared hover host (next to the texlab card), where it carries only
+   .cm-tooltip-lint. */
+.source-editor .cm-tooltip-lint {
+  border-radius: var(--radius-control);
+  overflow: hidden;
+  max-width: min(440px, 72vw);
+}
+.source-editor .cm-tooltip-lint .cm-diagnostic {
+  color: var(--text-primary);
+  font-family: var(--editor-font);
+  font-size: calc(var(--editor-font-size) - 1px);
+  line-height: 1.45;
+  white-space: normal;
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  column-gap: var(--space-2);
+  row-gap: var(--space-3);
+  padding: var(--space-4) var(--space-5);
+}
+.source-editor .cm-tooltip-lint .cm-diagnosticText {
+  flex: 1 0 100%;
+}
+/* A Harper finding in a non-English interface: the rule's name and
+   description, then the finding itself (harper-spellcheck.ts). */
+.source-editor .cm-tooltip-lint .cm-harper-message {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-1);
+}
+.source-editor .cm-tooltip-lint .cm-harper-rule { font-weight: 600; }
+.source-editor .cm-tooltip-lint .cm-harper-rule-description { color: var(--text-secondary); }
+.source-editor .cm-tooltip-lint .cm-harper-detail-original { color: var(--text-tertiary); font-size: 0.9em; }
+.source-editor .cm-tooltip-lint .cm-diagnosticAction {
+  min-height: 24px;
+  margin: 0;
+  padding: 3px var(--space-4);
+  border: 1px solid var(--border-strong);
+  border-radius: var(--radius-compact);
+  background: var(--surface-panel-raised);
+  color: var(--text-secondary);
+  font: inherit;
+  line-height: 1.25;
+  cursor: pointer;
+}
+.source-editor .cm-tooltip-lint .cm-diagnosticAction:hover {
+  background: var(--control-hover-surface);
+  color: var(--text-primary);
+}
+.source-editor .cm-tooltip-lint .cm-diagnostic-error { border-left-color: var(--status-danger); }
+.source-editor .cm-tooltip-lint .cm-diagnostic-warning { border-left-color: var(--lattice-syntax-attribute); }
+.source-editor .cm-tooltip-lint .cm-diagnostic-info { border-left-color: var(--control-active); }
+.source-editor .cm-tooltip-lint .cm-diagnosticSource { flex: 1 0 100%; color: var(--text-tertiary); font-size: 0.9em; }
+.texlab-hover-card {
+  width: min(380px, calc(100vw - 32px));
+  max-height: 240px;
+  overflow: auto;
+  padding: var(--space-5) var(--space-6);
+  color: var(--text-secondary);
+  font-family: var(--editor-font);
+  font-size: var(--type-caption-size);
+  line-height: 1.45;
+  white-space: pre-wrap;
+}
+/* A citation key's card (latex-hover-cards; the PDF's citation links share
+   it): the key as a quiet chip, the entry set as a reference list sets it,
+   facts as badges, then its actions on a hairline. Every line wraps or
+   truncates inside the card, which narrows with the editor. */
+.citation-hover-card {
+  width: min(360px, calc(100vw - 32px));
+  padding: var(--space-6) var(--space-8) var(--space-4);
+  max-height: 100%;
+  overflow-y: auto;
+  overscroll-behavior: contain;
+  container-type: inline-size;
+  font-family: var(--ui-font);
+  font-size: var(--type-body-size);
+  line-height: var(--type-body-line-height);
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+}
+/* A card taller than the room CodeMirror gives it scrolls, its lines whole. */
+.citation-hover-card > * { flex-shrink: 0; }
+/* Long entries stay a card, not a page: the title keeps four lines, the
+   byline and venue two, and the card names the whole title to assistive
+   tech and in its tooltip. */
+.citation-card-title,
+.citation-card-authors,
+.citation-card-venue {
+  display: -webkit-box;
+  -webkit-box-orient: vertical;
+  overflow: hidden;
+}
+.citation-card-title { -webkit-line-clamp: 4; }
+.citation-card-authors,
+.citation-card-venue { -webkit-line-clamp: 2; }
+/* Opened from the keyboard, the card is CodeMirror's tooltip itself rather
+   than a section of the hover host, so it drops the base theme's border. */
+.source-editor .cm-tooltip.citation-hover-card { border: 0; }
+.citation-card-key {
+  max-width: 100%;
+  margin-bottom: var(--space-2);
+  padding: var(--gap-hairline) var(--space-3);
+  overflow: hidden;
+  border-radius: var(--radius-compact);
+  background: var(--control-hover-surface);
+  color: var(--text-primary);
+  font-family: var(--editor-font);
+  font-size: var(--type-micro-size);
+  line-height: var(--type-micro-line-height);
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.citation-card-title {
+  max-width: 100%;
+  color: var(--text-primary);
+  font-family: var(--reading-font);
+  font-size: var(--type-title-size);
+  font-weight: var(--weight-regular);
+  line-height: var(--type-title-line-height);
+  overflow-wrap: break-word;
+  text-wrap: pretty;
+}
+/* In a narrow editor the title steps down to the reading size, so its words
+   break between themselves rather than inside one. */
+@container (max-width: 260px) {
+  .citation-card-title { font-size: var(--type-typeset-size); line-height: var(--type-body-line-height); }
+}
+button.citation-card-title { padding: 0; border: 0; background: transparent; text-align: start; cursor: pointer; }
+button.citation-card-title:hover, button.citation-card-title:focus-visible { text-decoration: underline; text-decoration-thickness: 1px; text-underline-offset: 3px; }
+.citation-card-authors {
+  margin-top: var(--space-1);
+  color: var(--text-secondary);
+  font-size: var(--type-caption-size);
+  line-height: var(--type-caption-line-height);
+}
+/* Italic for Latin; a CJK venue has no italic and stays upright rather than
+   being slanted by the browser. */
+.citation-card-venue {
+  color: var(--text-secondary);
+  font-family: var(--reading-font);
+  font-size: var(--type-body-size);
+  font-style: italic;
+  font-synthesis: none;
+  font-variant-numeric: oldstyle-nums proportional-nums;
+  line-height: var(--type-subtitle-line-height);
+  text-wrap: pretty;
+}
+.citation-card-facts { max-width: 100%; margin-top: var(--space-4); display: flex; flex-wrap: wrap; gap: var(--space-2); }
+.citation-card-facts:empty { display: none; }
+.citation-card-fact { max-width: 100%; }
+.citation-card-fact[hidden] { display: none; }
+.citation-card-fact > span { min-width: 0; overflow: hidden; text-overflow: ellipsis; }
+.citation-card-fact svg { width: 12px; height: 12px; flex: none; fill: none; stroke: currentColor; stroke-width: 2; stroke-linecap: round; stroke-linejoin: round; }
+.citation-card-actions {
+  align-self: stretch;
+  margin: var(--space-5) calc(-1 * var(--space-4)) 0;
+  padding-top: var(--space-4);
+  border-top: 1px solid var(--border-subtle);
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--space-2);
+}
+.citation-card-actions .ui-button { padding-inline: var(--space-4); }
+.citation-card-actions kbd { color: var(--text-secondary); font: inherit; }
+.reference-hover-card { width: min(360px, calc(100vw - 32px)); padding: var(--space-5) var(--space-6) 11px; }
+.reference-hover-card small, .reference-hover-card strong, .reference-hover-card em { display: block; }
+.reference-hover-card small { margin-bottom: 5px; color: var(--control-active); font-family: var(--editor-font); font-size: var(--type-micro-size); text-transform: capitalize; }
+.reference-hover-card strong { font-size: var(--type-caption-size); font-weight: 650; line-height: 1.35; }
+.reference-hover-card pre { max-height: 132px; margin: 7px 0 0; overflow: hidden; color: var(--text-secondary); font-family: var(--editor-font); font-size: var(--type-micro-size); line-height: 1.45; white-space: pre-wrap; }
+.reference-hover-card em { margin-top: var(--space-3); color: var(--text-tertiary); font-size: var(--type-micro-size); font-style: normal; }
+.reference-hover-number { display: block; margin-top: var(--space-2); color: var(--text-secondary); font-size: var(--type-micro-size); font-variant-numeric: tabular-nums; }
+.reference-hover-math { max-height: 160px; margin-top: 7px; overflow: auto; color: var(--text-primary); }
+.reference-hover-math .katex-display { margin: 0; }
+/* The live math preview (math-preview.ts): KaTeX's picture of the formula at
+   the caret, on the frosted card just above it. `--math-preview-room` is the
+   editor's width less its margins, set as the card opens; a formula wider or
+   taller than the card scrolls inside it. It shows only while the editor has
+   focus: the caret it follows is the one being typed at. */
+.source-editor .cm-tooltip.math-preview-card {
+  --math-preview-room: 560px;
+  max-width: min(560px, var(--math-preview-room));
+  max-height: min(240px, 40vh);
+  padding: var(--space-4) var(--space-6);
+  overflow: auto;
+  overscroll-behavior: contain;
+  border: 0;
+}
+.source-editor .cm-editor:not(.cm-focused) > .cm-tooltip.math-preview-card { visibility: hidden; }
+.math-preview-card .katex-display { margin: 0; }
+/* Half-typed math KaTeX cannot set yet keeps its last picture, quietly dimmed. */
+.math-preview-body { transition: opacity var(--motion-fast); }
+.math-preview-card[data-stale] .math-preview-body { opacity: .5; }
+.symbol-palette { width: min(340px, calc(100vw - 32px)); padding: var(--space-4); }
+.symbol-palette input { width: 100%; height: 28px; margin-bottom: var(--space-3); border: 1px solid var(--border-subtle); border-radius: var(--radius-control); background: var(--editor-bg); padding-inline: var(--space-4); color: var(--text-primary); font-size: var(--type-caption-size); }
+.symbol-palette-grid { display: grid; grid-template-columns: repeat(8, 1fr); max-height: 216px; overflow-y: auto; }
+.symbol-palette-option { height: 36px; border: 0; background: transparent; border-radius: var(--radius-control); color: var(--text-primary); font-size: var(--type-caption-size); overflow: hidden; }
+.symbol-palette-option:hover, .symbol-palette-option[aria-selected="true"] { background: var(--control-hover-surface); }
+.symbol-palette-empty { margin: var(--space-3) 0 0; color: var(--text-tertiary); font-size: var(--type-micro-size); }
+.reference-hover-media { max-height: 190px; margin: -2px -3px 9px; overflow: hidden; border-radius: var(--radius-icon); background: var(--editor-bg); color: var(--text-tertiary); display: grid; place-items: center; font-size: var(--type-micro-size); }
+.reference-hover-media.loading { min-height: 72px; display: flex; flex-direction: column; align-items: center; justify-content: center; gap: var(--gap-inline-tight); }
+.reference-hover-media img {
+  display: block;
+  max-width: 100%;
+  max-height: 190px;
+  object-fit: contain;
+  outline: 1px solid oklch(0 0 0 / 0.1);
+  outline-offset: -1px;
+}
+:root[data-theme="dark"] .reference-hover-media img {
+  outline-color: oklch(1 0 0 / 0.1);
+}
+.reference-hover-media > .reference-hover-loader { width: 18px; height: 18px; opacity: .72; }
+:root[data-theme="dark"] .reference-hover-media > .reference-hover-loader { filter: invert(1); }
+.source-editor.figure-drop-active { box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--control-active) 24%, transparent); }
+.source-editor.file-drop-active {
+  box-shadow:
+    inset 0 0 0 1px color-mix(in srgb, var(--control-active) 30%, transparent),
+    inset 0 0 24px color-mix(in srgb, var(--control-active) 4%, transparent);
+}
+/* Keep the saved grid proportions intact, but resize the adjacent pane boxes
+   with the grip. Both surfaces return on the same curve, without a gap. The
+   panes are the first and last of the three children: :nth-child would be
+   tried on every element inside them (a long visual document's blocks
+   included) and make each insertion restyle all following siblings. */
+.split-canvas > :first-child, .split-canvas > :last-child { min-width: 0; max-width: none; transition: width var(--motion-slow), margin-left var(--motion-slow); }
+.split-canvas > :first-child { width: calc(100% + var(--split-resizer-offset)); }
+.split-canvas > :last-child { margin-left: var(--split-resizer-offset); width: calc(100% - var(--split-resizer-offset)); }
+.split-resizer { position: relative; z-index: 2; width: 1px; min-height: 0; cursor: col-resize; background: var(--border-subtle); outline: none; touch-action: none; transform: translateX(var(--split-resizer-offset)); transition: transform var(--motion-slow), background var(--motion-fast), box-shadow var(--motion-fast); }
+.split-resizer::after { content: ""; position: absolute; inset: 0 -4px; }
+.split-resizer:hover, .split-resizer:focus-visible, .resizing-split .split-resizer { background: var(--border-strong); box-shadow: 0 0 0 .5px var(--border-strong); }
+.resizing-split .split-canvas > * { transition: none; }
+/* The drag's cursor, and no selection or hover under the pointer, from a
+   shield over the window: on the body itself they would be inherited, and
+   WebKit restyled the whole document on the press and the release. */
+body.resizing-split::after { content: ""; position: fixed; inset: 0; z-index: var(--z-drag-ghost); cursor: col-resize; user-select: none; -webkit-user-select: none; }
+.markdown-preview { height: 100%; background: var(--editor-bg); color: var(--text-primary); }
+/* A .bib file's reference list (papers/bib-visual-editor.css draws its inside). */
+.bib-preview { height: 100%; min-width: 0; min-height: 0; background: var(--editor-bg); }
+.markdown-preview-content { min-width: 100%; min-height: 100%; padding: var(--space-16) max(var(--space-12), calc((100% - 760px) / 2)); }
+/* The visual editor centers its own measure, so a paper's editor spans the
+   full pane and the preview-content 760px inline padding is dropped for it. */
+.markdown-preview-content:has(> .paper-visual-header) { padding-inline: 0; }
+/* Aligned with the visual editor's centered writing column beneath it. */
+.paper-visual-header { box-sizing: border-box; max-width: calc(760px + 2 * var(--space-12)); margin: 0 auto var(--space-16); padding-inline: var(--space-12); font-family: var(--ui-font); }
+.paper-visual-header h1 { margin: 0; color: var(--text-primary); font-family: var(--reading-font); font-size: var(--type-display-size); font-weight: var(--weight-semibold); line-height: 1.2; letter-spacing: -0.02em; overflow-wrap: anywhere; text-wrap: balance; }
+.paper-visual-header p { margin: var(--space-6) 0 0; color: var(--text-secondary); font-size: var(--type-body-size); line-height: var(--type-body-line-height); overflow-wrap: anywhere; }
+.paper-visual-header .paper-visual-eligibility { margin: 0 0 var(--space-8); padding: var(--space-3) var(--space-4); border-radius: var(--radius-compact); background: var(--status-warning-soft); }
+.paper-reader-shell { min-width: 0; min-height: 0; display: flex; flex-direction: column; overflow: hidden; background: var(--editor-bg); }
+/* The size container is the header, the only thing its query restyles: a
+   container's width change restyles all of its contents in WebKit, and the
+   shell holds the whole paper. */
+.paper-reader-header { container: paper-reader / inline-size; min-height: var(--toolbar-height); flex: none; padding-inline: var(--space-8) var(--space-5); border-bottom: 1px solid var(--border-subtle); display: flex; align-items: center; justify-content: flex-end; gap: var(--space-8); }
+/* The Paper's identity on one line: the title ellipsizes as the panel
+   narrows, while the authors keep their natural width (capped so a long
+   corporate author cannot crowd the title out) until the strip is too narrow
+   for both, when they go entirely rather than dwindle to an initial. The
+   source is the way to the original, so it never shrinks away: it keeps its
+   natural width while the title yields, up to a cap that leaves the title
+   room however long a DOI runs, and only then its label truncates, never
+   below a floor that still holds the separator, some label and the icon. */
+.paper-identity { min-width: 0; flex: 1 1 auto; margin: 0; display: flex; align-items: baseline; color: var(--text-tertiary); font-size: var(--type-caption-size); line-height: var(--type-caption-line-height); white-space: nowrap; }
+.paper-identity > * { min-width: 0; overflow: hidden; text-overflow: ellipsis; }
+.paper-identity-title { flex: 0 1 auto; color: var(--text-primary); font-size: var(--type-body-compact-size); font-weight: var(--weight-medium); animation: paper-identity-in var(--motion-moderate); }
+.paper-identity-authors { flex: none; max-width: 30%; color: var(--text-secondary); }
+.paper-identity-source { flex: none; min-width: 5em; max-width: 40%; }
+.paper-identity > * + *::before { content: "·"; margin-inline: var(--space-3); color: var(--text-tertiary); }
+/* The source opens the original, so it reads as text until pointed at. */
+button.paper-identity-source { height: auto; padding: 0; border: 0; border-radius: var(--radius-compact); background: transparent; color: inherit; display: inline-flex; align-items: baseline; font: inherit; cursor: pointer; transition: color var(--motion-fast); }
+.paper-identity-source > span { min-width: 0; overflow: hidden; text-overflow: ellipsis; }
+.paper-identity-source > svg { flex: none; align-self: center; margin-inline-start: var(--space-2); opacity: 0; transition: opacity var(--motion-fast); }
+button.paper-identity-source:is(:hover, :focus-visible) { color: var(--text-primary); }
+button.paper-identity-source:is(:hover, :focus-visible) > svg { opacity: 1; }
+button.paper-identity-source:focus-visible { outline: var(--focus-ring-width) solid var(--focus-ring); outline-offset: var(--focus-ring-offset); }
+@keyframes paper-identity-in { from { opacity: 0; translate: 0 var(--space-2); } }
+/* The actions never shrink: squeezed, the group's buttons would overflow it
+   leftwards over the source, and a click on its arrow would hit the PDF. The
+   identity beside it is what yields. */
+.paper-local-actions { flex: none; display: flex; align-items: center; justify-content: flex-end; gap: var(--space-2); }
+.paper-local-action { min-width: var(--control-size-icon); height: var(--control-size-icon); padding: 0 var(--space-4); border: 0; border-radius: var(--radius-icon); background: transparent; color: var(--text-secondary); display: inline-flex; align-items: center; justify-content: center; gap: var(--gap-inline-tight); font-size: var(--type-micro-size); font-weight: var(--weight-semibold); white-space: nowrap; }
+.paper-local-action-icon { width: var(--control-size-icon); padding: 0; }
+.paper-local-action:hover { background: var(--control-hover-surface); color: var(--text-primary); }
+.paper-local-action:focus-visible { outline: var(--focus-ring-width) solid var(--focus-ring); outline-offset: var(--focus-ring-offset); }
+.paper-reader-shell > .markdown-preview, .paper-reader-shell > .pdf-preview, .paper-reader-shell > .paper-pdf-preview { flex: 1 1 0; width: 100%; min-height: 0; }
+.paper-pdf-preview { display: flex; overflow: hidden; }
+.paper-pdf-preview > .pdf-preview { flex: 1 1 0; width: 100%; min-width: 0; min-height: 0; }
+@container paper-reader (max-width: 520px) {
+  .paper-local-action { width: var(--control-size-icon); padding-inline: 0; }
+  .paper-local-action span { display: none; }
+}
+@container paper-reader (max-width: 440px) {
+  .paper-identity-authors { display: none; }
+}
+/* Above the block gutter's controls (block-controls.tsx), which can reach under it in a narrow pane. */
+.visual-heading-rail { position: sticky; z-index: var(--z-editor-popover); top: 50%; width: 0; height: 0; margin-inline-start: var(--space-6); overflow: visible; pointer-events: none; }
+.visual-heading-rail-nav { position: relative; display: grid; grid-auto-rows: var(--control-size-icon-compact); width: calc(var(--space-12) + var(--space-12)); color: var(--text-tertiary); translate: 0 -50%; pointer-events: auto; user-select: none; }
+.visual-heading-rail-item { display: flex; width: calc(var(--space-12) + var(--space-12)); height: var(--control-size-icon-compact); align-items: center; justify-content: flex-start; padding: 0; border: 0; outline: none; background: transparent; color: color-mix(in srgb, var(--text-tertiary) 62%, transparent); }
+.visual-heading-rail-item[data-depth="1"] { padding-inline-start: var(--space-2); }
+.visual-heading-rail-item[data-depth="2"] { padding-inline-start: var(--space-4); }
+.visual-heading-rail-item:hover, .visual-heading-rail-item:focus-visible { color: var(--text-secondary); }
+.visual-heading-rail-item[aria-current="location"] { color: var(--text-primary); }
+.visual-heading-rail-item:focus-visible { border-radius: var(--radius-compact); outline: var(--focus-ring-width) solid var(--focus-ring); outline-offset: calc(0px - var(--focus-ring-width)); }
+.visual-heading-rail-tick { display: block; width: var(--space-16); height: calc(var(--space-1) / 2); border-radius: var(--radius-pill); background: currentColor; opacity: .52; transform-origin: left center; }
+.visual-heading-rail-item[data-depth="0"] .visual-heading-rail-tick { height: var(--space-1); opacity: .8; }
+.visual-heading-rail-item[data-depth="1"] .visual-heading-rail-tick { opacity: .66; }
+[dir="rtl"] .visual-heading-rail-tick { transform-origin: right center; }
+.visual-heading-rail-tick.is-active, .visual-heading-rail-tick.is-highlighted { opacity: 1; }
+.visual-heading-rail-previews { position: absolute; inset: 0; display: grid; grid-auto-rows: var(--control-size-icon-compact); width: 100%; pointer-events: none; }
+.visual-heading-rail-preview-row { position: relative; display: flex; align-items: center; }
+.visual-heading-rail-preview-anchor { position: absolute; z-index: var(--z-editor-popover); top: 50%; inset-inline-start: calc(100% + var(--space-3)); width: max-content; max-width: min(320px, calc(100vw - 96px)); translate: 0 -50%; }
+.visual-heading-rail-preview-card { box-shadow: var(--elevation-popover); max-width: inherit; padding: var(--space-5) var(--space-6); border-radius: var(--radius-panel); background: color-mix(in srgb, var(--surface-panel-raised) 96%, transparent); color: var(--text-primary); font: var(--type-caption-weight) var(--type-caption-size)/var(--type-caption-line-height) var(--ui-font); overflow-wrap: anywhere; backdrop-filter: blur(14px); }
+
+/* The source editor's outline rail (latex-outline-rail.tsx): a column of marks
+   between the text and the overlay scrollbar, which keeps its own 10px edge
+   and stacks above the rail (--z-editor-scrollbar), so dragging the thumb never
+   lands on the rail or its outline. The rail spans the pane without taking its
+   pointer; only the marks and the open outline do. The text gives up the
+   rail's width (on the scroller, as focus mode pads it, so the gutter and
+   the editor's layers keep measuring from its edge). */
+.source-editor { --outline-rail-clearance: calc(var(--space-16) + var(--space-2)); }
+.source-editor:has(> .latex-outline-rail:not([data-narrow])) .cm-scroller { padding-inline-end: var(--outline-rail-clearance); }
+.focus-mode .trellis-editor-host .source-editor:has(> .latex-outline-rail:not([data-narrow])) .cm-scroller {
+  padding-inline-end: max(var(--outline-rail-clearance), calc((100% - var(--focus-mode-measure)) / 2));
+}
+.latex-outline-rail { position: absolute; z-index: var(--z-editor-popover); inset-block: var(--space-10) var(--space-6); inset-inline: var(--space-6) 10px; display: flex; flex-direction: column; align-items: flex-end; pointer-events: none; }
+.latex-outline-rail-marks { display: grid; grid-auto-rows: minmax(var(--space-1), var(--space-4)); align-items: center; justify-items: end; width: var(--hit-area-min); min-height: 0; max-height: 100%; padding: var(--space-2) var(--space-3); overflow: hidden; border: 0; border-radius: var(--radius-compact); background: transparent; color: color-mix(in srgb, var(--text-secondary) 60%, transparent); pointer-events: auto; cursor: default; }
+.latex-outline-rail[data-narrow] { display: none; }
+.latex-outline-rail-marks:hover, .latex-outline-rail-marks:focus-visible, .latex-outline-rail[data-open] .latex-outline-rail-marks { color: var(--text-secondary); }
+.latex-outline-rail-mark { display: block; width: calc(var(--space-6) + var(--space-1)); height: var(--space-1); border-radius: var(--radius-pill); background: currentColor; }
+.latex-outline-rail-mark[data-depth="1"] { width: var(--space-4); }
+.latex-outline-rail-mark[data-depth="2"] { width: var(--space-2); }
+.latex-outline-rail-mark[data-current] { background: var(--mark-weft); }
+.latex-outline-rail-panel {
+  --surface-radius: var(--radius-panel);
+  --surface-inset: var(--space-2);
+  position: absolute;
+  top: 0;
+  inset-inline-end: 0;
+  display: flex;
+  flex-direction: column;
+  width: min(280px, 100%);
+  max-height: 100%;
+  padding: var(--surface-inset);
+  border-radius: var(--surface-radius);
+  background: var(--surface-elevated);
+  box-shadow: var(--elevation-popover);
+  color: var(--text-primary);
+  font: var(--type-body-weight) var(--type-body-size)/var(--type-body-line-height) var(--ui-font);
+  pointer-events: auto;
+}
+/* It grows out of the marks at its top right corner, as the review card grows
+   out of its pip. */
+.latex-outline-rail-panel.popup-motion { --popup-motion-from: translateX(6px); --popup-motion-origin: top right; }
+.latex-outline-rail-header { display: flex; flex: none; align-items: baseline; justify-content: space-between; gap: var(--gap-inline); padding: var(--space-3) var(--pad-inline-control-tight) var(--space-2); color: var(--text-secondary); font-size: var(--type-caption-size); line-height: var(--type-caption-line-height); }
+.latex-outline-rail-header > span:first-child { flex: none; }
+.latex-outline-rail-document { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+/* The panel only caps its height, so the viewport's 100% would resolve to
+   nothing and the list would grow past the panel unscrolled: it flexes. */
+.latex-outline-rail-scroll { --fluid-hover-fill: var(--control-hover-surface); flex: 1 1 auto; min-height: 0; display: flex; flex-direction: column; }
+.latex-outline-rail-scroll [data-slot="scroll-area-viewport"] { flex: 1 1 auto; height: auto; min-height: 0; overscroll-behavior: contain; }
+.latex-outline-rail-list { margin: 0; padding: 0; list-style: none; }
+/* A list long enough to scroll gives the overlay scrollbar (scroll-area.css)
+   its own 10px lane: the rows' fill and their page numbers stop where the
+   track starts instead of running under the thumb. */
+.latex-outline-rail-scroll [data-has-vertical-overflow="true"] .latex-outline-rail-list { padding-inline-end: var(--space-5); }
+/* align-content centres the one line in a row taller than it: baseline
+   alignment alone sets it at the top of the stretched track. */
+.latex-outline-rail-row { display: grid; grid-template-columns: 2.5ch minmax(0, 1fr) auto; align-items: baseline; align-content: center; column-gap: var(--gap-inline); width: 100%; min-height: var(--control-height-compact); padding: var(--space-2) var(--pad-inline-control-tight); border: 0; border-radius: calc(var(--nested-radius) * var(--nested-corner-smoothing, 1)); corner-shape: var(--nested-corner-shape, round); background: transparent; color: inherit; font: inherit; text-align: start; }
+.latex-outline-rail-row[data-depth="1"], .latex-outline-rail-row[data-depth="2"] { grid-template-columns: max-content minmax(0, 1fr) auto; color: var(--text-secondary); font-size: var(--type-caption-size); line-height: var(--type-caption-line-height); }
+.latex-outline-rail-row[data-depth="1"] { padding-inline-start: calc(var(--pad-inline-control-tight) + var(--space-8)); }
+.latex-outline-rail-row[data-depth="2"] { padding-inline-start: calc(var(--pad-inline-control-tight) + var(--space-16)); }
+.latex-outline-rail-row:hover:not([data-item-selected="true"]) { background: var(--control-hover-surface); }
+.latex-outline-rail-row:focus-visible { outline-offset: calc(0px - var(--focus-ring-width)); }
+.latex-outline-rail-row[data-item-selected="true"] { background: var(--control-pressed-surface); font-weight: 500; }
+.latex-outline-rail-number, .latex-outline-rail-page { color: var(--text-secondary); font-variant-numeric: tabular-nums; white-space: nowrap; }
+.latex-outline-rail-page { font-size: var(--type-caption-size); line-height: var(--type-caption-line-height); }
+.latex-outline-rail-title { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+@media (prefers-contrast: more) {
+  .latex-outline-rail-marks { color: var(--text-secondary); }
+}
+
+.editor-comment-draft {
+  background-color: var(--control-active-soft);
+  border-bottom: 2px solid var(--control-active);
+  border-radius: 2px;
+  box-decoration-break: clone;
+  -webkit-box-decoration-break: clone;
+}
+
+/* The visual editor's emoji picker: keep it on the same typography,
+   compact-control geometry and neutral surfaces as the Project/PDF tools. */
+[data-testid="emoji-picker-popover"] {
+  z-index: var(--z-radix-popper);
+  overflow: hidden;
+  border-color: var(--border-subtle);
+  border-radius: var(--radius-panel);
+  background: var(--surface-panel-raised);
+  font-family: var(--ui-font);
+}
+
+[data-testid="emoji-picker-popover"] input {
+  height: var(--search-control-height-compact);
+  border-color: var(--search-control-border-color);
+  border-radius: var(--search-control-radius);
+  background: var(--search-control-background);
+  font-family: var(--ui-font);
+  font-size: var(--type-caption-size);
+}
+.visual-node-source-error { color: var(--status-danger); font-size: var(--type-micro-size); line-height: 1.45; }
+@media (forced-colors: active) {
+  .visual-heading-rail-item:focus-visible { outline-color: Highlight; }
+  .visual-heading-rail-preview-card { border: 1px solid CanvasText; }
+  .latex-outline-rail-marks { color: CanvasText; }
+  .latex-outline-rail-mark[data-current] { background: Highlight; }
+  .latex-outline-rail-panel { border: 1px solid CanvasText; }
+}
+.html-preview { position: relative; height: 100%; background: white; }
+.html-preview-frame { display: block; width: 100%; height: 100%; border: 0; background: white; }
+.html-preview-zoom-controls { box-shadow: var(--elevation-raised); position: absolute; z-index: 2; inset-block-end: var(--space-3); inset-inline-start: var(--space-3); padding: var(--space-1); border-radius: var(--radius-panel); background: color-mix(in srgb, var(--surface-panel-raised) 94%, transparent); font-size: var(--type-micro-size); backdrop-filter: blur(12px); }
+@media (pointer: fine) { .html-preview-frame { width: calc(100% + 10px); } }
+@media (pointer: coarse) { .html-preview-scrollbar { display: none; } }
+.asset-preview { height: 100%; min-height: 0; display: flex; flex-direction: column; background: var(--surface-panel); }
+.asset-preview-heading { height: 38px; flex: none; padding: 0 13px; border-bottom: 1px solid var(--border-subtle); display: flex; align-items: center; gap: var(--gap-inline); color: var(--text-secondary); font-size: var(--type-micro-size); }
+.asset-preview-heading span { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.asset-preview-zoom-controls { flex: none; display: flex; align-items: center; gap: var(--gap-hairline); }
+.asset-preview-heading > .asset-preview-zoom-controls { margin-left: auto; }
+.asset-preview-zoom-controls button { width: var(--toolbar-icon-width); height: var(--toolbar-icon-height); border-radius: var(--toolbar-icon-radius); padding: 0; background: transparent; color: var(--text-secondary); display: grid; place-items: center; }
+.asset-preview-zoom-controls button:hover:not(:disabled) { background: var(--toolbar-hover-surface); color: var(--text-primary); }
+.asset-preview-zoom-value { position: relative; width: 44px; min-width: 44px; height: var(--control-height-compact); border-radius: var(--radius-compact); display: inline-flex; align-items: center; justify-content: center; color: var(--text-secondary); }
+.asset-preview-zoom-value:focus-within { background: var(--field-control-background); box-shadow: inset 0 0 0 var(--field-control-border-width) var(--field-control-interactive-border-color); }
+.asset-preview-zoom-value input { width: 100%; border: 0; outline: 0; padding: 0 var(--space-5) 0 var(--space-1); background: transparent; color: inherit; font: inherit; text-align: center; font-variant-numeric: tabular-nums; overflow-x: hidden; }
+.asset-preview-zoom-value span { position: absolute; right: 8px; width: 7px; text-align: left; pointer-events: none; }
+.asset-preview-stage { min-height: 0; flex: 1; background-color: color-mix(in srgb, var(--surface-panel) 88%, var(--border-subtle)); background-image: linear-gradient(45deg, color-mix(in srgb, var(--border-subtle) 42%, transparent) 25%, transparent 25%), linear-gradient(-45deg, color-mix(in srgb, var(--border-subtle) 42%, transparent) 25%, transparent 25%), linear-gradient(45deg, transparent 75%, color-mix(in srgb, var(--border-subtle) 42%, transparent) 75%), linear-gradient(-45deg, transparent 75%, color-mix(in srgb, var(--border-subtle) 42%, transparent) 75%); background-size: 20px 20px; background-position: 0 0, 0 10px, 10px -10px, -10px 0; }
+.asset-preview-stage-content { min-width: 100%; min-height: 100%; padding: 28px; display: grid; place-items: center; }
+.asset-preview-stage img {
+  display: block;
+  max-width: min(100%, 1100px);
+  max-height: 100%;
+  object-fit: contain;
+  border-radius: 3px;
+  outline: 1px solid oklch(0 0 0 / 0.1);
+  outline-offset: -1px;
+  filter: drop-shadow(0 10px 24px rgba(0, 0, 0, .11));
+}
+:root[data-theme="dark"] .asset-preview-stage img {
+  outline-color: oklch(1 0 0 / 0.1);
+}
+.asset-preview-unsupported { color: var(--text-tertiary); display: grid; place-items: center; gap: var(--space-4); font-size: var(--type-caption-size); }
+/* Keep tldraw's high internal layers below app-level right drawers. */
+.board-editor-root { position: relative; isolation: isolate; flex: 1 1 0; min-width: 0; min-height: 0; overflow: hidden; }
+
+.spreadsheet-editor-root {
+  position: relative;
+  isolation: isolate;
+  flex: 1 1 0;
+  width: 100%;
+  min-width: 0;
+  min-height: 0;
+  overflow: hidden;
+  border-color: var(--border-subtle);
+  outline-color: var(--text-tertiary);
+  background: var(--editor-bg);
+  color: var(--text-primary);
+  font-family: var(--ui-font);
+  font-size: var(--editor-font-size);
+  font-weight: var(--weight-regular);
+}
+.spreadsheet-editor-error {
+  display: grid;
+  place-content: center;
+  gap: var(--space-2);
+  padding: var(--space-6);
+  color: var(--text-secondary);
+  text-align: center;
+}
+.spreadsheet-editor-error strong { color: var(--text-primary); }
+.spreadsheet-univer-host { position: absolute; inset: 0; background: var(--editor-bg); color: inherit; font: inherit; }
+.spreadsheet-univer-host [data-u-comp="workbench-layout"],
+.spreadsheet-univer-host button,
+.spreadsheet-univer-host input,
+.spreadsheet-univer-host textarea { font-family: inherit; }
+/* Univer owns the spreadsheet sidebars, so they cannot use Lattice's React
+   CloseButton or ScrollArea directly. Match those primitives at this host seam
+   for every sheet sidebar rather than special-casing the shortcut panel. */
+.spreadsheet-univer-host [data-u-comp="sidebar"] > section > header > button[aria-label="Close sidebar"] {
+  width: var(--control-size-icon);
+  height: var(--control-size-icon);
+  margin: 0;
+  padding: 0;
+  flex: none;
+  border: 0;
+  border-radius: var(--radius-icon);
+  background: transparent !important;
+  color: var(--text-secondary) !important;
+  display: inline-grid;
+  place-items: center;
+  line-height: 0;
+  cursor: default;
+  box-shadow: none !important;
+  transition: color var(--motion-fast),
+    background-color var(--motion-fast);
+}
+.spreadsheet-univer-host [data-u-comp="sidebar"] > section > header > button[aria-label="Close sidebar"]:hover {
+  background: var(--control-hover-surface) !important;
+  color: var(--text-primary) !important;
+}
+.spreadsheet-univer-host [data-u-comp="sidebar"] > section > header > button[aria-label="Close sidebar"]:active {
+  background: var(--control-pressed-surface) !important;
+}
+.spreadsheet-univer-host [data-u-comp="sidebar"] > section > header > button[aria-label="Close sidebar"]:focus-visible:not([data-pointer-focus]) {
+  outline: var(--focus-ring-width) solid var(--focus-ring);
+  outline-offset: var(--focus-ring-offset);
+}
+.spreadsheet-univer-host [data-u-comp="sidebar"] > section > header > button[aria-label="Close sidebar"] > svg {
+  display: none;
+}
+.spreadsheet-univer-host [data-u-comp="sidebar"] > section > header > button[aria-label="Close sidebar"]::before {
+  width: 16px;
+  height: 16px;
+  background: currentColor;
+  content: "";
+  -webkit-mask: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24'%3E%3Cpath d='M18 6 6 18M6 6l12 12' fill='none' stroke='black' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'/%3E%3C/svg%3E") center / contain no-repeat;
+  mask: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24'%3E%3Cpath d='M18 6 6 18M6 6l12 12' fill='none' stroke='black' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'/%3E%3C/svg%3E") center / contain no-repeat;
+}
+
+/* The sidebar and the function picker's second scroll viewport inside it hide
+   their native bars; ExternalScrollbar draws the same 4px-to-6px overlay used
+   by the rest of Lattice. */
+.spreadsheet-univer-host [data-u-comp="sheets-formula-functions-panel"] ul.univer-overflow-y-auto,
+.spreadsheet-univer-host [data-u-comp="sidebar"] > section {
+  -ms-overflow-style: none;
+  scrollbar-width: none !important;
+}
+.spreadsheet-univer-host [data-u-comp="sheets-formula-functions-panel"] ul.univer-overflow-y-auto::-webkit-scrollbar,
+.spreadsheet-univer-host [data-u-comp="sidebar"] > section::-webkit-scrollbar {
+  display: none !important;
+  width: 0 !important;
+  height: 0 !important;
+}
+/* Univer's right-sidebar layer is z-index 100. Keep the replacement scrollbar
+   one layer above it; the spreadsheet root isolates this local stack from the
+   rest of the app. */
+.spreadsheet-editor-root > .external-scrollbar,
+.spreadsheet-functions-scrollbar-surface {
+  z-index: var(--z-spreadsheet-scrollbar);
+}
+.spreadsheet-editor-root:not(:has(.spreadsheet-univer-host [data-u-comp="sidebar"][aria-expanded="true"])) > .external-scrollbar {
+  display: none;
+}
+/* Univer renders shortcut modifiers as text inside <kbd>. One step up the
+   Lattice type scale keeps ⌘, ⇧, and the other key glyphs legible without
+   enlarging the surrounding 24px keycap. */
+.spreadsheet-univer-host [data-u-comp="sidebar"] kbd {
+  font-family: var(--ui-font);
+  font-size: var(--type-body-size);
+  font-weight: var(--weight-medium);
+}
+/* Keep the function picker's replacement track aligned with the picker's inset. */
+.spreadsheet-functions-scrollbar-surface {
+  position: absolute;
+  inset: 0 var(--space-8) 0 0;
+  pointer-events: none;
+}
+
+/* Sidebar form controls come from Univer, but their geometry and states should
+   read as the same controls used by Lattice settings. This covers Number
+   Formats as well as the category selector in All Functions. */
+.spreadsheet-univer-host [data-u-comp="sidebar"] [data-u-comp="select"] {
+  width: 100%;
+  min-width: 0;
+  height: var(--control-height-default);
+  border: var(--form-control-border-width) solid var(--form-control-border-color) !important;
+  border-radius: var(--form-control-select-radius) !important;
+  outline: none !important;
+  padding-inline: var(--field-control-padding-inline);
+  background: var(--form-control-background) !important;
+  color: var(--text-primary) !important;
+  font: var(--type-body-weight) var(--type-body-compact-size)/var(--type-body-compact-line-height) var(--ui-font);
+  text-align: start;
+  box-shadow: none !important;
+}
+.spreadsheet-univer-host [data-u-comp="sidebar"] [data-u-comp="select"]:hover,
+.spreadsheet-univer-host [data-u-comp="sidebar"] [data-u-comp="select"][data-state="open"] {
+  border-color: var(--field-control-interactive-border-color) !important;
+}
+.spreadsheet-univer-host [data-u-comp="sidebar"] [data-u-comp="select"] > div {
+  color: var(--text-primary) !important;
+  text-align: start;
+}
+.spreadsheet-univer-host [data-u-comp="sidebar"] [data-u-comp="button"] {
+  height: var(--control-height-default);
+  margin: 0;
+  padding-inline: var(--space-6);
+  border: 1px solid var(--border-strong) !important;
+  border-radius: var(--radius-control) !important;
+  outline: none;
+  background: var(--surface-panel-raised) !important;
+  color: var(--text-primary) !important;
+  font: var(--type-body-compact-weight) var(--type-body-compact-size)/var(--type-body-compact-line-height) var(--ui-font);
+  box-shadow: none !important;
+  transition: color var(--motion-fast),
+    border-color var(--motion-fast),
+    background-color var(--motion-fast),
+    opacity var(--motion-fast),
+    scale var(--motion-fast);
+}
+.spreadsheet-univer-host [data-u-comp="sidebar"] [data-u-comp="button"]:not(.univer-bg-primary-600):hover:not(:disabled) {
+  background: var(--control-hover-surface) !important;
+}
+/* A sidebar panel's lead action is a panel's, not a dialog's: the tinted Button. */
+.spreadsheet-univer-host [data-u-comp="sidebar"] [data-u-comp="button"].univer-bg-primary-600 {
+  border-color: transparent !important;
+  background: var(--control-tinted-surface) !important;
+  color: var(--text-primary) !important;
+}
+.spreadsheet-univer-host [data-u-comp="sidebar"] [data-u-comp="button"].univer-bg-primary-600:hover:not(:disabled) {
+  background: var(--control-tinted-hover-surface) !important;
+}
+.spreadsheet-univer-host [data-u-comp="sidebar"] [data-u-comp="button"].univer-bg-primary-600:active:not(:disabled) {
+  scale: .96;
+}
+.spreadsheet-univer-host [data-u-comp="sidebar"] [data-u-comp="button"]:focus-visible:not([data-pointer-focus]) {
+  outline: var(--focus-ring-width) solid var(--focus-ring);
+  outline-offset: var(--focus-ring-offset);
+}
+.spreadsheet-univer-host [data-u-comp="sidebar"] [data-u-comp="button"]:disabled {
+  opacity: var(--control-disabled-opacity);
+}
+.spreadsheet-univer-host [data-u-comp="sidebar"] div:has(> [data-u-comp="button"] + [data-u-comp="button"]) {
+  gap: var(--space-4);
+}
+
+/* SelectList is used for the visible choices inside Number Formats. Preserve
+   the label's leading edge and move its selected mark to the trailing gutter,
+   matching Lattice's SelectItem contract. */
+.spreadsheet-univer-host [data-u-comp="sidebar"] ul.univer-grid.univer-list-none > li > a {
+  padding-inline: var(--space-5) calc(var(--space-8) + var(--space-5)) !important;
+  text-align: start;
+}
+.spreadsheet-univer-host [data-u-comp="sidebar"] ul.univer-grid.univer-list-none > li > a > svg.univer-absolute {
+  display: none;
+}
+
+/* Univer portals dropdowns to an anonymous body child, outside the sheet host.
+   Its data slots and prefixed utility classes provide the stable ownership
+   seam. Match Lattice's settings menu surface and trailing selection mark. */
+body [data-slot="dropdown-menu-content"].univer-text-sm,
+body [data-slot="popover-content"].univer-outline-hidden {
+  --spreadsheet-menu-radius: calc(var(--radius-icon) + var(--gap-inline-tight));
+  --spreadsheet-menu-inset: var(--gap-inline-tight);
+  --spreadsheet-menu-item-radius: calc(var(--spreadsheet-menu-radius) - var(--spreadsheet-menu-inset));
+  border: 0 !important;
+  border-radius: var(--spreadsheet-menu-radius) !important;
+  background: var(--surface-elevated) !important;
+  box-shadow: var(--elevation-popover) !important;
+  color: var(--text-primary) !important;
+}
+body [data-slot="dropdown-menu-content"].univer-text-sm {
+  padding: var(--spreadsheet-menu-inset) !important;
+}
+body [data-slot="dropdown-menu-content"].univer-text-sm :is(
+  [data-slot="dropdown-menu-item"],
+  [data-slot="dropdown-menu-radio-item"],
+  [data-slot="dropdown-menu-checkbox-item"]
+) {
+  width: 100%;
+  min-height: var(--control-height-default);
+  justify-content: flex-start;
+  gap: var(--gap-inline-tight);
+  border-radius: var(--spreadsheet-menu-item-radius);
+  padding: 0 var(--space-3) !important;
+  color: var(--text-primary) !important;
+  font: var(--type-body-weight) var(--type-body-size)/var(--type-body-line-height) var(--ui-font);
+  text-align: start;
+  transition: color var(--motion-fast),
+    background-color var(--motion-fast);
+}
+body [data-slot="dropdown-menu-content"].univer-text-sm :is(
+  [data-slot="dropdown-menu-item"],
+  [data-slot="dropdown-menu-radio-item"],
+  [data-slot="dropdown-menu-checkbox-item"]
+):focus {
+  background: var(--control-active-soft) !important;
+  color: var(--control-active) !important;
+}
+body [data-slot="dropdown-menu-content"].univer-text-sm :is(
+  [data-slot="dropdown-menu-radio-item"],
+  [data-slot="dropdown-menu-checkbox-item"]
+) {
+  padding-right: calc(var(--space-8) + var(--space-6)) !important;
+}
+body [data-slot="dropdown-menu-content"].univer-text-sm [data-slot="dropdown-menu-item"] > .univer-relative.univer-flex {
+  width: 100%;
+  min-width: 0;
+  justify-content: flex-start;
+  padding: 0 !important;
+  text-align: start;
+}
+body [data-slot="dropdown-menu-content"].univer-text-sm [data-slot="dropdown-menu-item"] > .univer-relative.univer-flex.univer-pl-6 {
+  padding-left: 0 !important;
+  padding-right: calc(var(--space-8) + var(--space-3)) !important;
+}
+body [data-slot="dropdown-menu-content"].univer-text-sm [data-slot="dropdown-menu-item"] > .univer-relative.univer-flex > svg.univer-absolute {
+  display: none;
+}
+/* Univer's Select hides its own radio indicator, so recreate the exact 14px,
+   1.5-stroke check used by Lattice SelectItem in the same trailing gutter.
+   Number Formats rows and checked menu rows draw the same mark. */
+body [data-slot="dropdown-menu-content"].univer-text-sm :is(
+  [data-slot="dropdown-menu-radio-item"],
+  [data-slot="dropdown-menu-checkbox-item"]
+) > span.univer-absolute {
+  display: none;
+}
+.spreadsheet-univer-host [data-u-comp="sidebar"] ul.univer-grid.univer-list-none > li > a:has(> svg.univer-absolute)::after,
+body [data-slot="dropdown-menu-content"].univer-text-sm [data-slot="dropdown-menu-item"] > .univer-relative.univer-flex:has(> svg.univer-absolute)::after,
+body [data-slot="dropdown-menu-content"].univer-text-sm :is(
+  [data-slot="dropdown-menu-radio-item"],
+  [data-slot="dropdown-menu-checkbox-item"]
+)[data-state="checked"]::after {
+  position: absolute;
+  top: 50%;
+  right: var(--gap-inline);
+  width: 14px;
+  height: 14px;
+  background: var(--control-active);
+  content: "";
+  transform: translateY(-50%);
+  -webkit-mask: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 14 14'%3E%3Cpath d='M2.9 7.55 5.6 10.25 11.1 3.9' fill='none' stroke='black' stroke-width='1.5' stroke-linecap='round' stroke-linejoin='round'/%3E%3C/svg%3E") center / contain no-repeat;
+  mask: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 14 14'%3E%3Cpath d='M2.9 7.55 5.6 10.25 11.1 3.9' fill='none' stroke='black' stroke-width='1.5' stroke-linecap='round' stroke-linejoin='round'/%3E%3C/svg%3E") center / contain no-repeat;
+}
+body [data-slot="dropdown-menu-content"].univer-text-sm [data-slot="dropdown-menu-item"] > .univer-relative.univer-flex:has(> svg.univer-absolute)::after {
+  top: 50% !important;
+  right: 0;
+}
+/* Font Family is a complete list nested inside one non-selectable Radix item.
+   Make the wrapper inert and give each actual font row the menu hover state;
+   otherwise the wrapper turns gray and the nested button repaints it white. */
+body [data-slot="dropdown-menu-content"].univer-text-sm [data-slot="dropdown-menu-item"]:has(ul.univer-list-none) {
+  min-height: 0;
+  padding: 0 !important;
+  background: transparent !important;
+}
+body [data-slot="dropdown-menu-content"].univer-text-sm [data-slot="dropdown-menu-item"]:has(ul.univer-list-none) > .univer-relative.univer-flex {
+  padding: 0 !important;
+}
+body [data-slot="dropdown-menu-content"].univer-text-sm [data-slot="dropdown-menu-item"] ul.univer-list-none {
+  width: 100%;
+}
+body [data-slot="dropdown-menu-content"].univer-text-sm [data-slot="dropdown-menu-item"] ul.univer-list-none button {
+  width: 100%;
+  height: var(--control-height-default);
+  padding: 0 var(--space-3) !important;
+  border-radius: var(--spreadsheet-menu-item-radius) !important;
+  background: transparent !important;
+  color: var(--text-primary) !important;
+  text-align: start;
+  transition: color var(--motion-fast),
+    background-color var(--motion-fast);
+}
+body [data-slot="dropdown-menu-content"].univer-text-sm [data-slot="dropdown-menu-item"] ul.univer-list-none button:is(:hover, :focus-visible) {
+  background: var(--control-active-soft) !important;
+  color: var(--control-active) !important;
+}
+/* Give the compact ribbon and the canvas row/column headers the same slightly
+   deeper neutral, while leaving the worksheet and formula input near-white. */
+.spreadsheet-univer-host [data-u-comp="ribbon-header-menu"] + div:has(> [data-u-comp="ribbon-toolbar"]) {
+  background: #F4F4F5;
+}
+:root[data-theme="dark"] .spreadsheet-univer-host [data-u-comp="ribbon-header-menu"] + div:has(> [data-u-comp="ribbon-toolbar"]) {
+  background: #18181A;
+}
+/* Univer centers the toolbar in the row's content box, which excludes its 1px
+   bottom divider. Half a pixel restores equal visible space above and below. */
+.spreadsheet-univer-host [data-u-comp="ribbon-toolbar"] { translate: 0 .5px; }
+/* Univer's filled glyphs look optically larger than Lattice's 14px toolbar
+   strokes at the same 16px box. Keep the 24px hit targets and reduce only the
+   artwork. Its disabled history color otherwise resolves to a 9% border token,
+   which makes Undo and Redo nearly disappear instead of reading as disabled. */
+.spreadsheet-univer-host [data-u-comp="ribbon-toolbar"] svg {
+  display: block;
+  flex: none;
+  width: 14px;
+  height: 14px;
+  align-self: center;
+}
+.spreadsheet-univer-host [data-u-comp="ribbon-toolbar"] :is(
+  .univerjs-icon-font-color-double-icon,
+  .univerjs-icon-paint-bucket-double-icon
+) {
+  width: 16px;
+  height: 16px;
+}
+.spreadsheet-univer-host [data-u-comp="ribbon-toolbar"] .univerjs-icon-paint-bucket-double-icon {
+  translate: -3% 0;
+}
+.spreadsheet-univer-host [data-u-comp="ribbon-toolbar"] .univerjs-icon-paint-bucket-double-icon path:last-child {
+  stroke: var(--border-strong);
+  stroke-width: .5;
+}
+.spreadsheet-univer-host [data-u-comp="ribbon-toolbar"] :is(
+  button,
+  .univer-toolbar-button-selector-main,
+  .univer-toolbar-button-selector-trigger
+) {
+  align-items: center;
+  justify-content: center;
+}
+.spreadsheet-univer-host [data-u-comp="ribbon-toolbar"] :is(
+  button:not(:disabled),
+  .univer-toolbar-button-selector-root,
+  .univer-toolbar-selector-root
+):hover {
+  background: var(--toolbar-hover-surface) !important;
+}
+.spreadsheet-univer-host [data-u-comp="ribbon-toolbar"] .univer-toolbar-button-selector-root:hover > :is(
+  .univer-toolbar-button-selector-main,
+  .univer-toolbar-button-selector-trigger
+) {
+  background: transparent !important;
+}
+.spreadsheet-univer-host [data-u-comp="ribbon-toolbar"] :is(
+  [data-u-command="univer.command.undo"],
+  [data-u-command="univer.command.redo"]
+):disabled {
+  color: color-mix(in srgb, var(--text-primary) 32%, transparent) !important;
+}
+/* Univer compresses the name input to 15px with vertical padding while the
+   adjacent formula editor occupies the full 27px row. Let both controls use
+   that full row and replace their stark white fill with Lattice's softer
+   formula surface. Univer fixes the name-box wrapper at 100px while its child
+   is 6rem, which becomes 120px when the browser's default font is 20px.
+   Deriving the wrapper from that same rem width preserves the intended 4px
+   gutter before the cancel button at every default font size and page zoom.
+   The canvas bitmap is updated alongside this CSS in the spreadsheet
+   render-appearance bridge. */
+.spreadsheet-univer-host [data-u-comp="formula-bar"] { background: #FAFAFA !important; }
+.spreadsheet-univer-host [data-u-comp="formula-bar"] > div:first-child { flex: 0 0 calc(6rem + 4px); }
+.spreadsheet-univer-host [data-u-comp="defined-name"] { padding-block: 0 !important; }
+.spreadsheet-univer-host [data-u-comp="defined-name"] input,
+.spreadsheet-univer-host [data-u-comp="formula-bar"] canvas { background: #FAFAFA !important; }
+:root[data-theme="dark"] .spreadsheet-univer-host [data-u-comp="formula-bar"],
+:root[data-theme="dark"] .spreadsheet-univer-host [data-u-comp="defined-name"] input,
+:root[data-theme="dark"] .spreadsheet-univer-host [data-u-comp="formula-bar"] canvas { background: var(--editor-bg) !important; }
+/* Univer portals tooltips directly under body. Remap its dark tooltip utility
+   slots to the same adaptive popover surface used by Lattice's icon tips. */
+body > [role="tooltip"].univer-bg-gray-700 {
+  --univer-gray-700: var(--surface-panel-raised);
+  --univer-gray-100: var(--surface-panel-raised);
+  --univer-white: var(--text-primary);
+  --univer-gray-900: var(--text-primary);
+  font-family: var(--ui-font);
+}
+/* Lattice's toolbar tips are plain floating rectangles. Univer portals a
+   second rotated square after the label to make a speech-bubble arrow. */
+body > [role="tooltip"].univer-bg-gray-700 > div + div { display: none; }
+:root[data-theme="dark"] .spreadsheet-univer-host .univer-text-white,
+:root[data-theme="dark"] .spreadsheet-univer-host [class*="dark:!univer-text-white"],
+:root[data-theme="dark"] .spreadsheet-univer-host [class*="dark:!univer-fill-white"] { --univer-white: var(--text-primary); }
+:root[data-theme="dark"] .spreadsheet-univer-host .univer-text-gray-200,
+:root[data-theme="dark"] .spreadsheet-univer-host [class*="dark:!univer-text-gray-200"] { --univer-gray-200: var(--text-primary); }
+
+/* tldraw's rich-text editor also uses ProseMirror. Pin its own label
+   geometry inside the board, so no app-level ProseMirror or paragraph rule
+   can make a shape label jump or clip its first line while it is edited. */
+.board-editor-root .tl-rich-text .ProseMirror {
+  min-height: 0;
+  margin-inline: 0;
+  padding-inline: 0;
+  color: inherit;
+  line-height: inherit;
+  counter-reset: none;
+}
+.board-editor-root .tl-rich-text .ProseMirror p { margin: 0; }
+
+/* Highlights painted in the source (latex-highlight-paint.ts). On paper the
+   tint sits under black ink, so a light editor shows exactly that; a dark one
+   (the app's, or a dark-only code theme's) keeps its own ink and shows the
+   tint as a wash and an underline instead of a pastel block. */
+.cm-hl-paint {
+  --hl: transparent;
+  background: var(--hl);
+  border-radius: 2px;
+  box-decoration-break: clone;
+  -webkit-box-decoration-break: clone;
+}
+:root:not([data-code-theme-kind="dark"]) .cm-hl-paint,
+:root:not([data-code-theme-kind="dark"]) .cm-hl-paint * { color: #242426 !important; }
+:root[data-code-theme-kind="dark"] .cm-hl-paint {
+  background: color-mix(in srgb, var(--hl) 18%, transparent);
+  box-shadow: inset 0 -2px 0 color-mix(in srgb, var(--hl) 75%, transparent);
+}
+.cm-hl-wrap { opacity: 0.45; }
+.cm-hl-swatch {
+  display: inline-block;
+  inline-size: 0.72em;
+  block-size: 0.72em;
+  margin-inline-end: 0.35em;
+  border-radius: 3px;
+  box-shadow: inset 0 0 0 1px rgb(36 36 38 / 18%);
+  vertical-align: -0.04em;
+}

@@ -1,0 +1,64 @@
+# Logs
+logs
+*.log
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+pnpm-debug.log*
+lerna-debug.log*
+
+node_modules
+dist
+dist-ssr
+public/pdfjs
+*.local
+src/locales/**/*.js
+src/locales/**/*.js.map
+src-tauri/synara-runtime/
+.synara-src/
+src-tauri/presentation-runtime/*
+!src-tauri/presentation-runtime/placeholder.txt
+.agents/artifacts/
+.agents/skills/
+.tmp/
+skills-lock.json
+
+# Local AI-assistant state. Never commit: these hold machine-specific paths,
+# private compute specs, and session transcripts.
+.claude/
+.amp/
+
+# Editor directories and files
+.vscode/
+.idea
+.DS_Store
+*.suo
+*.ntvs*
+*.njsproj
+*.sln
+*.sw?
+.e2e-project/
+
+.env
+.env.*
+!.env.example
+
+# Local scratch / caches (never commit)
+_to_delete/
+.arxiv2md_cache/
+
+# Local `wrangler dev` Durable Object state for the literature Worker
+literature-worker/.wrangler/
+
+# TypeScript incremental build caches
+*.tsbuildinfo
+
+# The Timeless type family (timeless.co) may be embedded in a local build but
+# never committed: its license forbids public repositories and redistribution.
+# Builds read it from LATTICE_PRIVATE_FONTS_DIR (scripts/private-fonts.ts);
+# src/platform/font-license-guard.test.ts fails if one is tracked anyway.
+Timeless-Type-Family-*/
+Timeless*.woff2
+Timeless*.woff
+Timeless*.ttf
+Timeless*.otf

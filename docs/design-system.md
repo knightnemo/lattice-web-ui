@@ -1,0 +1,891 @@
+# Lattice design system
+
+Lattice uses a compact desktop chrome around more comfortable writing and
+reading surfaces. The design system exists to keep those contexts coordinated,
+not to force every surface into one density.
+
+## The Paper file
+
+The design system is drawn and written in the Paper file
+[Lattice design system](https://app.paper.design/file/01M6EKRMTWZ2JD6ZHKF830MAVP),
+which another product can build from. `design-system/` holds its exported copy
+(tokens and rules), and `src/styles/design-system-drift.test.ts` fails when that
+copy and this app's CSS disagree. The app does not import `design-system/tokens.css`:
+`theme.css` and `foundations.css` stay the app's source, and the drift test is
+the contract between them. Its App screens page draws the app's main screens
+on those tokens, where the captain comments on them; a change picked there
+lands in the Paper file and in the app, through the review loop in
+`design-system/README.md`.
+
+## Decisions
+
+- The interface font (`--ui-font`) is Inter Variable, or Timeless Sans in a
+  build that embeds the Timeless family: releases and local builds that have
+  the fonts (see Private interface fonts).
+  Long-form reading surfaces use `--reading-font`; code never leaves
+  `--editor-font`.
+- Lattice has one serif voice: the Display and Title roles are set in
+  `--display-font` (Timeless Serif, or Instrument Serif without the private
+  fonts) at regular weight. Chinese falls through to Songti SC, the macOS
+  system serif, so a title stays a serif in either language. It is used for
+  titles only: the welcome title, dialog and Settings page titles, the guided
+  tour's card, a workspace with every panel closed, the error page, and the
+  verdicts that open the submission checklist and the Build button's card.
+- The product accent is neutral by default (Graphite). Settings → Appearance
+  offers six accent presets and a custom color; each reads at 4.6:1 as text on
+  every surface of every tint, and a custom pick is fitted to that floor.
+  Status colors communicate success, warning, and danger; they are not
+  substitutes for the interaction accent.
+- Agent body copy, user messages, and the composer use the body role (13/20)
+  at regular weight.
+- Long-form reading surfaces use the typeset role (14/22).
+- Code and diffs use one fixed editor font stack. The bundled default is
+  Ioskeley Mono (OFL), with system monospace faces as fallback. Local and
+  embedded code surfaces share this stack; editor font size remains
+  adjustable.
+- Project filenames and folders use the interface font at 13/16px. Project rows are
+  28px, the compact control height; selected items move from regular to medium weight.
+- Papers titles use the interface font at 13/18px regular weight in the
+  primary ink, as the Project tree sets a filename. Literature results beside
+  them keep the reading font at 14/20, as the paper reader sets a title. Author,
+  year, venue, and other Papers metadata remain in the interface font at the
+  caption role (12/16) regular weight in the secondary ink; a full-text search
+  hit is quoted in the reading font's italic. A wide Papers list (680px and up)
+  moves its flags into a right-hand column.
+- Diff code uses the editor font at 12/18px. Diff paths, headers, and line
+  numbers remain in the interface font; compact metadata uses the micro role
+  (11/14).
+- Embedded Agent thread titles use the caption role at regular weight, from
+  the pinned Synara runtime's own copy of it; Project filenames use their own
+  13/16px alias.
+- The top toolbar and left Project, Papers, and Agent navigation form the app
+  chrome. At the default Graphite tint they use `#EFEFF0` in the light theme
+  and `#131315` in the dark theme. The titlebar lifts a step off that ground
+  (`--surface-titlebar`, a white veil over the chrome, closed by a hairline),
+  so it never reads as the same sheet as the gutters beneath it.
+- Default navigation text on the chrome uses the secondary ink; selected and
+  emphasized items use the primary text color.
+- Right-side feature drawers are a separate surface: `#FAFAFA` in the light
+  theme and `#1F1F22` in the dark theme. Feature drawers must not introduce
+  their own white or gray outer background. Embedded routes receive their
+  surface role explicitly rather than inferring it from feature-specific CSS.
+- New component styles use semantic tokens from
+  `src/styles/foundations.css`. Raw values are reserved for genuinely unique
+  geometry, such as an asymmetric message bubble.
+- Light and dark colors come from semantic theme variables. Do not introduce a
+  fixed light-theme hex value into a reusable component.
+
+
+## Theme presets and window material
+
+Settings → Appearance → Theme adds three choices to light and dark, all
+applied on `<html>` by `src/settings/use-appearance.ts`:
+
+- **Tint** (`data-tint`): Graphite, Paper, Sage, Mist or Dusk. A tint moves
+  only the neutral surfaces to one hue at their existing OKLCH lightness, so
+  the syntax tokens keep their 4.5:1; chrome takes the full tint, panels and
+  the editor 70% of it, and text and lines stay neutral.
+- **Accent** (`data-accent`): Graphite or a preset, or `custom` with the color
+  set inline after `fitAccent` (`src/settings/theme-customization.ts`). A
+  colored accent also becomes the focus ring. The editor's current line keeps
+  `--editor-active-line-surface`, which is neutral under every accent.
+- **Code theme** (`data-code-theme`, Settings → Appearance → Code theme):
+  the source editors' palette, GitHub by default. `src/settings/code-themes.ts`
+  holds each named theme's upstream colors, ground included, and sets them on
+  the root as `--syntax-*` (token roles) and `--code-*` (ground, ink, gutter,
+  caret, current line, selection); a token is lifted only as far as 4.5:1 on
+  its ground and current line needs. A variant in the app's own appearance
+  draws on the editor surface (`--editor-bg`, the tool panels' sheet), with
+  its tokens fitted on that surface in every tint, so the editor and its tab
+  read as one with the panels beside it; Weft & Warp, the default
+  declarations in `foundations.css`, always does. Only a one-variant theme
+  in the other appearance (a dark editor in a light app) keeps its own
+  ground. A rendered Markdown code
+  block keeps Weft & Warp (`--lattice-syntax-*`): it sits on the page's
+  surface, not the editor's.
+- **Translucency** (`data-glass`, only while the native window reports
+  vibrancy behind it): the window clears its background, the gutters take
+  `--surface-shell`, the titlebar the same under its veil, and Project and
+  Papers `--surface-navigator` over macOS's under-window material, as
+  Synara's own window does, with their tab strip and body under one more coat
+  (`--surface-navigator-lift`), so the header and the body stay one surface.
+  The editors, PDFs, the agent, tool panels, menus and dialogs stay opaque, so
+  an editor stands on the same sheet as Git, History and Overleaf. Reduce transparency, a browser tab and every
+  other platform keep the opaque palette, which is also what Off gives.
+
+Presets live in `src/styles/theme.css` as attribute blocks that apply to any
+element, so a Settings swatch carrying `data-tint` or `data-accent` shows the
+real color in the current light or dark.
+
+To draw an appearance the window is not wearing, an element takes a theme
+preview scope: `data-theme-preview="light|dark"` with `data-tint-preview`
+naming a tint. The base and tint blocks in `theme.css` and the role block in
+`foundations.css` also match that scope, so every palette value and role is
+recomputed on the element for that appearance and tint. Settings draws its
+Color theme windows, its split tint tiles and Weft & Warp's other variant
+this way, from the same declarations as the window, never from copied values.
+The scope resets `--accent`; a preview that shows the current accent takes it
+from an ancestor first (`--tile-accent` in `dialogs.css`).
+
+## Private interface fonts
+
+The Timeless type family (Timeless Free Font License 1.2; get the fonts and
+the license from [timeless.co](https://timeless.co)) is embedded by release
+builds and by local builds that have the fonts. The license allows embedding
+the fonts in an application, as long as they reach people only as part of it
+and always with a copy of the license, but forbids putting them on a public
+repository or redistributing them on their own. So this repository holds no
+font file, subset, conversion or copy of the license, and
+`src/platform/font-license-guard.test.ts` fails if one is ever tracked. Keep
+the download, with its `LICENSE.pdf` beside the fonts, outside the checkout.
+
+- `LATTICE_PRIVATE_FONTS_DIR` names the download's folder (the one holding
+  `LICENSE.pdf`, `Sans-Grotesk/` and `Serif-Text/`); unset, it defaults to
+  `~/Downloads/Timeless-Type-Family-1.094`. An empty value builds without it.
+  `vite build`, `pnpm tauri dev`/`build` and the mock-backend page all read it
+  through `scripts/private-fonts.ts`, which logs whether it embedded the fonts.
+- With every face and the license present, the build emits the original
+  WOFF2 files of the faces it uses, unmodified, as hashed assets of the web
+  bundle (which Tauri compiles into the app binary) and puts them first in the
+  font roles. Otherwise nothing changes: CI, forks and other contributors get
+  Inter, Instrument Serif and the same layout.
+- Releases: the fonts and their license live in the private repository
+  `leo1oel/lattice-fonts`. Only the tag-triggered job in
+  `.github/workflows/release.yml` reads it, with the read-only deploy key in
+  the `LATTICE_FONTS_DEPLOY_KEY` secret, into the runner's temp directory
+  outside the workspace. It sets `LATTICE_PRIVATE_FONTS_REQUIRED=1`, so a
+  missing or incomplete copy fails the release instead of quietly shipping
+  Inter; without the secret (a fork) the release builds without them.
+  `scripts/check-font-leaks.mjs` then checks the built app before it is
+  packaged (no file named for Timeless or a byte copy of one of its fonts, and
+  no font outside the bundled open-licensed runtimes) and, before the draft
+  release is published, its assets (only the signed artifacts, none of them a
+  font). It recognizes fonts by signature as well as extension, so a renamed
+  copy fails too.
+- The license travels with the app: the build emits the unmodified
+  `LICENSE.pdf` as a hashed asset beside the fonts, and Settings › About ›
+  Acknowledgements credits timeless.co and opens it in the app's PDF viewer.
+  A build without the fonts leaves that row out; the page itself, which credits
+  the open-source software Lattice ships, is in every build. The Timeless name credits the
+  fonts only; it names no Lattice feature.
+- Roles: `--ui-font` is Timeless Sans in its Grotesk style (the variable
+  font's default; at 10–13px it kept confusable pairs such as e/o, rn/m and
+  3/8 slightly further apart than the Sans style). `--reading-font`, for the
+  visual Markdown surface and a paper's title in the reader, is Timeless Serif Text, the cut
+  drawn for body sizes. `--display-font` (the welcome title) is Timeless
+  Serif. Source editors, code, logs and every monospace surface stay on
+  `--editor-font`.
+- Metrics: Timeless is about 3.5% narrower than Inter with a smaller
+  x-height. `size-adjust` scales the sans by 104% (matching Inter's widths
+  over every English UI string within 1%) and the serif by 105% (matching
+  Inter's x-height); ascent and descent overrides keep Inter's line metrics.
+  Truncation, wrapping and baselines therefore match the Inter build, and
+  Chinese, set in PingFang SC in both builds, keeps the same relative size
+  beside Latin text. Both families have tabular figures, so
+  `font-variant-numeric: tabular-nums` behaves the same.
+- Timeless covers Latin only; Greek and Cyrillic fall through to Inter.
+- The Agent panel and the Synara settings pane are iframes served by the
+  Synara sidecar, so Lattice's font roles and `@font-face` rules do not reach
+  them; they keep Synara's own interface font.
+
+## Token layers
+
+Three layers, one direction of dependency. A layer may read the one above it and
+never the one below.
+
+| Layer | Lives in | Holds | Example |
+| --- | --- | --- | --- |
+| Palette | `src/styles/theme.css` `:root` and `[data-theme="dark"]` | the only raw colors in the product | `--line: rgba(28, 28, 31, 0.09)` |
+| Semantic roles | `src/styles/foundations.css` | what a value means, per theme | `--border-subtle: var(--line)` |
+| Component contracts | `foundations.css`, grouped per family | the geometry and states one family shares | `--navigation-action-size`, `--navigation-tree-selected-surface` |
+
+Rules that follow from this:
+
+- Feature CSS consumes semantic roles or component contracts. It does not read
+  the palette. `var(--line)`, `var(--muted)`, `var(--accent)`, and their siblings
+  are palette names and are treated as legacy in feature code.
+- A raw value belongs in feature CSS only when it is genuinely one-off geometry.
+  A second use of the same number is a missing token.
+- A new color goes into the palette for both themes first, then gets a semantic
+  name. A component never receives a fixed hex value.
+- Status surfaces derive their borders and washes from their own `color` with the
+  `--tone-*` roles instead of repeating one `color-mix` per severity.
+
+## Focus
+
+Keyboard focus is one ring for the whole product. Its selector lives in
+`src/styles/app-shell.css`; `--focus-ring`, `--focus-ring-width`, and
+`--focus-ring-offset` live in `src/styles/foundations.css`. The ring is 2px
+at a 2px offset, in weft blue under Graphite (`--focus`, `#3B5BD6`, 5.5:1 on
+the sheet; `#7F97FF` in dark) and in the accent under a colored preset, so
+focus never reads as the grey of a selected row. A drop target (Trellis's
+drop slot) takes the same colour as its edge and a faint wash of it.
+Components do not add a second ring. The ring is for the keyboard only: focus
+that script moves after a click or under a moving pointer (a menu's rows, a
+trigger a closing menu or Select hands focus back to, a dialog's opener)
+matches `:focus-visible` too, so `src/components/ui/pointer-focus.ts` marks it
+`data-pointer-focus` and no ring draws on it; any key hands focus back to the
+keyboard. The native `:focus` halo stays suppressed,
+and text entry is deliberately excluded from the ring because a field already
+answers with the border treatment in its `--field-control-*` contract. Menu
+items (Radix's, and the buttons of the project tree's row menu) answer with
+their row fill instead, which the fluid hover draws.
+
+## Interactive states
+
+| State | Selector | Meaning |
+| --- | --- | --- |
+| hover | `:hover:not(:disabled)` | pointer is over the control |
+| pressed | `:active:not(:disabled)` | pointer is held down |
+| focus | `:focus-visible` | keyboard focus |
+| open | `[data-state="open"]` | this control owns an open menu, popover, or select |
+| active | `.active` | the view this control leads to is the current one |
+| selected | `[aria-selected="true"]`, `.selected` | one of several rows the user picked |
+| checked | `[aria-checked="true"]`, `:checked`, `[data-state="checked"]` | a toggle is on |
+| disabled | `:disabled`, `[data-disabled]` | not operable |
+
+Surface strength runs in one direction so two states never read the same:
+hover < pressed, and hover < selected < active. A control's hover is 5% of
+the text colour (`--control-hover-surface`) and its press 8%
+(`--control-pressed-surface`); a selected row is 8% and turns medium; a hover
+on the darker chrome is 6% (`--chrome-hover-surface`). Selection is a fill,
+never a second outline: the focus ring stays the only ring.
+
+A Button's press is one step deeper than its hover in every variant (the
+tinted and danger washes 12% → 18% → 24%) and scales it to 0.97; icon buttons
+do not move. A disabled Button has one look whatever its variant: a faint
+outlined slab with the ink stepped back (`--control-disabled-*`), never a
+dimmed copy of its fill. Icon-only controls, switches and checkboxes have no
+slab and fade to `--control-disabled-opacity`.
+
+## Ink, surfaces and icons
+
+- **Two inks.** Text is primary (`--text-primary`) or secondary
+  (`--text-secondary`, `#5F5F64`, `#A0A0A7` in dark), which clears 5.5:1 on
+  the chrome, the faintest surface it sits on, and 5.8:1 on the dark lift.
+  `--text-tertiary` and `--text-chrome` are kept as names for existing call
+  sites and resolve to secondary; new code takes one of the two. A status
+  colour is an icon's or a state's, never a third grey.
+- **Two neutrals and a lift (Graphite).** The ground is the chrome
+  (`#EFEFF0`, dark `#131315`); the panels, the editor and the fields share one
+  sheet (`#FAFAFA`; in dark the panels `#1A1A1C`, and the editors, the tool
+  panels (Git, History, Overleaf) and the fields `#1F1F22`); menus, popovers,
+  toasts and dialogs stand on the lift (`--surface-elevated`: white, dark
+  `#252528`, about 6% above the sheet), so in dark a menu reads off the sheet
+  by its fill and a quiet 10% ring rather than a bright edge. The other tints
+  keep their own surfaces.
+- **Icons** are Lucide line glyphs at three sizes: 14px in the chrome (the
+  titlebar, panel tabs and headers, compact controls), 16px on a default
+  control and in a dialog or toast mark, and 12px in a meta row (the status
+  bar) and for a disclosure chevron beside a label, with a 1.5
+  stroke beside regular-weight text (menus) and the default 2 where they stand
+  alone. They take the secondary ink at rest and the primary when their
+  control is on, hovered or current; colour belongs to status (a toast's
+  level, a danger mark), to the accent, and to the file glyphs. A file glyph
+  (`src/components/ui/file-glyphs.ts`) is one icon per kind of file, the same
+  in the project tree, the tabs and the pickers: a page for what you write, an
+  object for what you collect or insert, stroked in the kind's hue
+  (`--file-glyph-*`, at least 3:1 on the sheet, the lift and a selected row)
+  over a tint of it, so a file's kind reads at a glance. Folders are manila and
+  open when expanded.
+
+## Embed and third-party boundaries
+
+| Surface | Owned by | Host may | Host must not |
+| --- | --- | --- | --- |
+| Synara runtime (Agent, providers, MCP, skills) | Synara, isolated in an iframe | set frame size, loading and failure surfaces, theme and settings context over the bridge | reach into the embedded document with CSS or DOM selectors |
+| Pierre file tree | Pierre component | map every visual through the `--trees-*-override` tokens in `src/styles/app-shell.css` | restyle Pierre internals by class name |
+| Radix primitives (menu, select, popover) | Radix behavior, Lattice appearance | style through `menu-surface.ts` and `data-slot` hooks | fork the primitive to change appearance, or import Radix outside `src/components/ui` (lint-enforced; add a wrapper there instead) |
+| Tailwind / shadcn utilities | `src/index.css` `@theme inline` | map utilities onto the palette | enable preflight or introduce a parallel color scale |
+| CodeMirror, PDF.js, KaTeX | the library | theme through the documented extension points and `cm-*` / `pdf-*` classes it exposes | assume internal DOM structure beyond those hooks |
+| Motion (`motion/react`) | the library | take the spring tiers from `motion-values.ts`, the same ones CSS runs from `foundations.css`, with the global reduced-motion clamp in `adaptive-feedback.css` | animate a property the reduced-motion path cannot disable, or pass a transition that is not a tier |
+
+The bridge, not CSS, carries state across the Synara boundary: theme, settings
+section, frame height, confirmations, and notifications. Light or dark rides in
+the frame URL; the tint, accent and resolved colors go to the agent frame as a
+`lattice:host-theme` message (`src/agent/agent-host-theme.ts`), on its
+`synara:embed-ready`, on every change and on `lattice:request-host-theme`, so
+a new accent repaints the agent without reloading it. Until the pinned runtime
+reads that message, the panel keeps its own copy of the Graphite palette.
+
+## Typography roles
+
+Six roles, each a size with its own leading. Take both: a size on another
+role's leading (or on `normal`) is a missing role, not a choice.
+
+| Role | Chrome | Settings | Weight | Family | Typical use |
+| --- | --- | --- | --- | --- | --- |
+| Display | 30 / 36 | 30 / 36 | 400 | serif | the one title on a page that has only one: the welcome screen, a paper's title, the error page |
+| Title | 18 / 24 | 24 / 30 | 400 | serif | dialog and Settings page titles; the guided tour's card; a workspace with every panel closed |
+| Subtitle | 13 / 18 | 14 / 20 | 600 | interface | panel, drawer, sheet and group headings; the project switcher |
+| Body | 13 / 20 | 14 / 22 | 400 | interface | menus, popovers, copy, the Agent's messages and composer |
+| Caption | 12 / 16 | 12 / 18 | 400 | interface | metadata, paths, descriptions, helper text, menu group labels |
+| Micro | 11 / 14 | 12 / 16 | 500 | interface | badges, counters, compact status; one line only |
+
+- **Display and Title carry their family** (`--type-display-font`,
+  `--type-title-font`, both the serif). Take it with the size: the serif at
+  400 is the title's weight, and the interface font at 400 would read as body
+  copy. The other roles inherit the interface font.
+- **Nothing in the interface is set below 11px**, and metadata (caption) is
+  12px, the size Fluid Functionalism holds as its floor for text that is read.
+
+- **Body has a compact step**, `--type-body-compact-*` (12/16, 500; 13/18 in
+  Settings): the text inside a control, whether a button, field, select, tab,
+  toast title or compact list row. Fluid Functionalism sets a control's text at
+  the body role one step down for the control's density, which is the step the
+  chrome runs at. A compact (28px) control drops to caption.
+- **Typeset** (`--type-typeset-*`, 14/22; 15/24 in Settings) is prose: the
+  visual Markdown surface, the source editor's default size and the update
+  notes. It is reading, not interface.
+- **Thin aliases** name a surface's own contract and resolve to a role:
+  `--type-tree-*` (caption: Papers metadata, Agent thread titles),
+  `--type-project-tree-*` (body on the compact leading: project filenames),
+  `--type-diff-meta-*` (micro) and `--type-diff-code-*` (caption size on an
+  18px leading, for code).
+- **Settings runs one step up.** `.settings-modal` (and a select portalled out
+  of it) redeclares every role and alias, so the same CSS reads larger there.
+  Display does not step up: it is already the one title on its page.
+- **The Synara iframe mirrors four of these.** The pinned runtime sets its own
+  title, subtitle, body-compact and caption, at both steps, and its Settings
+  control height (`apps/web/src/embedMode.ts`), so the Agent panel and the
+  Providers, MCP and Skills pages line up with the native ones. Those values
+  move only together with a Synara pin; until the pin that takes this scale,
+  the runtime keeps the earlier one (sans titles at 600, an 11px caption,
+  30px Settings controls).
+- In a Tailwind class list, name the role's two values,
+  `text-[length:var(--type-caption-size)] leading-[var(--type-caption-line-height)]`,
+  never Tailwind's own `text-xs`/`text-sm` scale. A `text-<name>` theme key
+  reads as a colour to `cn()`'s tailwind-merge, which drops it beside one.
+
+The fourteen roles this replaced map as: Micro and Nano (9px) to micro;
+Caption and Compact navigation to caption; Label to body-compact; Body to body;
+Reading to typeset; Compact title (13/16) and Title (14/18) to subtitle; Large
+title (16/20) and Heading to title; Display to display; Project tree, Diff code
+and Diff metadata to the aliases above.
+
+Compact interface copy — titles, setting descriptions, dialog subtitles, tour cards, empty states, and helper text — does not end in a full stop.
+Punctuation inside multi-sentence copy remains.
+A description, subtitle, or explainer paragraph appears only when it says something the label or control does not.
+Structural section headings stay: on a page, panel or sidebar with three or more groups, each group carries a short noun title (a settings group, a sidebar cluster, a drawer section), a one-item group included, so the surface scans by its headings. A page's leading group may go untitled, since the page title names it. A heading titles its group and never explains it, so no sentence sits under it.
+The interface carries no taglines, and labels do the explaining: a row, option or button whose label needs a sentence under it gets a better label, not the sentence.
+What stays as secondary copy is what the writer would otherwise miss: why a control is disabled or has no effect, a warning before something irreversible, overwritten or shared (what an export contains, what leaves the Mac), an error and its way out, and credits a licence requires.
+A shortcut or gesture that only a hint line taught moves into its control's tooltip (`Tip`'s `shortcut`, or the hover card a control already has); a list picker draws no ↑↓/↵/Esc legend.
+A status line beside a loading indicator goes to assistive technology instead (see the loading rule below), and a step position the progress dots already show (the guided tour's) is read out, not printed.
+
+## Geometry
+
+- Spacing follows the scale defined by `--space-*`. Layout lands on its 4px
+  steps; 2px and 6px are for distances inside a control. Distances inside a
+  control are named roles rather than literals, and they sit on the same
+  grid: `--gap-hairline` (1), `--gap-tight` (2), `--gap-inline-tight` (4),
+  `--gap-inline` (8), `--pad-inline-control` (10),
+  `--pad-inline-control-tight` (8).
+- A side panel has one icon gutter, 20px in from its edge: the tab's icon
+  (`--tab-inset-inline`, 14px, from the tab's edge), the Project tree's
+  glyphs and the Papers search icon all start on it. The tree and Papers stand
+  10px off the panel edge, and an icon sits 10px inside its row or field,
+  the field's border included.
+- Numbers keep one rule for units: a space before a unit (`1.2 s`, SI), none
+  before `%` (`184%`). Counts go through `formatCount` (`src/i18n.ts`):
+  grouped digits, and in Chinese 万 and 亿 from 10,000 on (`12.04 万词`), with
+  `spaceMixedScript` closing up the unit after them.
+- A surface nested flush inside another does not choose its own radius. The
+  container declares `--surface-radius` and `--surface-inset`, and the child uses
+  `border-radius: var(--nested-radius)`, which resolves to
+  `outer - inset` so the two curves stay parallel. This covers segmented tabs,
+  menu items, dialog list rows and a panel's tabs (Trellis's
+  `--trellis-tab-radius` from the panel's radius and `--trellis-tab-inset`, in
+  `src/trellis/trellis.css`). A menu stands on the 10px
+  surface corner with a 4px inset, so its rows keep a control's 6px. Cards with generous padding are not nesting
+  in this sense and keep an independent radius.
+- A control may be painted smaller than `--hit-area-min` (24px), but its pointer
+  target may not be. Add `data-hit-area` and it gets a centered, invisible
+  target of at least that size with no change to any visible dimension. Steppers
+  are exempt where the adjacent text field is an equivalent control.
+- **Controls stand on a two-step ladder.** Every control a pointer lands on
+  is compact (`--control-height-compact`, 28px) or default
+  (`--control-height-default`, 32px), so a button next to a select next to a
+  tab lands on one height:
+
+  | Step | Height | Text | Icons | Where |
+  | --- | --- | --- | --- | --- |
+  | compact | 28px | caption | 14px | dense chrome: panel headers, toolbars, filters, the titlebar, popover forms |
+  | default | 32px | body-compact | 16px | forms, dialogs, Settings |
+
+  Buttons (`Button` `size`), fields (`Input` `controlSize`), selects
+  (`SelectTrigger` `size`), `SearchField` and `SegmentedControl` take
+  `compact` or `default` and nothing else. Square icon controls use the same
+  two heights (`--control-size-icon`, `--control-size-icon-large`), and toolbar
+  buttons are 24px wide on the compact height. The 24px
+  `--control-size-icon-compact` is an action inside a row or a field (a
+  toast's dismiss, a search's clear), and counts as part of that row.
+  The default is 32px rather than Fluid Functionalism's 36px: the chrome is
+  denser than a web page, and 4px is a step from compact the eye can see
+  (28 against 30 was not). The embedded Synara Settings pages keep 30px until
+  the pinned runtime moves. Width remains layout-owned.
+- Text buttons, fields and selects use the 6px control radius.
+- Switches use a 28 × 16px track and a 12px thumb.
+- Checkboxes use a 14px native input surface with shared checked, mixed, focus,
+  and disabled states.
+- Badges use a 20px height and 6px radius; compact badges use a 16px height.
+- Rows use 32px compact, 40px data, or 44px store height.
+- Radius has four steps and the pill: 4px for a chip (`--radius-compact`), 6px
+  for anything a pointer lands on, whether a control, row, tab or icon button
+  (`--radius-icon`, `--radius-chrome`, `--radius-control`), 10px for a surface:
+  a panel, popover, menu or toast (`--radius-panel`, `--radius-surface`), and
+  14px for a dialog (`--radius-dialog`). The role names say what holds the
+  corner; a new radius picks one of the steps, never a value between them.
+- **Corners are continuous where the engine can draw them.** Panels and their
+  tabs, dialogs, menus and popovers with their rows, filled cards, and the shared
+  controls (buttons, icon buttons, fields, selects, search fields, segmented
+  tracks, keycaps) draw their corner as a squircle: `corner-shape: squircle`
+  on `calc(<the step> * var(--corner-smoothing))`. A squircle of the same
+  radius cuts less off the corner and reads sharper, so the factor (1.84,
+  `foundations.css`) brings it back to the corner the step designs. It is 1
+  wherever `corner-shape` is unknown, today's macOS WebKit included, and the
+  corner stays exactly round. The radius and the shape go in the same rule
+  (`tokens.test.ts` holds that): a squircle on the bare step, or a scaled
+  radius left round, is a different corner. A nested child takes both from
+  its container (`--nested-corner-shape`, `--nested-corner-smoothing`), and a
+  radius that inherits takes the shape along (`corner-shape: inherit`). Pills,
+  switches, checkboxes, avatars, badges and the paper of a page keep their
+  shapes.
+- The titlebar is 40px and hosts the traffic lights, the project switcher and
+  the panel controls, with the command palette's search field (⌘K) centred on
+  the window between them; the sidebar navigation header matches that height.
+  Short of room the field narrows, then folds to its icon before any control
+  is shed.
+- Every panel's tab strip is 40px (`--tab-strip-height`) and its tabs stand on
+  the compact control height, centred in it. The 6px (`--space-3`) left above
+  them is also their inset from the panel's side, so the first tab stands clear
+  of the panel's 10px corner; their corner is the panel's less that inset,
+  held at a control's 6px. The panel menu takes the same inset and corner at
+  the other end, and a tab's close button is the 24px row action, 2px inside
+  the tab. The strip and
+  the body below are one surface, the panel's own. The selected tab is told
+  by a fill one step deeper than it (lighter in dark), 10% of the ink laid
+  opaque on the panel's surface, and by the primary ink; it draws no ring except under
+  increased contrast. The others are their label in the secondary ink with a
+  fainter hover fill (`--control-hover-surface`). A tab's trailing slot (its close button, or
+  a pinned tab's pin) is one width whatever it holds, so hovering, saving or
+  selecting never resizes a tab; squeezed below its natural width, an
+  unselected tab's empty slot gives its room to the title first. Unsaved
+  changes are a dot on the tab's icon, cut out of the glyph, never a mark
+  trailing the title. A preview tab (a quick look the next one replaces) sets
+  its title in italics. The selected tab stays in view whenever the strip has
+  to scroll.
+
+## Elevation
+
+One ladder for every surface that sits above another, in light and dark. The
+shadows live in the palette (`--shadow-*` in `theme.css`, one stack per level,
+deeper in dark where a faint shadow disappears into the ground); feature code
+takes a level from `foundations.css`.
+
+| Level | Token | Surface | Edge and shadow | Who stands there |
+| --- | --- | --- | --- | --- |
+| Page | — | `--surface-app`, the window | none | the window, the welcome page |
+| Panel | `--elevation-panel` | `--surface-panel` | half a hairline | docked Trellis panels |
+| Raised | `--elevation-raised` | `--surface-elevated` | ring and a contact shadow | a plate lifted inside a surface: the chosen segment, zoom controls over a figure, a resize handle |
+| Popover | `--elevation-popover` | `--surface-elevated` | ring and shadow | menus, selects, popovers, tooltips, hover cards, the editor's tooltips and selection toolbar, the PDF preview's loading status and notices |
+| Floating | `--elevation-floating` | `--surface-elevated` | ring and a deeper shadow | floating panels, drawers, toasts, the build's diagnostics card, a dragged item |
+| Dialog | `--elevation-dialog` | `--surface-elevated` | ring and the deepest shadow | modal dialogs, Settings, the guided tour's card |
+
+- The ring (`--elevation-ring`) is the edge; a floating surface does not add a
+  border on top of it.
+- A level's shadow does not change with nesting, so a popover inside a dialog
+  still reads as a popover.
+- A surface that colours its edge composes the same two parts:
+  `box-shadow: 0 0 0 1px <edge>, var(--elevation-floating-shadow)`. A Trellis
+  panel held mid-drag takes the strong border over the dialog shadow.
+- `surfaces.css` assigns the shared surfaces their level; Radix menus,
+  selects and popovers take theirs through `menu-surface.ts`.
+- Radii nest by the rule under Geometry: a level's surface declares
+  `--surface-radius` and `--surface-inset`, and what sits flush inside takes
+  `--nested-radius`.
+- A compiled PDF page keeps `--pdf-page-shadow`: paper on a desk, not
+  interface.
+
+## Component boundaries
+
+Dependencies flow in one direction:
+
+1. Foundations: type, color, spacing, radius, size, and motion tokens.
+2. Primitives: buttons, menus, selects, switches, and scroll areas.
+3. Patterns: panel headers, settings sections, empty states, and dialog actions.
+4. Features: Agent, Papers, Git, Overleaf, and other product behavior.
+
+A feature may consume a shared primitive or pattern. A primitive must not know
+about a feature, and one feature must not borrow another feature's class name.
+For example, a general empty state must not be styled through `git-empty`.
+
+Synara owns the Agent, source-control, provider, MCP, and skill surfaces.
+Lattice only owns the surrounding host chrome and the context bridge between
+the research workspace and those embedded surfaces.
+
+### Shared component contracts
+
+| Need | Use | Feature code owns |
+| --- | --- | --- |
+| Text action | `Button` or `buttonClassName` with `MotionButton` | label, callback, semantic variant |
+| Icon-only action | `IconButton` | icon, label, callback, disabled state |
+| Inline metadata or status | `Badge` | copy and semantic tone |
+| Binary setting | `Switch`; use `SwitchField` when it has settings copy | state, callback, label |
+| Immediate form choice | `Checkbox`; use `CheckboxField` for ordinary labelled choices | state, callback, label, optional description |
+| Single-line form value | `Input` | type, value, callbacks, semantic control size, invalid state |
+| Search or filter value | `SearchField` | query, callbacks, default or compact size, optional trailing result controls |
+| Multi-line form value | `Textarea` | value, callbacks, UI or monospace font, invalid state |
+| Form selection | `Select` with `SelectTrigger` | options, value, callback, semantic control size |
+| Compact mutually exclusive views | `SegmentedControl` | item labels, selected value, callback |
+| Section-level views | `SlidingTabs` | item labels, selected value, callback |
+| Repeated list row | `rowClassName` | semantic element, contents, selection behavior |
+| Panel or drawer title bar | `PanelHeader` | title, leading icon, feature actions |
+| Panel close action | `PanelHeader onClose` or `CloseButton` | callback and specific label |
+| Settings page heading | `SettingsSectionHeader` | title, description, optional actions |
+| No-content message | `EmptyState` | copy, optional icon and actions, density |
+| Menu-like floating surface | primitives using `menu-surface.ts` | Radix semantics and feature content |
+| Ordinary scrolling | `ScrollArea` | orientation and exceptional layout classes |
+| Keyboard shortcut hint | `Keycaps`, or `renderKeycaps` in a long list (one cap per key; its `run` variant draws them as one quiet word) | the keys, from the binding through `key-combos.ts` rather than typed out |
+| Keyboard-driven list (quick open, pickers, the command palette) | `PickerDialog` / `SearchPickerDialog`, ranked by `picker-ranking.ts` | items, their icon, detail and shortcut, and what choosing one does |
+| Hover highlight in a list or menu | `FluidHoverSurface` in a `fluid-hover-surface` container | the row selector, which row is current (`follow`), its fill (`--fluid-hover-fill`) |
+
+`PanelHeader` deliberately does not own outer height, padding, or borders.
+Those may differ between a drawer, modal, and embedded panel. It does own title
+typography, title/action alignment, action spacing, and the close control.
+
+`rowClassName` deliberately returns classes instead of rendering an element.
+Rows are buttons, list items, or composite containers depending on the feature;
+the primitive standardizes density without changing those semantics.
+
+## Interaction patterns
+
+- A reversible action happens at once and its toast offers the way back
+  (Undo, Resume) instead of a confirmation in front of it. Confirm only what
+  cannot be undone. A toast's action dismisses the toast unless it sets
+  `keepOpen`.
+- Panel and drawer headers use an icon-only X close control with an accessible
+  label through `PanelHeader` or `CloseButton`. Dialog footer actions may still
+  say Cancel or Close when that wording communicates an operation.
+- Dropdown menus, context menus, selects, and popovers keep their distinct
+  accessibility semantics while consuming the shared surface and item contracts
+  from `menu-surface.ts`.
+- Shared tab strips expose real tab semantics, keep only the selected tab in
+  the keyboard order, and support Arrow Left/Right plus Home/End navigation.
+- Use a checkbox for an immediate local form choice and a switch for a
+  persistent setting that takes effect independently. CodeMirror controls,
+  embedded content, and vendored Agent Elements may retain their native
+  implementation when integration requires it.
+- There is no generic labelled-field wrapper. `SwitchField` and `CheckboxField`
+  cover those two controls; ordinary text controls are labelled by the feature
+  that owns them. Pass the invalid state to `Input` or `Textarea` so visual state
+  and `aria-invalid` stay aligned. Use `SearchField` for search and filtering; its
+  trailing slot keeps result navigation or clear actions inside the same visual
+  contract. Range controls, color pickers, and editor inputs remain feature-owned
+  when their interaction model is specialized.
+- Ordinary scrollable surfaces use `ScrollArea`, which applies the appropriate
+  edge fade for its orientation by default and only reveals its scrollbar while
+  hovering or scrolling. Set `fadeEdges={false}` only when masking would damage
+  a specialized surface. CodeMirror, textareas, and embedded document surfaces
+  may retain specialized scrolling when behavior or performance requires it.
+  A container whose exact native viewport is observed by feature code uses
+  `native-hover-scrollbar`; this is an explicit compatibility path, not a second
+  general scrollbar implementation.
+  When an embedded engine owns the scroller and its layout depends on the
+  viewport's own width — the PDF viewer, whose fitted page is scaled to
+  `clientWidth` — `OverlayScrollbars` draws the same bars outside that width and
+  reveals them on the bar rather than on the whole surface, matching the
+  editor's.
+- The command palette (⌘K, and ⌘⇧P) is the one place every app command can be
+  reached by name, on the welcome screen as well as in a project; a typed query
+  also finds the project's files, its Papers and every Settings row. A new
+  app-level action gets an entry in the command table (`src/app/use-command-table.ts`), which drives both the
+  palette, the global shortcuts and the shortcut sheet, with a section
+  (`palette-sections.ts`) and either a `key` or, for a key bound elsewhere, a
+  display-only `shortcut`. Keyboard pickers keep the
+  highlighted row in view as the arrows (and ⌃N / ⌃P) move it, and only a
+  pointer that really moved takes the highlight back.
+- Embedded Settings routes delegate scrolling to the Lattice `ScrollArea`; the
+  embedded document must not expose a second viewport scrollbar.
+
+### Fluid hover
+
+A list or menu lights one row at a time, with one fill that travels between
+rows rather than a background that blinks from one to the next
+(`FluidHoverSurface`, after Fluid Functionalism's Fluid Hover). Menus, selects,
+context menus, the Trellis panel menus, the pickers and the command palette,
+Find in project, the venue suggestions, the project tree and its row menu, the
+Papers list, the TODO list, the document outline and the Settings navigation
+all take it.
+
+- **One fill for both hands.** The pointer moves it to the row under it; the
+  keyboard moves it to the list's own current row, named by `follow`:
+  Radix's `data-highlighted` by default, `[aria-selected="true"]` in a picker
+  listbox, `:focus` in a menu of plain buttons. Whichever hand moved last owns
+  it, and only a pointer that really moved takes it back, never a list
+  scrolling under a resting one. Where the pointer also picks the current row
+  (a picker, Find in project, the venue suggestions), there is never a second
+  highlight: Enter takes what is lit.
+- **Its colour is the row's own.** A list sets `--fluid-hover-fill` to the
+  fill its current row would have (`--control-active-soft` in menus and
+  pickers, so they follow the accent), and the lit row's own background steps
+  aside while the fill is on it.
+- **No dead zones, no false travel.** A hairline gap between rows (the Papers
+  dividers) keeps the nearest row lit; a separator or a section label starts a
+  fresh fade on the far side instead of a slide through it.
+- **Selection and danger stay native.** With `preserveSelection`, the selected
+  row keeps its own fill and the highlight steps off it; disabled and
+  destructive rows are never lit.
+- **It sleeps until a hand comes.** A surface is a span and a listener until
+  the pointer moves over its list, focus enters it, or a key moves its current
+  row; the event that woke it is played back. A list on screen from startup
+  costs nothing until it is used.
+- A list whose keyboard answer is the focus ring (a tree, a sidebar, the
+  Papers rows) passes `follow={null}`: a key clears the fill and leaves the
+  ring alone, and never wakes it. The Papers list moves focus between papers
+  with the arrows, Home and End; Tab still walks every control.
+
+## Dialogs, notifications and empty states
+
+- **A small dialog has one anatomy** (`.modal` in `dialogs.css`): a 36px mark
+  only when the dialog asks something risky (`.modal-icon` with
+  `data-tone="danger"` or `"warning"`; a neutral dialog has none), the serif
+  title role, one line of copy in the body role, fields labelled in the
+  caption role at medium weight in the primary ink and standing 12px apart,
+  default (32px) fields, and the action row 24px below. It stands in the upper
+  third of the window (18vh), so its top stays put as a list in it changes;
+  one taller than the room below rises to keep a 20px margin. A confirmation
+  has no list and often stands over Settings, so it is centred. It closes on
+  Escape, a backdrop click and its Cancel; it draws no X. A tool too large for
+  that shape is a `SheetDialog`, whose title row is a `PanelHeader`; a dialog
+  that holds a whole tool without being a sheet (a review, a conflict, the
+  Overleaf project browser) adds `modal-large` and stays centred, as sheets
+  and Settings do.
+- **One dark slab per dialog at most.** The `primary` Button, filled with the
+  text colour, is the one answer of a dialog or sheet (Save, Create, Apply and
+  sync) or the single way out of a whole page (Restart). Every other lead
+  action, in a toast, popover, card, panel or row, and a chosen option among
+  several, is the `tinted` Button: the accent's wash under neutral text, so
+  it leads without the slab and follows the writer's accent.
+- **Destructive answers.** The confirmation that destroys leads its row as the
+  tinted `danger` Button (`--status-danger-soft`, deeper on hover), never a red
+  slab; a destructive alternative beside a safe default ("Don't save" beside
+  Save) stays a quiet ghost in the danger colour. Cancel takes focus.
+- **Long names stay inside the box.** A file name, path, title, citation key,
+  URL or error can be one unbroken run longer than any dialog. Every dialog,
+  sheet, toast, popover and drawer breaks such a run at its edge
+  (`surfaces.css`'s long-content contract, `overflow-wrap: break-word`), and
+  a flex or grid child holding user content takes `min-width: 0` so it can
+  shrink to its track. Menus, selects, popovers and tooltips wrap anywhere
+  (`menu-surface.ts`, the tooltip) and stop at `--menu-max-width` or the room
+  left in the window. A surface keeps its width: it never grows or scrolls
+  sideways to fit a name. A label that should stay on one line opts out with
+  `truncate` and shows the full name in a tooltip or `title`.
+- **Every notification is a toast** (`app-notify.ts`, drawn by
+  `telemetry/toast-stack.tsx` on Base UI's Toast), the app update included: an
+  opaque card on the lift at the floating level, 320px, `--radius-surface`, a
+  16px level icon, a title at the subtitle's size and leading (13/18) in medium
+  weight, detail in the caption role, the first action as a compact tinted
+  Button and the rest compact secondary, and a compact `CloseButton`. Only the
+  icon's colour changes with severity; the page behind never shows through the
+  words. Toasts stack into a pile, the
+  newest in front with up to two slivers beneath, and fan out while the
+  pointer or keyboard focus (F6) is on them. The clock (6 s, 9 s for an
+  error) holds while the stack is hovered or focused and while the window is
+  in the background; swipe, Esc and × dismiss. A toast with `progress` (a
+  fraction, or `"indeterminate"`) shows a bar and no clock until its owner
+  settles it, moves through `updateAppToastProgress` without a log line per
+  step, and plays the success or error cue when it settles. The stack stands
+  at the bottom right by default, clear of the PDF toolbar and the build's
+  diagnostics card; Settings → Appearance moves it to any corner but the
+  traffic lights', and a stored choice is kept.
+- **Asked for by name, always answered.** An action the writer invoked must
+  show a result even when there is nothing to do: Install LaTeX tools opens the
+  wizard when something is missing and otherwise says LaTeX is ready.
+- **Build feedback stays in place.** The Build button carries the running and
+  finished state; the diagnostics card holds the messages and the raw log. A
+  failed build's log opens at TeX's first error (else the end, where latexmk
+  says why it stopped), and Copy log takes all of it.
+- **A load shows one indicator, and a quick one shows none.** Where the
+  loaded view has a known shape (the PDF page, a document's source or page,
+  the Git drawer, the agent panel, the Overleaf project list), the indicator is a skeleton measured
+  from that view, at its place and size, so the hand-off moves nothing;
+  elsewhere it is one small status. Nothing stands beside it: its words go
+  to assistive technology through `LoadingAnnouncement`, not into a caption
+  or a second spinner. Every indicator waits 150 ms before it fades in
+  (`useLoadingReveal` in `components/ui/loading-reveal.ts`), on a clock
+  that one load's Suspense fallback hands on to the component's own
+  skeleton, so the hand-off neither flickers nor waits again. A document
+  skeleton's surface colour shows at once and only its bars wait.
+- **Empty states offer the way forward.** An empty region says what would be
+  there in a short title (No papers yet, No annotations yet) and offers the
+  next step, with its shortcut taken from the command table; it does not
+  explain the feature in a paragraph under the title.
+  An empty inside a panel titles itself in the subtitle role and sits on the
+  panel, never on a plate of its own; a workspace with every panel closed is
+  the whole window, so its title takes the serif title role and its drawing
+  is larger.
+- **The welcome screen leads with the way back.** The mark and the app's name
+  as a serif title (48px at most, no tagline, no eyebrow and no haze behind it), the three actions, then
+  the recent projects as one card on the lift; the other ways in (Overleaf,
+  ZIP, LaTeX tools) come last and quietest. When launch could not reopen the
+  last project, an inline warning above the card names it instead of silently
+  landing there.
+
+## Motion
+
+One motion system: Fluid Functionalism's three spring tiers, the same in CSS
+and in `motion/react`, and the pop tier for popups. The bigger the thing that
+moves, the slower the tier.
+
+| Tier | Enter | Exit | Use |
+| --- | --- | --- | --- |
+| fast | 80ms spring, no bounce | 60ms tween | hover, focus, fades, tooltips, selection marks |
+| moderate | 160ms spring, no bounce | 120ms tween | travel and small expansion: tab indicators, switches, rows, a view switch's fade |
+| slow | 240ms spring, bounce 0.12 | 160ms tween | large surfaces: dialogs, drawers, split panes, the guided tour, a theme switch, the Polish card unrolling |
+| pop | 220ms spring, bounce 0.2 | 120ms tween | a popup springing from what opened it (`.popup-motion`): menus, selects, popovers, the selection toolbar, completions, hover cards; a count rolling to its next value |
+
+- **CSS takes a tier whole:** `transition: opacity var(--motion-fast)`,
+  `animation: x var(--motion-slow) both`. Each `--motion-*` token pairs a
+  duration with its spring sampled into `linear()` from motion's own solver,
+  so CSS and JS land the same way, and a curve never meets another tier's
+  duration. WebKit before Safari 17.2 gets the nearest cubic curves. The bare
+  `--duration-*` values are for longhands and arithmetic: a
+  `transition-duration` override, a staggered delay.
+- **Exits are one tier quicker** and are plain tweens, so a dismissal reads as
+  final rather than replaying the entrance backwards: `--motion-*-exit` in
+  CSS, `springExit` in JS. A CSS hover leaves on the same tier it entered on;
+  an element that leaves the screen takes the exit.
+- **JS takes the same tiers:** `spring.fast|moderate|slow` and `springExit`
+  from `components/ui/motion-values.ts`. Motion run outside motion/react (an
+  `element.animate()` call, a library's own transition) takes
+  `animationTiming(tier)`. The one physics spring is `MAGNET_SPRING`, which
+  follows the pointer rather than making a timed change.
+- **A dialog leaves as well as arrives.** A closed dialog unmounts with its
+  owner, so `useExitPicture` puts its scrim and card back as an inert picture
+  that plays the slow tier's exit (`data-leaving`), then removes it. It leaves
+  at once when another dialog takes its place in the same commit, when it
+  holds an iframe (which would reload), and under reduced motion.
+- **The Trellis workspace runs on the tiers** (`trellis.css`): a panel arrives
+  on the slow tier, tabs make way for a dragged one on the moderate tier, and
+  tab fills, close buttons, divider grips and drop slots fade on the fast one.
+  A closed panel leaves at once, since its neighbours take its room in the
+  same frame.
+- **Popups spring and leave.** A popup grows 6px and from 95% scale out of
+  its trigger's side on the pop tier, most of the way there within a few
+  frames, so it reads at once; it leaves on the pop exit. CodeMirror's
+  tooltips (completions, hover cards, diagnostics) leave as a picture of
+  themselves, since CodeMirror removes them at once.
+- **Three moments sit off the tiers:** `--motion-draw` (560ms, a stroke
+  drawing itself or an icon turning once), `--motion-flourish` (720ms, a
+  ripple or burst) and `--motion-linger` (1600ms: a mark held on what just
+  changed, then faded, as a jump's target, an edit that landed or a new
+  comment thread). Things that arrive in turn (a suggestion's edits, an
+  accepted suggestion's strikes) wait `--duration-stagger` (40ms) each, at
+  most eight turns. Ambient loops time themselves.
+- `tokens.test.ts` fails on a raw time or curve in a transition, a bare
+  duration where a tier belongs, and a sampled curve that no longer matches
+  its spring.
+
+## Keyboard shortcuts and focus mode
+
+- A key combination is drawn by `key-combos.ts` everywhere it appears: Mac
+  glyphs, ⌘ first (⌘⇧J, ⌘⌥P), a Shift-typed character as itself (⌘?). In the
+  shortcut sheet, a hint or quick open's footer it is `Keycaps`
+  (`src/components/ui/keycaps.tsx`, or `renderKeycaps` where a list draws
+  many), a quiet cap per key. A picker or palette row draws the same `kbd`s
+  as one run of caption text in the secondary ink (its `run` variant), as a
+  menu writes it inline, so a column of shortcuts never outweighs the rows.
+- Shortcuts are never typed out by hand next to a command. The palette draws
+  a command's keys from the command table, a tooltip takes them as `Tip`'s
+  `shortcut` (quiet text after the label, outside the accessible name), and
+  the shortcut sheet (⌘?, or Keyboard shortcuts in the palette) lists every
+  key from the keymaps that bind them, grouped by where they work, so a moved
+  key moves everywhere. The Panels menu's Project, Papers and Agent toggles are
+  ⌘⌥1 to ⌘⌥3 in their order (⌘1 to ⌘9 are the workspaces); in a visual
+  Markdown document the editor's own ⌘⌥1 to ⌘⌥3 (headings) win.
+- Focus mode (⌘⇧D, the Panels menu or the palette) is a layout state, not a
+  second theme: the open documents fill the window in one panel without
+  their tab bar, the PDF beside them if the writer last asked for it, and the
+  titlebar keeps only the window's controls, the document's name and the
+  focus bar on the shell's ground. The source keeps a reading measure
+  (`--focus-mode-measure`). Escape leaves it as the key's last meaning (never
+  in Vim, never past an open dialog, menu or completion list), and leaving
+  brings back the layout it was entered from exactly, a preset included.
+
+## Identity and motion moments
+
+The app icon's woven lattice is Lattice's mark, and a small set of touches
+reuse its vocabulary so the product reads as one thing:
+
+- `LatticeMark` (`src/components/ui/lattice-mark.tsx`) draws the icon live from
+  its own geometry. Its two threads have their own roles, `--mark-weft` (blue)
+  and `--mark-warp` (teal), plus `--mark-glint`. They are identity, not
+  interaction: they color the mark and the one accent stroke of an
+  illustration, never a control, whatever accent the writer chose.
+- Lattice's own code theme ("weft and warp", `--lattice-syntax-*` in
+  `src/styles/theme.css`) borrows the two threads' hues at text lightness:
+  commands in the weft's blue, environment names and math in the warp's teal,
+  arguments and prose in ink, numbers, operators and citations the warm voice. Every
+  token reads at 4.5:1 or more on the editor, its active line and a focused
+  selection, in both themes and under every tint.
+- The source editor's outline rail (`latex-outline-rail.tsx`) marks the
+  section being read in the weft's blue: a place in the paper, like the
+  syntax, not a control's state. The other marks take the secondary ink, and
+  the outline the rail opens selects its current row with a fill as any list
+  does.
+- `EmptyIllustration` (`src/components/ui/empty-illustration.tsx`) holds the
+  empty-state drawings: neutral line work in the host's text color with one
+  weft or warp thread. Pass one to `EmptyState`'s `icon`.
+- `ResearchArt` (`src/components/ui/research-art.tsx`) draws the larger empty
+  states as static isometric objects from a research desk: the clipboard of an
+  empty document panel and of a workspace with every panel closed, the first
+  PDF's proof tray, the empty library's card box, literature search's
+  reading folio before a first search, the reading glass of a reference
+  check with nothing left to review, and, in the Overleaf panel, the margin
+  notes of no comments, the proof marks of no suggestions and the letter rack
+  of an empty chat.
+  They are monochrome, with no thread, and the host sets `--art-paper` to the
+  surface they sit on.
+- The welcome screen's lattice field (`src/project/welcome-lattice.tsx`)
+  repeats the mark as a faint backdrop.
+
+Motion follows three rules:
+
+- **Moments, not loops.** Motion marks a state change (a build ending, the
+  Overleaf channel coming up, a dialog arriving) or something appearing (an
+  empty state, a skeleton). It plays once. The only ambient loops are the
+  welcome screen, which is never on screen while writing, loading
+  placeholders such as the PDF skeleton, which last only until content arrives,
+  and the comments empty state's typing dots, which run only while hovered.
+- **Never under the writer's own typing.** Nothing the writer types animates,
+  and nothing near the editor repeats while they work. What changes the text
+  for them gets one moment (`editor/change-marks.ts`): an accepted
+  suggestion's old words are struck and fold away, then its new words settle
+  in on the success wash; an outside edit that landed (the agent's, another
+  app's) washes the lines it wrote. The document changes at once; the moment
+  is decoration only. A flourish that a remount could replay is guarded, as
+  the Build button's `isFreshOutcome` is.
+- **Paint-cheap and layout-free.** Animate `transform`, `opacity`, and
+  `stroke-dashoffset`; never geometry. Times come from the tiers under Motion
+  (`--motion-draw` for a line drawing itself, `--motion-flourish` for a
+  one-time ripple or burst). Ambient loops longer than the scale may use
+  literal times.
+
+Reduced motion is owned by `src/styles/adaptive-feedback.css`. Its universal
+clamp finishes every one-shot animation at once, so a moment's resting style
+must be its finished frame. The clamp shortens durations, not delays, so a
+staggered moment needs an `animation-delay: 0s` entry there, as the Build
+button's warning pip has. An ambient loop also needs an `animation: none`
+entry there, and its resting style must be invisible or still.
+
+## Migration rule
+
+Migrate one component family at a time and preserve the rendered result before
+making aesthetic changes. Once a role is migrated, new raw values for the same
+role should be treated as a regression.
+
+Production call sites no longer use the legacy `primary-button`,
+`secondary-button`, or `text-button` classes. New code uses `Button`; existing
+`MotionButton` call sites use `buttonClassName` so motion and visual semantics
+remain independent. Dense toolbars and inline thread actions may keep
+feature-owned button geometry when they are not ordinary text actions.

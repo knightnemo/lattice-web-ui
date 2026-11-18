@@ -1,0 +1,349 @@
+import { Suspense, useRef, useState } from "react";
+import { useLingui } from "@lingui/react/macro";
+import { Cloud, FileArchive, Folder, FolderOpen, PackageCheck, Plus, Settings, Sparkles, Wrench } from "lucide-react";
+import { MorphIcon, MotionButton } from "../components/ui/motion";
+import { InfinityLoader } from "../components/ui/activity-icons";
+import { Button } from "../components/ui/button";
+import { buttonClassName } from "../components/ui/button-styles";
+import { Input } from "../components/ui/input";
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "../components/ui/select";
+import { DropdownMenuContent, DropdownMenuItem, DropdownMenuLabel, DropdownMenuSeparator } from "../components/ui/dropdown-menu";
+import type { ProjectVenue, RenameTarget } from "../app-types";
+import type { RecentProject } from "../settings/app-settings";
+import { beginWindowDrag, titleBarDoubleClick } from "../app-utils";
+import { ModalDialog } from "../components/ui/modal-dialog";
+import { mentionsAny } from "../platform/ipc-error-phrases";
+import { LatticeMark } from "../components/ui/lattice-mark";
+import { InlineMessage } from "../components/ui/inline-message";
+import { ChunkGate } from "../components/chunk-gate";
+import { chunk, lazyChunk } from "../lib/lazy-chunk";
+import { WelcomeLattice } from "./welcome-lattice";
+import { welcomeDeskProjects } from "./first-pages";
+import { WelcomeDesk } from "./welcome-desk";
+import { PROJECT_VENUES } from "./project-venues";
+
+// Loaded on demand: only the new-project dialog needs it, and the eager-JS budget is tight.
+const loadLocalTemplates = chunk(() => import("./local-templates"));
+const LocalTemplates = lazyChunk(loadLocalTemplates, (module) => module.LocalTemplates);
+
+/** A recent project launch could not reopen, with the backend's reason. */
+export type UnopenedProject = RecentProject & { reason: string };
+
+/* eslint-disable lingui/no-unlocalized-strings -- phrases matched in backend error text */
+/** The backend's errors for a folder that is not there any more (project::classify_open_error's not_found). */
+export const NO_SUCH_FILE = "no such file";
+export const NOT_A_FOLDER = "not a folder";
+/* eslint-enable lingui/no-unlocalized-strings */
+
+function isMissingFolder(reason: string) {
+  return mentionsAny(reason, [NO_SUCH_FILE, NOT_A_FOLDER]);
+}
+
+export function Welcome(props: {
+  busyLabel: string | null;
+  createOpen: boolean;
+  createError: string | null;
+  projectName: string;
+  projectVenue: ProjectVenue;
+  onOpenCreate: () => void;
+  onCloseCreate: () => void;
+  setProjectName: (value: string) => void;
+  setProjectVenue: (value: ProjectVenue) => void;
+  onCreate: () => void;
+  onOpen: () => void;
+  onImportZip: () => void;
+  onOpenTutorial: () => void;
+  /** Projects to reopen; `unopenedProject` is the one launch could not. */
+  recentProjects: RecentProject[];
+  unopenedProject: UnopenedProject | null;
+  onRecent: (path: string) => void;
+  onSettings: () => void;
+  onInstallTex: () => void;
+  onOpenOverleaf?: () => void;
+}) {
+  const { t } = useLingui();
+  // The welcome screen lays out a few projects to reopen; the switcher in a project goes deeper.
+  const recents = welcomeDeskProjects(props.recentProjects, props.unopenedProject?.path);
+  const unopened = props.unopenedProject;
+  const unopenedName = unopened?.name;
+  const unopenedReason = unopened?.reason ?? "";
+  return (
+    <div className="welcome-screen">
+      <div className="welcome-titlebar" onMouseDown={beginWindowDrag} onDoubleClick={titleBarDoubleClick}>
+        <button className="icon-button" onClick={props.onSettings} title={t`Settings`}><Settings size={16} /></button>
+      </div>
+      <WelcomeLattice />
+      <div className="welcome-content">
+        <div className="brand-mark"><LatticeMark size={34} motion="weave" /></div>
+        <h1>Lattice</h1>
+        <div className="welcome-actions">
+          <MotionButton
+            className={buttonClassName({ variant: "primary" })}
+            magnetic
+            onClick={props.onOpenCreate}
+          >
+            <Plus size={17} /> {t`New project`}
+          </MotionButton>
+          <MotionButton
+            className={buttonClassName({ variant: "secondary" })}
+            onClick={props.onOpen}
+          >
+            <MorphIcon size={17} idle={<Folder size={17} />} hover={<FolderOpen size={17} />} />
+            {t`Open folder`}
+          </MotionButton>
+          <MotionButton
+            className={buttonClassName({ variant: "ghost" })}
+            disabled={Boolean(props.busyLabel)}
+            onClick={props.onOpenTutorial}
+          >
+            <Sparkles size={17} /> {t`Guided tutorial`}
+          </MotionButton>
+        </div>
+        {(unopenedName || recents.length > 0) && (
+          <section className="welcome-recents" aria-label={t`Recent projects`}>
+            {unopenedName && (
+              <InlineMessage level="warning" className="welcome-unopened">
+                {isMissingFolder(unopenedReason)
+                  ? t`Couldn’t reopen “${unopenedName}”. Its folder may have been moved or renamed`
+                  : t`Couldn’t reopen “${unopenedName}”: ${unopenedReason}`}
+              </InlineMessage>
+            )}
+            {recents.length > 0 && (
+              <WelcomeDesk projects={recents} disabled={Boolean(props.busyLabel)} onOpen={props.onRecent} />
+            )}
+          </section>
+        )}
+        <div className="welcome-more">
+          {props.onOpenOverleaf && (
+            <button className="welcome-more-action" onClick={props.onOpenOverleaf}>
+              <Cloud size={15} /> {t`Open from Overleaf`}
+            </button>
+          )}
+          <button className="welcome-more-action" onClick={props.onImportZip}>
+            <FileArchive size={15} /> {t`Import ZIP`}
+          </button>
+          <button className="welcome-more-action" onClick={props.onInstallTex}>
+            <Wrench size={15} /> {t`Install LaTeX tools`}
+          </button>
+        </div>
+        {props.busyLabel && <p className="busy-label"><InfinityLoader size={15} /> {props.busyLabel}</p>}
+      </div>
+      {props.createOpen && (
+        <CreateProjectDialog
+          projectName={props.projectName}
+          setProjectName={props.setProjectName}
+          projectVenue={props.projectVenue}
+          setProjectVenue={props.setProjectVenue}
+          error={props.createError}
+          onCreate={props.onCreate}
+          onClose={props.onCloseCreate}
+        />
+      )}
+    </div>
+  );
+}
+
+export function CreateProjectDialog(props: {
+  currentProject?: boolean;
+  projectName: string;
+  setProjectName: (value: string) => void;
+  projectVenue: ProjectVenue;
+  setProjectVenue: (value: ProjectVenue) => void;
+  error: string | null;
+  onCreate: () => void;
+  onClose: () => void;
+}) {
+  const { t } = useLingui();
+  return (
+    <ModalDialog label={t`Create a research project`} onClose={props.onClose}>
+      <div className="modal create-project-modal">
+        <h2>{t`Create a research project`}</h2>
+        <label>
+          {t`Project name`}
+          <Input autoFocus value={props.projectName} onChange={(event) => props.setProjectName(event.target.value)} onKeyDown={(event) => event.key === "Enter" && props.onCreate()} />
+        </label>
+        <div className="venue-picker">
+          <span className="venue-picker-label">{t`Venue template`}</span>
+          <Select
+            value={props.projectVenue.startsWith("local:") ? "" : props.projectVenue}
+            onValueChange={(value) => props.setProjectVenue(value as ProjectVenue)}
+          >
+            <SelectTrigger aria-label={t`Venue template`}>
+              <SelectValue placeholder={t`Choose a built-in template`} />
+            </SelectTrigger>
+            <SelectContent className="venue-picker-content" position="popper" align="start">
+              <SelectItem value="blank">{t`Blank article`}</SelectItem>
+              <SelectItem value="chinese-article">{t`Chinese article (ctexart)`}</SelectItem>
+              {PROJECT_VENUES.map(({ id, label: name, edition, preprint }) => (
+                // The trigger shows the chosen item, so its edition and draft
+                // mode are part of the name: ICLR's and CVPR's styles have no
+                // preprint mode, and a thesis is named by its university.
+                <SelectItem key={id} value={id}>
+                  {id === "thuthesis" ? t`Tsinghua University thesis · ${name}`
+                    : id === "ustcthesis" ? t`USTC thesis · ${name}`
+                      : edition === undefined ? t`${name} · preprint`
+                        : preprint ? t`${name} ${edition} · preprint` : t`${name} ${edition}`}
+                </SelectItem>
+              ))}
+            </SelectContent>
+          </Select>
+        </div>
+        <Suspense fallback={null}>
+          <ChunkGate chunk={loadLocalTemplates}>
+            <LocalTemplates selected={props.projectVenue} onSelect={props.setProjectVenue} currentProject={props.currentProject} />
+          </ChunkGate>
+        </Suspense>
+        {props.error && <p className="field-error" role="alert">{props.error}</p>}
+        <div className="modal-actions">
+          <Button variant="ghost" onClick={props.onClose}>{t`Cancel`}</Button>
+          <MotionButton className={buttonClassName({ variant: "primary" })} onClick={props.onCreate}>{t`Choose location`}</MotionButton>
+        </div>
+      </div>
+    </ModalDialog>
+  );
+}
+
+export function RenameDialog(props: {
+  target: RenameTarget;
+  error: string | null;
+  onRename: (name: string) => Promise<void>;
+  onClose: () => void;
+}) {
+  const { t } = useLingui();
+  const target = props.target;
+  const [name, setName] = useState(() => (
+    target.kind === "label" ? target.label
+      : target.kind === "citation" ? target.key
+        : target.kind === "environment" ? target.name
+          : "equation"
+  ));
+  const [busy, setBusy] = useState(false);
+  // Only a rename that reaches past the cursor says where else it edits.
+  const presentations: Record<RenameTarget["kind"], [title: string, copy: string | null]> = {
+    label: [t`Rename label`, t`Updates every \\ref to it`],
+    citation: [t`Rename citation key`, t`Updates the .bib entry and every \\cite`],
+    environment: [t`Rename environment`, null],
+    "wrap-environment": [t`Wrap in environment`, null],
+  };
+  const [title, copy] = presentations[target.kind];
+  const submit = async () => {
+    if (!name.trim() || busy) return;
+    setBusy(true);
+    await props.onRename(name.trim());
+    setBusy(false);
+  };
+  return (
+    <ModalDialog label={title} onClose={props.onClose} closeDisabled={busy}>
+      <div className="modal rename-modal">
+        <h2>{title}</h2>
+        {copy && <p>{copy}</p>}
+        <label>
+          {t`Name`}
+          <Input
+            autoFocus
+            aria-label={t`New name`}
+            value={name}
+            onChange={(event) => setName(event.target.value)}
+            onKeyDown={(event) => {
+              if (event.key === "Enter") void submit();
+            }}
+          />
+        </label>
+        {props.error && <p className="field-error" role="alert">{props.error}</p>}
+        <div className="modal-actions">
+          <Button variant="ghost" disabled={busy} onClick={props.onClose}>{t`Cancel`}</Button>
+          <MotionButton
+            className={buttonClassName({ variant: "primary" })}
+            disabled={busy || !name.trim()}
+            onClick={() => void submit()}
+          >
+            {busy ? t`Renaming…` : t`Rename`}
+          </MotionButton>
+        </div>
+      </div>
+    </ModalDialog>
+  );
+}
+
+/** How many other recent projects the switcher offers before it stops. */
+const MAX_RECENT_PROJECT_ITEMS = 5;
+
+export function ProjectMenu(props: {
+  currentPath: string;
+  recentProjects: RecentProject[];
+  busyLabel: string | null;
+  onRecent: (path: string) => void;
+  onOpen: () => void;
+  onNew: () => void;
+  onOpenTutorial: () => void;
+  onExportZip: () => void;
+  onExportArxiv: () => void;
+  onOpenOverleaf?: () => void;
+  onSettings: () => void;
+}) {
+  const { t } = useLingui();
+  // The stored list runs deeper (share recovery resolves a prior root against
+  // it), but a switcher is for the few projects you move between — past five
+  // the menu turns into a scroll and "Open another folder" is the better path.
+  const alternatives = props.recentProjects
+    .filter((item) => item.path !== props.currentPath)
+    .slice(0, MAX_RECENT_PROJECT_ITEMS);
+  const busy = Boolean(props.busyLabel);
+  // Settings opens as a transition and puts focus in its search field, which
+  // can land before the closing menu returns focus to its trigger.
+  const handsOffFocusRef = useRef(false);
+  return (
+    <DropdownMenuContent
+      align="center"
+      sideOffset={6}
+      className="w-52"
+      onCloseAutoFocus={(event) => {
+        if (!handsOffFocusRef.current) return;
+        handsOffFocusRef.current = false;
+        event.preventDefault();
+      }}
+    >
+      {/* With no other project to go back to, the menu starts at its actions. */}
+      {alternatives.length > 0 && (
+        <>
+          <DropdownMenuLabel>{t`Recent projects`}</DropdownMenuLabel>
+          {alternatives.map((item) => (
+            <DropdownMenuItem key={item.path} title={item.path} disabled={busy} onSelect={() => props.onRecent(item.path)}>
+              <Folder />
+              <span className="truncate font-medium">{item.name}</span>
+            </DropdownMenuItem>
+          ))}
+          <DropdownMenuSeparator />
+        </>
+      )}
+      <DropdownMenuItem onSelect={props.onOpen}>
+        <FolderOpen /> {t`Open another folder`}
+      </DropdownMenuItem>
+      <DropdownMenuItem onSelect={props.onNew}><Plus /> {t`New project`}</DropdownMenuItem>
+      {props.onOpenOverleaf && (
+        <DropdownMenuItem disabled={busy} onSelect={props.onOpenOverleaf}>
+          <Cloud /> {t`Open from Overleaf`}
+        </DropdownMenuItem>
+      )}
+      <DropdownMenuItem onSelect={props.onExportZip}><FileArchive /> {t`Export ZIP`}</DropdownMenuItem>
+      <DropdownMenuItem onSelect={props.onExportArxiv}><PackageCheck /> {t`Export for arXiv…`}</DropdownMenuItem>
+      <DropdownMenuSeparator />
+      <DropdownMenuItem disabled={busy} onSelect={props.onOpenTutorial}>
+        <Sparkles /> {t`Guided tutorial`}
+      </DropdownMenuItem>
+      <DropdownMenuItem
+        onSelect={() => {
+          handsOffFocusRef.current = true;
+          props.onSettings();
+        }}
+      >
+        <Settings /> {t`Settings`}
+      </DropdownMenuItem>
+      {props.busyLabel && (
+        <p className="flex items-center gap-2 px-2 py-1.5 text-[length:var(--type-body-compact-size)] leading-[var(--type-body-compact-line-height)] text-muted-foreground">
+          <InfinityLoader size={12} /> {props.busyLabel}
+        </p>
+      )}
+    </DropdownMenuContent>
+  );
+}

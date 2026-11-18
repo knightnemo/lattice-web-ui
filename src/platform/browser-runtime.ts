@@ -1,0 +1,517 @@
+import type { BrowserRelay } from "./browser-relay";
+import { BrowserEventRegistry, physicalWindowSize } from "./browser-events";
+export { BrowserEventRegistry } from "./browser-events";
+export { encodeBridgeValue, decodeBridgeValue } from "./browser-bridge-value";
+import { APPEARANCE_KEY, loadThemePreference, systemTheme } from "../settings/app-settings";
+import { BROWSER_ENTRY_PORT } from "./flavor";
+
+type Callback = (payload: unknown) => void;
+
+interface BrowserInternals {
+  invoke: (command: string, args?: unknown, options?: unknown) => Promise<unknown>;
+  transformCallback: (callback?: Callback, once?: boolean) => number;
+  unregisterCallback: (id: number) => void;
+  runCallback: (id: number, payload: unknown) => void;
+  callbacks: Map<number, Callback>;
+  convertFileSrc: (path: string) => string;
+  metadata: {
+    currentWindow: { label: string };
+    currentWebview: { label: string; windowLabel: string };
+  };
+  plugins: { path: { sep: string; delimiter: string } };
+}
+
+interface RuntimeWindow {
+  __TAURI_INTERNALS__?: BrowserInternals;
+  __TAURI_EVENT_PLUGIN_INTERNALS__?: {
+    unregisterListener: (event: string, eventId: number) => void;
+  };
+  __LATTICE_BROWSER_RUNTIME__?: boolean;
+  isTauri?: boolean;
+}
+
+export interface BrowserRuntimeConfig {
+  token: string;
+  bridgePort: number;
+  label: string;
+}
+
+let runtimeError: string | null = null;
+let browserRuntime = false;
+let runtimeReady: Promise<void> = Promise.resolve();
+let runtimeDetached = false;
+const detachListeners = new Set<() => void>();
+let browserSession: BrowserRuntimeConfig | null = null;
+
+// The page stays alive under the status overlay after another tab or the
+// Lattice app takes over, but its bridge no longer reaches the native host.
+// Anything embedded here that accepts edits must stop doing so: nothing on
+// this page can apply them to the project any more.
+export function detachRuntime(): void {
+  if (runtimeDetached) return;
+  runtimeDetached = true;
+  for (const listener of [...detachListeners]) listener();
+}
+
+// Shown before a saved locale is loaded (or after the app has gone), so these
+// bootstrap messages carry their own English and Chinese text: the saved
+// interface language lives in localStorage, which the native host mirrors
+// into this page only once the bridge connects, and Lingui is activated after
+// that. They are read at call time, so a live page follows the saved setting.
+/* eslint-disable lingui/no-unlocalized-strings -- self-translated bootstrap text, see above */
+const RUNTIME_MESSAGES = {
+  "app-disconnected": [
+    "The local Lattice app disconnected.",
+    "与本地 Lattice 应用的连接已断开。",
+  ],
+  "connect-failed": [
+    "Could not connect to the local Lattice app.",
+    "无法连接到本地 Lattice 应用。",
+  ],
+  "entry-status": [
+    "The local Lattice entry returned {status}.",
+    "本地 Lattice 入口返回了 {status}。",
+  ],
+  "entry-expired": [
+    "This Lattice link has expired or was already used. Open the workspace in your browser again from the Lattice app.",
+    "此 Lattice 链接已过期或已被使用。请从 Lattice 应用中再次在浏览器中打开工作区。",
+  ],
+  "entry-invalid-session": [
+    "The local Lattice entry returned an invalid session.",
+    "本地 Lattice 入口返回了无效的会话。",
+  ],
+  "open-from-app": [
+    "Open this page from the installed Lattice app to use its local tools.",
+    "请从已安装的 Lattice 应用中打开此页面，以使用其本地工具。",
+  ],
+  "handoff-timeout": [
+    "The local Lattice app did not finish the browser handoff.",
+    "本地 Lattice 应用未能完成浏览器切换。",
+  ],
+  "browser-replaced": [
+    "This Lattice workspace is open in another browser tab.",
+    "此 Lattice 工作区已在另一个浏览器标签页中打开。",
+  ],
+  "desktop-returned": [
+    "Back in the Lattice app. You can close this tab.",
+    "已回到 Lattice 应用，可以关闭此标签页。",
+  ],
+  "app-quit": [
+    "Lattice quit. Open it again, then reload this tab.",
+    "Lattice 已退出。重新打开后，刷新此标签页。",
+  ],
+  reload: ["Reload", "刷新"],
+} satisfies Record<string, [english: string, chinese: string]>;
+/* eslint-enable lingui/no-unlocalized-strings */
+
+export function runtimeMessage(message: keyof typeof RUNTIME_MESSAGES, values: Record<string, string> = {}): string {
+  let configuredLanguage: unknown;
+  try {
+    configuredLanguage = (JSON.parse(localStorage.getItem(APPEARANCE_KEY) ?? "{}") as {
+      interfaceLanguage?: unknown;
+    }).interfaceLanguage;
+  } catch {
+    // A malformed preference falls back to the browser language, just as the
+    // main settings loader does.
+  }
+  const chinese = configuredLanguage === "en" || configuredLanguage === "zh-CN"
+    ? configuredLanguage === "zh-CN"
+    : navigator.languages[0]?.toLocaleLowerCase().startsWith("zh");
+  return RUNTIME_MESSAGES[message][chinese ? 1 : 0]
+    .replace(/\{(\w+)\}/g, (placeholder, name: string) => values[name] ?? placeholder);
+}
+
+export interface RuntimeStatus {
+  message: string;
+  action?: { label: string; run: () => void };
+}
+
+const RUNTIME_STATUS_ID = "lattice-browser-runtime-error";
+const RUNTIME_STATUS_MESSAGE_ID = "lattice-browser-runtime-message";
+
+/** What {@link blockApp} made inert, so it never lifts an inert it did not set. */
+const madeInert = new Set<Element>();
+let appObserver: MutationObserver | null = null;
+/** Where focus belongs while the runtime status covers the app. */
+let statusFocus: HTMLElement | null = null;
+
+/**
+ * Keep keys pressed on the runtime status away from the app. `inert` disables
+ * the app's own elements, not its window and document listeners: a key on the
+ * status's Reload button still reaches the global shortcut dispatcher (⌘, opens
+ * settings, ⌘S saves and builds) and the capture-phase Escape handlers of the
+ * app's dialogs. This module loads before the app, so this is the first capture
+ * listener on `window` and stopping the event here keeps it from every later
+ * listener on the page. Default actions still run: Enter and Space press
+ * Reload, and the browser's own ⌘R reloads.
+ *
+ * The status is a modal with at most one focus stop, so Tab and Shift+Tab stay
+ * on it instead of leaving for the browser's chrome or the document.
+ */
+function guardStatusKeys(event: KeyboardEvent): void {
+  if (!statusFocus?.isConnected) return;
+  event.stopImmediatePropagation();
+  if (event.type === "keydown" && event.key === "Tab") {
+    event.preventDefault();
+    statusFocus.focus({ preventScroll: true });
+  }
+}
+for (const type of ["keydown", "keypress", "keyup"] as const) {
+  window.addEventListener(type, guardStatusKeys, { capture: true });
+}
+
+/**
+ * Make everything on the page but the runtime status inert: no focus, no
+ * keyboard or pointer input, even for a dialog the app opens meanwhile. An
+ * editor hidden behind the status would otherwise keep taking keystrokes.
+ */
+function blockApp(): void {
+  if (!appObserver) {
+    appObserver = new MutationObserver(inertApp);
+    // `open` across the page, for a dialog the app shows while the status is up.
+    appObserver.observe(document.body, { childList: true, subtree: true, attributeFilter: ["open"] });
+  }
+  inertApp();
+}
+
+function inertApp(): void {
+  // The status blocks the app only while it covers it.
+  if (!document.getElementById(RUNTIME_STATUS_ID)) {
+    unblockApp();
+    return;
+  }
+  for (const element of document.body.children) {
+    if (element.id === RUNTIME_STATUS_ID || element.hasAttribute("inert")) continue;
+    element.setAttribute("inert", "");
+    madeInert.add(element);
+  }
+  closeAppDialogs();
+}
+
+/**
+ * Close the app's open native dialogs. A `showModal()` dialog (the expanded
+ * image in Markdown preview) sits in the browser's top layer, above any
+ * z-index, and an active modal escapes its ancestor's `inert` and makes the
+ * rest of the page inert instead: it would hide the status and keep focus.
+ * Its owner cannot close it either, since {@link guardStatusKeys} keeps Escape
+ * from its key handler. `close()` fires the dialog's `close` event, the same
+ * path a dismissal takes, so its owner's state follows. A non-modal open
+ * dialog only lies under the status, but the app behind it is done, so it
+ * closes too rather than telling the two apart.
+ */
+function closeAppDialogs(): void {
+  for (const dialog of document.body.querySelectorAll("dialog[open]")) {
+    if (dialog instanceof HTMLDialogElement) dialog.close();
+  }
+}
+
+function unblockApp(): void {
+  statusFocus = null;
+  appObserver?.disconnect();
+  appObserver = null;
+  for (const element of madeInert) element.removeAttribute("inert");
+  madeInert.clear();
+}
+
+/**
+ * The theme the page shows. A runtime status can cover it before React has
+ * applied the saved preference, and the dark palette follows `data-theme`
+ * alone, so apply that preference first.
+ */
+export function applyStoredTheme(): "light" | "dark" {
+  const root = document.documentElement;
+  if (root.dataset.theme !== "dark" && root.dataset.theme !== "light") {
+    const preference = loadThemePreference();
+    root.dataset.theme = preference === "system" ? systemTheme() : preference;
+  }
+  return root.dataset.theme === "dark" ? "dark" : "light";
+}
+
+/**
+ * Cover the page with a short status, optionally with one button. It is a
+ * modal alert: the app behind it is inert, focus moves to its action and stays
+ * there, and no key reaches the app (see {@link guardStatusKeys}).
+ */
+export function showRuntimeStatus(status: RuntimeStatus): void {
+  document.getElementById(RUNTIME_STATUS_ID)?.remove();
+  const overlay = document.createElement("div");
+  overlay.id = RUNTIME_STATUS_ID;
+  overlay.setAttribute("role", "alertdialog");
+  overlay.setAttribute("aria-modal", "true");
+  overlay.setAttribute("aria-labelledby", RUNTIME_STATUS_MESSAGE_ID);
+  overlay.tabIndex = -1;
+  // The app's own surface and text roles, so a dark workspace fails into a
+  // dark screen; system colors only where the theme has not loaded.
+  const overlayStyle = `position:fixed;inset:0;z-index:2147483647;display:grid;place-items:center;padding:var(--space-16);font:var(--font-ui-body) system-ui;color-scheme:${applyStoredTheme()};color:var(--text-primary, CanvasText);background:var(--surface-app, Canvas);outline:none`;
+  overlay.style.cssText = overlayStyle;
+  const panel = document.createElement("div");
+  const panelStyle = "display:grid;justify-items:center;gap:var(--space-4);max-width:28rem;text-align:center";
+  panel.style.cssText = panelStyle;
+  const message = document.createElement("p");
+  message.id = RUNTIME_STATUS_MESSAGE_ID;
+  const messageStyle = "margin:0;color:var(--text-secondary, inherit)";
+  message.style.cssText = messageStyle;
+  message.textContent = status.message;
+  panel.append(message);
+  const action = status.action;
+  let button: HTMLButtonElement | null = null;
+  if (action) {
+    button = document.createElement("button");
+    button.type = "button";
+    const buttonStyle = "margin-top:var(--space-6);padding:var(--space-3) var(--space-8);border:0;border-radius:var(--radius-control);font:inherit;cursor:pointer;color:var(--control-active-contrast, ButtonText);background:var(--control-active, ButtonFace)";
+    button.style.cssText = buttonStyle;
+    button.textContent = action.label;
+    button.addEventListener("click", () => action.run());
+    panel.append(button);
+  }
+  overlay.append(panel);
+  document.body.append(overlay);
+  blockApp();
+  statusFocus = button ?? overlay;
+  statusFocus.focus({ preventScroll: true });
+}
+
+async function installBrowserRuntime(config: BrowserRuntimeConfig): Promise<void> {
+  const { BrowserRelay } = await import("./browser-relay");
+  const runtimeWindow = window as unknown as RuntimeWindow;
+  const callbacks = new Map<number, Callback>();
+  const unregisterCallback = (id: number) => callbacks.delete(id);
+  const runCallback = (id: number, payload: unknown) => callbacks.get(id)?.(payload);
+  const transformCallback = (callback?: Callback, once = false): number => {
+    let id: number;
+    do {
+      id = crypto.getRandomValues(new Uint32Array(1))[0];
+    } while (callbacks.has(id));
+    callbacks.set(id, (payload) => {
+      if (once) callbacks.delete(id);
+      callback?.(payload);
+    });
+    return id;
+  };
+  const events = new BrowserEventRegistry(runCallback);
+  const relay = new BrowserRelay(config, callbacks);
+  mirrorLocalStorage(relay);
+
+  const invoke = async (command: string, args: unknown = {}, options?: unknown) => {
+    const local = LOCAL_COMMANDS.get(command);
+    if (local) return local(args as { value?: unknown });
+    const dialog = BROWSER_DIALOG_COMMANDS.get(command);
+    if (dialog) return relay.invoke(dialog, args, options);
+    if (command === "plugin:event|listen") {
+      const eventArgs = args as { event: string; handler: number };
+      const localEventId = events.listen(eventArgs.event, eventArgs.handler);
+      if (localEventId !== null) return localEventId;
+      const eventId = await relay.invoke(command, args, options) as number;
+      events.track(eventArgs.event, eventId, eventArgs.handler);
+      return eventId;
+    }
+    if (command === "plugin:event|unlisten" && (args as { eventId: number }).eventId < 0) return undefined;
+    return relay.invoke(command, args, options);
+  };
+
+  runtimeWindow.__TAURI_INTERNALS__ = {
+    invoke,
+    transformCallback,
+    unregisterCallback,
+    runCallback,
+    callbacks,
+    convertFileSrc: (path) => path,
+    metadata: {
+      currentWindow: { label: config.label },
+      currentWebview: { label: config.label, windowLabel: config.label },
+    },
+    plugins: { path: { sep: "/", delimiter: ":" } },
+  };
+  runtimeWindow.__TAURI_EVENT_PLUGIN_INTERNALS__ = {
+    unregisterListener: (event, eventId) => events.unregister(event, eventId, unregisterCallback),
+  };
+  runtimeWindow.__LATTICE_BROWSER_RUNTIME__ = true;
+  runtimeWindow.isTauri = true;
+  browserRuntime = true;
+  browserSession = config;
+  return relay.storageReady;
+}
+
+function mirrorLocalStorage(relay: BrowserRelay): void {
+  for (const method of ["setItem", "removeItem", "clear"] as const) {
+    const original: (this: Storage, ...args: string[]) => void = Storage.prototype[method];
+    Storage.prototype[method] = function (this: Storage, ...args: string[]) {
+      original.apply(this, args);
+      if (this === localStorage) relay.syncStorage();
+    };
+  }
+}
+
+// Window commands the page answers itself. Anything else goes to the native host.
+/* eslint-disable lingui/no-unlocalized-strings -- Tauri command names */
+const ignored = () => undefined;
+export const LOCAL_COMMANDS = new Map<string, (payload: { value?: unknown }) => unknown>([
+  // A browser tab has no window material, so the page stays opaque.
+  ["set_window_material", () => "unsupported"],
+  ["plugin:window|set_min_size", ignored],
+  ["plugin:window|start_dragging", ignored],
+  ["align_traffic_lights", () => null],
+  // A tab has no window to zoom or minimize from its title bar.
+  ["title_bar_double_click", ignored],
+  ["plugin:window|scale_factor", () => window.devicePixelRatio],
+  ["plugin:window|inner_size", physicalWindowSize],
+  ["plugin:window|outer_size", physicalWindowSize],
+  ["plugin:window|is_focused", () => document.hasFocus()],
+  ["plugin:window|is_fullscreen", () => Boolean(document.fullscreenElement)],
+  ["plugin:window|set_title", ({ value }) => {
+    if (typeof value === "string") document.title = value;
+  }],
+  ["plugin:webview|set_webview_zoom", ({ value }) => {
+    if (typeof value !== "number") return;
+    document.documentElement.style.zoom = String(value);
+  }],
+]);
+
+// Tauri's dialog plugin parents native panels to the invoking WebView. That
+// parent is the hidden bridge in browser mode, which leaves the panel behind
+// the browser. The browser-specific commands use an unparented system panel
+// while preserving the plugin's request and return shapes.
+const BROWSER_DIALOG_COMMANDS = new Map([
+  ["plugin:dialog|open", "browser_dialog_open"],
+  ["plugin:dialog|save", "browser_dialog_save"],
+]);
+/* eslint-enable lingui/no-unlocalized-strings */
+
+function validBrowserConfig(
+  token: string | null,
+  bridgePort: number,
+  label: string | null,
+): BrowserRuntimeConfig | null {
+  if (!token || !label || !Number.isInteger(bridgePort) || bridgePort < 1 || bridgePort > 65_535) {
+    return null;
+  }
+  return { token, bridgePort, label };
+}
+
+function persistBrowserConfig(config: BrowserRuntimeConfig): void {
+  sessionStorage.setItem("lattice.browser-token", config.token);
+  sessionStorage.setItem("lattice.browser-port", String(config.bridgePort));
+  sessionStorage.setItem("lattice.browser-label", config.label);
+}
+
+function readStoredBrowserConfig(): BrowserRuntimeConfig | null {
+  return validBrowserConfig(
+    sessionStorage.getItem("lattice.browser-token"),
+    Number(sessionStorage.getItem("lattice.browser-port")),
+    sessionStorage.getItem("lattice.browser-label"),
+  );
+}
+
+async function requestBrowserSession(
+  bridgePort: number,
+  resumeToken?: string,
+  entry?: string,
+): Promise<BrowserRuntimeConfig> {
+  const endpoint = new URL(`http://127.0.0.1:${bridgePort}/__lattice_session`);
+  if (resumeToken) endpoint.searchParams.set("token", resumeToken);
+  if (entry !== undefined) endpoint.searchParams.set("entry", entry);
+  const response = await fetch(endpoint, { cache: "no-store", mode: "cors" });
+  // 410: the explicit entry was used, expired or never issued. It selects no
+  // workspace rather than another one.
+  if (response.status === 410) throw new Error(runtimeMessage("entry-expired"));
+  if (!response.ok) {
+    throw new Error(runtimeMessage("entry-status", { status: String(response.status) }));
+  }
+  const value = await response.json() as Partial<BrowserRuntimeConfig>;
+  const config = validBrowserConfig(
+    typeof value.token === "string" ? value.token : null,
+    Number(value.bridgePort),
+    typeof value.label === "string" ? value.label : null,
+  );
+  if (!config) throw new Error(runtimeMessage("entry-invalid-session"));
+  persistBrowserConfig(config);
+  return config;
+}
+
+async function initializeBrowserRuntime(): Promise<void> {
+  const stored = readStoredBrowserConfig();
+  // A perf-lab build serves its pages from the lab's own port so it never
+  // meets a real Lattice on 18452.
+  const entryPort = import.meta.env.VITE_PERF_LAB === "1" ? window.location.port : BROWSER_ENTRY_PORT;
+  const fixedEntry = window.location.hostname === "127.0.0.1"
+    && window.location.port === entryPort;
+  const search = new URLSearchParams(window.location.search);
+  const developmentEntry = search.get("latticeBrowser") === "1";
+  // The app opens the default browser on a single-use `?entry=<nonce>`, never
+  // on a token: the address lands in process arguments and browser history.
+  // Its presence selects, not its value: an empty `?entry=` is a stale link
+  // too, not a plain reload of the tab's stored workspace.
+  const entry = search.get("entry") ?? undefined;
+  if (!stored && !fixedEntry && !developmentEntry && entry === undefined) {
+    runtimeError = runtimeMessage("open-from-app");
+    return;
+  }
+  // An explicit entry is the only selector: the session this tab stored for
+  // another workspace must not override it. Both are kept until the
+  // exchange succeeds, so a stale entry leaves the tab's session intact.
+  const config = await requestBrowserSession(
+    stored?.bridgePort ?? Number(entryPort),
+    entry === undefined ? stored?.token : undefined,
+    entry,
+  );
+  if (developmentEntry || entry !== undefined) {
+    const url = new URL(window.location.href);
+    url.searchParams.delete("latticeBrowser");
+    url.searchParams.delete("entry");
+    window.history.replaceState(null, "", `${url.pathname}${url.search}${url.hash}`);
+  }
+  await installBrowserRuntime(config);
+}
+
+function isLoopbackPage(): boolean {
+  return window.location.protocol === "http:"
+    && (window.location.hostname === "127.0.0.1" || window.location.hostname === "localhost");
+}
+
+const runtimeWindow = window as unknown as RuntimeWindow;
+if (!runtimeWindow.__TAURI_INTERNALS__ && !isHeadlessHosted() && isLoopbackPage()) {
+  runtimeReady = initializeBrowserRuntime();
+}
+
+export function isBrowserHosted(): boolean {
+  return browserRuntime || isHeadlessHosted();
+}
+
+export function isHeadlessHosted(): boolean {
+  return (window as Window & { __LATTICE_HEADLESS__?: boolean }).__LATTICE_HEADLESS__ === true;
+}
+
+/**
+ * Bytes `[start, end)` of a project PDF, read from the browser host directly:
+ * over the bridge, binary replies travel as base64 twice. The host checks the
+ * session token, sent in a header so it never lands in a URL, and serves only
+ * the checked version of a PDF inside this session's project.
+ */
+export async function readBrowserHostAsset(range: {
+  path: string;
+  version: string;
+  start: number;
+  end: number;
+}): Promise<ArrayBuffer> {
+  return import("./browser-host-assets").then(({ readAsset }) => readAsset(
+    range, browserSession, isHeadlessHosted(),
+    (status) => status === undefined ? runtimeMessage("app-disconnected") : runtimeMessage("entry-status", { status: String(status) }),
+  ));
+}
+
+export function browserRuntimeError(): string | null {
+  return runtimeError;
+}
+
+export function browserRuntimeReady(): Promise<void> {
+  return runtimeReady;
+}
+
+export function browserRuntimeDetached(): boolean {
+  return runtimeDetached;
+}
+
+export function subscribeBrowserRuntimeDetached(listener: () => void): () => void {
+  detachListeners.add(listener);
+  return () => detachListeners.delete(listener);
+}

@@ -1,0 +1,154 @@
+// Vitest empties CSS imports, so read the stylesheets off disk.
+import { readFileSync } from "node:fs";
+import { afterAll, beforeAll, describe, expect, it } from "vitest";
+import {
+  APP_WINDOW_MIN_HEIGHT,
+  APP_WINDOW_MIN_WIDTH,
+  minimumWindowWidth,
+  SPLIT_SOURCE_MIN_WIDTH,
+} from "./window-layout";
+
+describe("minimumWindowWidth", () => {
+  // A 1440 pt screen with the Dock and menu bar taking nothing off its width.
+  const screenWidth = 1440;
+
+  it.each([
+    ["is the layout's own minimum at interface zoom 1.0", 1100, 1, 1100],
+    ["grows with interface zoom 1.35, but never past the screen's visible width", 1100, 1.35, 1440],
+    ["grows with interface zoom 1.35 while it still fits the screen", 1000, 1.35, 1350],
+    ["keeps room for the titlebar controls when the layout needs less", 300, 1, APP_WINDOW_MIN_WIDTH],
+    ["scales that titlebar floor with the zoom too", 0, 1.35, Math.ceil(APP_WINDOW_MIN_WIDTH * 1.35)],
+  ])("%s", (_name, layoutMinWidth, interfaceScale, expected) => {
+    expect(minimumWindowWidth({ layoutMinWidth, interfaceScale, screenWidth })).toBe(expected);
+  });
+
+  it("is unclamped when the screen is unknown", () => {
+    expect(minimumWindowWidth({ layoutMinWidth: 1100, interfaceScale: 1.35, screenWidth: Infinity })).toBe(1485);
+  });
+
+  it("matches the native window configuration", () => {
+    // tauri.conf.json and the multi-window builder in lib.rs carry the same
+    // titlebar floor, which every window keeps until its layout reports more.
+    const config = JSON.parse(readFileSync("src-tauri/tauri.conf.json", "utf8"));
+    expect(config.app.windows[0].minWidth).toBe(APP_WINDOW_MIN_WIDTH);
+    expect(readFileSync("src-tauri/src/lib.rs", "utf8"))
+      .toContain(`min_inner_size(${APP_WINDOW_MIN_WIDTH}.0, ${APP_WINDOW_MIN_HEIGHT}.0)`);
+  });
+});
+
+describe("narrow pane chrome", () => {
+  it("keeps both status bar counters at the narrowest editor pane", () => {
+    // The bar is its own query container, so a step is compared against the
+    // pane minus its `0 var(--space-6)` padding. Steps at or above that width
+    // fire in the split layout, where the counters are the only entry point to
+    // the comment and TODO panels.
+    const statusBarPadding = 2 * 12;
+    const steps = [
+      ...readFileSync("src/styles/app-shell.css", "utf8")
+        .matchAll(/@container \(max-width: (\d+)px\)\s*\{[^}]*\.status-counter \{/g),
+    ].map((match) => Number(match[1]));
+
+    expect(steps).toHaveLength(2);
+    for (const step of steps) {
+      expect(step).toBeLessThan(SPLIT_SOURCE_MIN_WIDTH - statusBarPadding);
+    }
+  });
+
+  it("keeps PDF search and navigation on one row in a narrow pane", () => {
+    const css = readFileSync("src/pdf/pdf-viewer.css", "utf8");
+    const template = /\.pdf-toolbar \{[^}]*grid-template-columns: ([^;]+);/.exec(css)?.[1];
+
+    expect(template).toBe("auto minmax(0, 1fr) auto");
+    expect(css).toMatch(/\.pdf-find-controls \{[^}]*grid-template-columns: minmax\(0, 1fr\);/);
+    expect(css).toMatch(
+      /\.pdf-find-controls:has\(\.pdf-outline-trigger\) \{ grid-template-columns: 24px minmax\(0, 1fr\); \}/,
+    );
+    expect(css).toMatch(/\.pdf-history-controls \{[^}]*grid-template-columns: 24px 24px;/);
+    expect(css).toMatch(/\.pdf-find-controls \.pdf-search \{[^}]*width: 100%; min-width: 0;/);
+    expect(css).not.toMatch(/\.pdf-find-controls \{[^}]*grid-row:/);
+  });
+
+  it("ellipsizes a Paper's title before its authors and source, and drops the authors rather than squeezing them", () => {
+    const sheet = new CSSStyleSheet();
+    sheet.replaceSync(readFileSync("src/styles/editor-workspace.css", "utf8"));
+    const styleOf = (list: CSSRuleList, selector: string) => Array.from(list)
+      .find((rule): rule is CSSStyleRule => rule instanceof CSSStyleRule && rule.selectorText === selector)?.style;
+    const title = styleOf(sheet.cssRules, ".paper-identity-title");
+    const authors = styleOf(sheet.cssRules, ".paper-identity-authors");
+    const source = styleOf(sheet.cssRules, ".paper-identity-source");
+
+    // A long title used to keep its width while the authors shrank to "D…".
+    expect(Number(title?.flexShrink)).toBeGreaterThan(0);
+    expect(authors?.flexShrink).toBe("0");
+    // Capped below half the strip, so a long corporate author cannot crowd out the title.
+    expect(Number.parseFloat(authors?.maxWidth ?? "")).toBeLessThan(50);
+    expect(authors?.maxWidth).toMatch(/%$/);
+    // The source keeps its natural width too, but a long DOI used to take the
+    // whole strip and leave the title 0px wide. Together the two caps leave
+    // the title at least a quarter of the strip.
+    expect(source?.flexShrink).toBe("0");
+    expect(source?.maxWidth).toMatch(/%$/);
+    expect(Number.parseFloat(authors?.maxWidth ?? "") + Number.parseFloat(source?.maxWidth ?? "")).toBeLessThanOrEqual(75);
+    // Too narrow for both: the authors go whole, never as an initial.
+    const hidden = Array.from(sheet.cssRules).filter((rule): rule is CSSContainerRule => rule instanceof CSSContainerRule
+      && rule.containerName === "paper-reader" && styleOf(rule.cssRules, ".paper-identity-authors")?.display === "none");
+    expect(hidden.map((rule) => Number(/max-width: (\d+)px/.exec(rule.containerQuery)?.[1]))).toEqual([440]);
+  });
+
+  it("queries the toolbar's own width, never the whole PDF preview's", () => {
+    const sheet = new CSSStyleSheet();
+    sheet.replaceSync(readFileSync("src/pdf/pdf-viewer.css", "utf8"));
+    const rules = (list: CSSRuleList): CSSRule[] => Array.from(list).flatMap((rule) => [
+      rule, ...(rule instanceof CSSGroupingRule ? rules(rule.cssRules) : []),
+    ]);
+    const styleRules = rules(sheet.cssRules).filter((rule): rule is CSSStyleRule => rule instanceof CSSStyleRule);
+    const targets = (rule: CSSStyleRule, className: string) => rule.selectorText.split(",")
+      .some((selector) => new RegExp(`\\.${className}(?![\\w-])`).test(selector.trim().split(/[\s>+~]+/).pop() ?? ""));
+    const containment = (rule: CSSStyleRule) => {
+      const [name, type] = rule.style.getPropertyValue("container").split("/").map((part) => part.trim());
+      return {
+        name: rule.style.getPropertyValue("container-name") || name || "",
+        type: rule.style.getPropertyValue("container-type") || type || "",
+      };
+    };
+
+    // Only the toolbar's frame is a size container: a container's width
+    // change restyles everything inside it in WebKit, every PDF page included.
+    expect(styleRules.filter((rule) => targets(rule, "pdf-toolbar-frame")).map(containment))
+      .toContainEqual({ name: "pdf-toolbar", type: "inline-size" });
+    expect(styleRules.filter((rule) => targets(rule, "pdf-preview")).map(containment)
+      .filter(({ type }) => type && type !== "normal")).toEqual([]);
+    const narrowToolbar = rules(sheet.cssRules).filter((rule): rule is CSSContainerRule => rule instanceof CSSContainerRule
+      && rule.containerName === "pdf-toolbar" && rule.containerQuery === "(max-width: 640px)");
+    expect(narrowToolbar.flatMap((rule) => rules(rule.cssRules))
+      .some((rule) => rule instanceof CSSStyleRule && targets(rule, "pdf-overflow") && rule.style.display === "none")).toBe(true);
+  });
+});
+
+describe("the titlebar's traffic-light space", () => {
+  const style = document.createElement("style");
+  style.textContent = readFileSync("src/styles/app-shell.css", "utf8");
+  const trafficSpace = (shellClass: string, barClass = "") => {
+    const shell = document.createElement("div");
+    shell.className = `app-shell ${shellClass}`;
+    shell.innerHTML = `<header class="titlebar ${barClass}"><div class="traffic-space"></div></header>`;
+    document.body.append(shell);
+    try {
+      return getComputedStyle(shell.querySelector(".traffic-space")!).width;
+    } finally {
+      shell.remove();
+    }
+  };
+  beforeAll(() => { document.head.append(style); });
+  afterAll(() => { style.remove(); });
+
+  it("is reserved beside a window's traffic lights", () => {
+    expect(trafficSpace("")).toBe("var(--titlebar-traffic-space-width)");
+  });
+
+  it("is dropped where there are none: full screen, a browser tab and the website's demo", () => {
+    expect(trafficSpace("fullscreen")).toBe("0px");
+    expect(trafficSpace("browser-hosted")).toBe("0px");
+    expect(trafficSpace("", "titlebar-without-lights")).toBe("0px");
+  });
+});

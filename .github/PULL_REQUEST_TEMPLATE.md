@@ -1,0 +1,45 @@
+<!--
+  Thanks for contributing to Lattice.
+
+  For a substantial feature, a protocol change, or a large refactor, please
+  open an issue first so the direction can be discussed (see CONTRIBUTING.md).
+  Small fixes and documentation improvements can come straight here.
+-->
+
+## Problem
+
+<!-- What is wrong, missing, or awkward today? Link the issue if there is one:
+     "Fixes #123". -->
+
+## Solution
+
+<!-- What this change does, and why this approach. Call out anything a reviewer
+     would not guess from the diff: a constraint you had to work around, an
+     alternative you rejected, a behavior change users will notice. -->
+
+## How it was verified
+
+<!-- Tests you added or updated, plus what you exercised by hand — which
+     project, which files, which macOS version. "It builds" is not
+     verification. -->
+
+## Checklist
+
+- [ ] I ran `pnpm check` and it passes.
+      <!-- The full gate: i18n, lint, Vitest, the production web build, the
+           literature Worker, the Open Slide server tests, rustfmt, cargo test, Clippy with warnings denied,
+           and the third-party notices check. It needs mise. If a stage
+           cannot run on your machine, say which one and why. -->
+- [ ] I did **not** bump the version.
+      <!-- Version bumps are release-only. package.json, tauri.conf.json, and
+           Cargo.toml are moved in lockstep by `scripts/bump-version.mjs`;
+           see docs/release-process.md. -->
+- [ ] I added or updated tests for behavior that changed.
+- [ ] The change is focused — no unrelated reformatting or drive-by refactors.
+- [ ] If I touched `literature-worker/`, I also ran
+      `pnpm --dir literature-worker typecheck` and `pnpm --dir literature-worker test`.
+- [ ] If I added a dependency, adapted code from elsewhere, or bundled an asset,
+      I recorded it in `THIRD_PARTY_NOTICES.md`.
+- [ ] I understand my contribution is offered under **Apache-2.0**
+      (no CLA, no copyright assignment).
+

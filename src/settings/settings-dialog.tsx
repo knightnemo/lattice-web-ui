@@ -1,0 +1,632 @@
+import { type FormEvent, type ReactNode, useEffect, useLayoutEffect, useRef, useState } from "react";
+import { useLingui } from "@lingui/react/macro";
+import { ChevronLeft, ChevronRight } from "lucide-react";
+import { Button } from "../components/ui/button";
+import { Input } from "../components/ui/input";
+import { ReloadButton } from "../components/ui/activity-icons";
+import { ScrollArea } from "../components/ui/scroll-area";
+import { FluidHoverSurface } from "../components/ui/fluid-hover-surface";
+import { CloseButton } from "../components/ui/icon-button";
+import { SettingsSectionHeader } from "../components/ui/settings-section-header";
+import { SettingsGroup, SettingsRow } from "../components/ui/settings-row";
+import { SwitchField } from "../components/ui/switch-field";
+import { ModalDialog } from "../components/ui/modal-dialog";
+import { useUpdater, type UpdaterApi } from "../telemetry/app-updater";
+import {
+  type Theme,
+  type ThemePreference,
+  type BuildPreferences,
+  type AppearanceSettings,
+  type TitlebarTool,
+  type OverleafRemoteDelete,
+  type OverleafSyncMode,
+  resolveAppLocale,
+} from "./app-settings";
+import type { ProjectSnapshot, SettingsTab } from "../app-types";
+import { beginWindowDrag, titleBarDoubleClick } from "../app-utils";
+import { OverleafSettingsSection } from "../overleaf/overleaf-connect";
+import { LiteratureSettings } from "./literature-settings";
+import { GoogleWorkspaceSettings } from "../google-workspace/google-workspace-settings";
+import { AcknowledgementsSettings } from "./acknowledgements-settings";
+import { DoctorSettings, type DoctorSettingsProps } from "./doctor-settings";
+import { SynaraSettingsPane } from "./synara-settings-pane";
+import { AgentEnvironmentSettings } from "./agent-environment-settings";
+import { SelectRow, SliderRow } from "./settings-controls";
+import { SegmentedControl } from "../components/ui/segmented-control";
+import { INTERFACE_SCALE_STEPS, interfaceScalePercent, nearestInterfaceStep } from "./interface-scale";
+import { CodeThemeSettingsGroup } from "./code-theme-settings";
+import { GrammarSettingsGroup } from "./grammar-settings";
+import type { GrammarIgnores } from "../editor/harper-spellcheck";
+import { DesktopPetSettings } from "./desktop-pet-settings";
+import { ThemeSettingsGroup } from "./theme-settings";
+import type { WindowBacking } from "./use-appearance";
+import { SettingsSearch } from "./settings-search";
+import { settingsEntryKey, useSettingsSearchIndex, type SettingsSearchEntry } from "./settings-search-index";
+import { AnimatedProductIcon } from "../animated-icons/product-animated-icon";
+import { AppLogsSettings } from "../telemetry/app-log";
+import { LivePreviewSettings } from "../live-preview/live-preview-settings";
+import type { LivePreview } from "../live-preview/use-live-preview";
+import { synaraFrameUrl, type SynaraRuntimeInfo } from "../agent/synara-runtime";
+
+/** The Settings tabs that embed a Synara settings page, and which one. */
+const SYNARA_SETTINGS_SECTIONS: Partial<Record<SettingsTab, string>> = { agent: "providers", "agent-defaults": "general", api: "skills", mcp: "integrations" };
+
+export type SettingsDialogProps = DoctorSettingsProps & {
+  /**
+   * Its loading shell (`app/tool-loading-shell.tsx`) still lies over it.
+   * Settings that mounts under it takes its place, so it is already on
+   * screen, and takes focus as the shell goes.
+   */
+  covered?: boolean;
+  synaraRuntime: SynaraRuntimeInfo;
+  synaraWorkspaceRoot?: string;
+  onRetrySynaraRuntime: () => void;
+  tab: SettingsTab;
+  setTab: (tab: SettingsTab) => void;
+  /** Opens on the section's page rather than the section list, when narrow. */
+  openOnPage?: boolean;
+  overleafSyncMode: OverleafSyncMode;
+  overleafRemoteDelete: OverleafRemoteDelete;
+  onOverleafRemoteDeleteChange: (mode: OverleafRemoteDelete) => void;
+  overleafChannel: "off" | "connecting" | "live" | "error";
+  overleafChannelDetail: string | null;
+  /** Called when this project stops (or starts) being linked to Overleaf. */
+  onOverleafLinkChanged: () => void;
+  onOverleafSyncModeChange: (mode: OverleafSyncMode) => void;
+  appearance: AppearanceSettings;
+  setAppearance: (appearance: AppearanceSettings) => void;
+  theme: Theme;
+  themePreference: ThemePreference;
+  setThemePreference: (preference: ThemePreference) => void;
+  windowBacking: WindowBacking;
+  buildPreferences: BuildPreferences;
+  setBuildPreferences: (preferences: BuildPreferences) => void;
+  hasProject: boolean;
+  project: ProjectSnapshot | null;
+  onUpdateManifest: (patch: {
+    engine?: string | null;
+    trusted?: boolean | null;
+    stopOnFirstError?: boolean | null;
+    spellingWords?: string[] | null;
+    grammarIgnores?: GrammarIgnores | null;
+  }) => void;
+  /** The LuaLaTeX live preview: its switch shows for a LuaLaTeX project. */
+  livePreview?: LivePreview;
+  onCleanProject: () => void;
+  cleaning: boolean;
+  building: boolean;
+  /** The "Your name" setting, and the Git or Overleaf name that signs comments ahead of it. */
+  authorName: string;
+  knownAuthorName: string | null;
+  onAuthorNameChange: (name: string) => void;
+  /** Where focus goes when Settings closes, if not to what held it as Settings opened. */
+  returnFocus?: HTMLElement | null;
+  /** A row to open on, found by the command palette: revealed and focused as Settings opens. */
+  reveal?: SettingsSearchEntry | null;
+  onClose: () => void;
+};
+
+/** Below this dialog width the sections and the page take turns (dialogs.css holds the same number). */
+const NARROW_SETTINGS_WIDTH = 560;
+
+export function SettingsDialog(props: SettingsDialogProps) {
+  const { t } = useLingui();
+  // Kept from any render that saw the shell, not only the first: a render of
+  // an opening can be redone before it commits, with the shell arrived in
+  // between, and the first may not be the one that commits.
+  const [replacesShell, setReplacesShell] = useState(props.covered);
+  if (props.covered && !replacesShell) setReplacesShell(true);
+  const searchRef = useRef<HTMLInputElement>(null);
+  // Settings opens in its search (`SettingsSearch`); under its shell, once
+  // that is gone, as until then it holds focus.
+  // A row the palette asked for takes focus instead (below).
+  const revealsRow = Boolean(props.reveal?.id);
+  useEffect(() => {
+    if (replacesShell && !props.covered && !revealsRow) searchRef.current?.focus({ preventScroll: true });
+  }, [replacesShell, props.covered, revealsRow]);
+  const settingsNavGroups = [
+    { label: t`General`, items: [
+      { tab: "appearance", label: t`Appearance`, icon: "faders" },
+      { tab: "editor", label: t`Editor & builds`, icon: "logs" },
+    ] },
+    { label: t`Agent`, items: [
+      { tab: "agent-defaults", label: t`Agent defaults`, icon: "faders" },
+      { tab: "agent", label: t`Providers`, icon: "robot" },
+      { tab: "mcp", label: t`MCP`, icon: "plugs" },
+      { tab: "api", label: t`Skills`, icon: "package" },
+      { tab: "environment", label: t`Environment`, icon: "api-key" },
+    ] },
+    { label: t`Integrations`, items: [
+      { tab: "overleaf", label: t`Overleaf`, icon: "cloud-upload" },
+      { tab: "literature", label: t`Literature services`, icon: "api-key" },
+      { tab: "google", label: t`Google Workspace`, icon: "cloud-upload" },
+    ] },
+    { label: t`Diagnostics`, items: [
+      { tab: "doctor", label: t`TeX doctor`, icon: "sparkle" },
+      { tab: "logs", label: t`Logs`, icon: "receipt" },
+    ] },
+    { label: t`About`, items: [
+      { tab: "acknowledgements", label: t`Acknowledgements`, icon: "chat" },
+    ] },
+  ] as const;
+  const settingsNavItems = settingsNavGroups
+    .flatMap((group): ReadonlyArray<{ tab: SettingsTab; label: string }> => group.items);
+  const settingsViewportRef = useRef<HTMLDivElement>(null);
+  const [projectWordDraft, setProjectWordDraft] = useState("");
+  const [searchQuery, setSearchQuery] = useState("");
+  const searchEntries = useSettingsSearchIndex(Boolean(props.project), props.knownAuthorName, props.livePreview?.available);
+  /** The row a search result asked for, revealed once its page has rendered. */
+  // A fresh object per opening, so opening the same row again reveals it again.
+  const [reveal, setReveal] = useState<{ entry: SettingsSearchEntry } | null>(() => (props.reveal ? { entry: props.reveal } : null));
+  const synaraSettingsSection = SYNARA_SETTINGS_SECTIONS[props.tab];
+  const synaraEmbedUrl = props.synaraRuntime.state === "ready" ? props.synaraRuntime.origin : null;
+  // On every tab, so the pane keeps its page loaded across the native ones.
+  const synaraSettingsUrl = synaraEmbedUrl && props.synaraWorkspaceRoot
+    ? synaraFrameUrl({
+      origin: synaraEmbedUrl,
+      path: "/settings",
+      workspaceRoot: props.synaraWorkspaceRoot,
+      theme: props.theme,
+      locale: resolveAppLocale(props.appearance.interfaceLanguage),
+      surface: "drawer",
+      hostOrigin: window.location.origin,
+      authToken: props.synaraRuntime.authToken,
+      hostPreferences: props.synaraRuntime.hostPreferences,
+    })
+    : null;
+
+  useLayoutEffect(() => {
+    // Every tab shares this viewport. The nested Logs scroller can chain a
+    // wheel gesture into it at the end of the log, so each tab change must
+    // reset the page viewport without touching the log viewport itself.
+    const resetViewport = () => {
+      const viewport = settingsViewportRef.current;
+      if (!viewport) return;
+      viewport.scrollTop = 0;
+      viewport.scrollLeft = 0;
+    };
+    resetViewport();
+    const frame = window.requestAnimationFrame(resetViewport);
+    return () => window.cancelAnimationFrame(frame);
+  }, [props.tab, synaraSettingsUrl]);
+
+  useLayoutEffect(() => {
+    // Under the loading shell the page is inert; it is revealed once uncovered.
+    if (!reveal?.entry.id || props.covered) return;
+    // A frame later, so it lands after the page-change scroll reset above;
+    // the reset's frame is queued first.
+    const frame = window.requestAnimationFrame(() => {
+      const row = settingsViewportRef.current?.querySelector<HTMLElement>(`[data-setting="${reveal.entry.id}"]`);
+      if (!row) return;
+      const reducedMotion = window.matchMedia?.("(prefers-reduced-motion: reduce)").matches === true;
+      row.scrollIntoView({ block: "center", behavior: reducedMotion ? "auto" : "smooth" });
+      // Focus the row's own control, so the next key changes the setting.
+      row.querySelector<HTMLElement>(
+        'input:not([disabled]), button:not([disabled]), [role="switch"]:not([aria-disabled="true"]), [tabindex="0"]',
+      )?.focus({ preventScroll: true });
+      // Restarted on every reveal, even of the same row twice.
+      row.removeAttribute("data-setting-revealed");
+      void row.offsetWidth;
+      row.setAttribute("data-setting-revealed", "");
+    });
+    return () => window.cancelAnimationFrame(frame);
+  }, [reveal, props.covered]);
+  // In a dialog too narrow for two columns (dialogs.css, at the same 560px),
+  // the sections are a list and a section is a page with a way back, as
+  // GitHub, Craft and Outlook do on a phone. Entering a page moves focus to
+  // its back button, Escape goes back before it closes, and going back
+  // returns focus to the section's row.
+  // Held in state, not a ref: the dialog's portal mounts this element after
+  // the first commit, so the observer attaches once the element exists.
+  const [modal, setModal] = useState<HTMLDivElement | null>(null);
+  const [narrow, setNarrow] = useState(false);
+  const [narrowPage, setNarrowPage] = useState(Boolean(props.openOnPage));
+  useLayoutEffect(() => {
+    if (!modal || typeof ResizeObserver === "undefined") return;
+    const observer = new ResizeObserver(([entry]) => setNarrow(entry.contentRect.width <= NARROW_SETTINGS_WIDTH));
+    observer.observe(modal);
+    return () => observer.disconnect();
+  }, [modal]);
+  // Focus follows the page in and out, found from the element that acted.
+  const focusInModal = (from: EventTarget | null, selector: string) => {
+    const modal = from instanceof Element ? from.closest(".settings-modal") : null;
+    requestAnimationFrame(() => modal?.querySelector<HTMLElement>(selector)?.focus({ preventScroll: true }));
+  };
+  const openPage = (tab: SettingsTab, from: EventTarget) => {
+    props.setTab(tab);
+    setNarrowPage(true);
+    if (narrow) focusInModal(from, ".settings-back");
+  };
+  const closePage = (from: EventTarget | null) => {
+    setNarrowPage(false);
+    focusInModal(from, '.settings-nav-group > button[aria-current="page"]');
+  };
+  const openSearchResult = (entry: SettingsSearchEntry) => {
+    setNarrowPage(true);
+    props.setTab(entry.tab);
+    setReveal({ entry });
+  };
+
+  const panes: Partial<Record<SettingsTab, ReactNode>> = {
+    appearance: <AppearanceSettingsPane {...props} />,
+    editor: <EditorSettingsPane {...props} projectWordDraft={projectWordDraft} setProjectWordDraft={setProjectWordDraft} />,
+    logs: <AppLogsSettings />,
+    literature: <LiteratureSettings />,
+    google: <GoogleWorkspaceSettings />,
+    environment: <AgentEnvironmentSettings runtime={props.synaraRuntime} />,
+    overleaf: (
+      <OverleafSettingsSection
+        projectRoot={props.project?.root ?? null}
+        syncMode={props.overleafSyncMode}
+        onSyncModeChange={props.onOverleafSyncModeChange}
+        remoteDelete={props.overleafRemoteDelete}
+        onRemoteDeleteChange={props.onOverleafRemoteDeleteChange}
+        channel={props.overleafChannel}
+        channelDetail={props.overleafChannelDetail}
+        onLinkChanged={props.onOverleafLinkChanged}
+      />
+    ),
+    doctor: <DoctorSettings {...props} />,
+    acknowledgements: <AcknowledgementsSettings />,
+  };
+  return (
+    <ModalDialog
+      label={t`Settings`}
+      onClose={props.onClose}
+      returnFocus={props.returnFocus}
+      covered={props.covered}
+      backdropClassName={replacesShell ? "settings-replaces-shell" : undefined}
+      windowDragTop={{ onMouseDown: beginWindowDrag, onDoubleClick: titleBarDoubleClick }}
+      onEscapeKeyDown={(event) => {
+        if (!narrow || !narrowPage) return;
+        event.preventDefault();
+        closePage(event.target);
+      }}
+    >
+      <div className="settings-modal" ref={setModal}>
+        {/* No title bar: each page's own title names it, and the dialog is
+            labelled for assistive technology. What the bar did stays: its
+            top edge still drags the window, and the close floats in the
+            corner above the page. */}
+        <div
+          className="settings-drag-strip"
+          aria-hidden="true"
+          onMouseDown={beginWindowDrag}
+          onDoubleClick={titleBarDoubleClick}
+        />
+        <CloseButton className="settings-close" label={t`Close settings`} tooltip={false} onClick={props.onClose} />
+        <div className="settings-body" data-narrow-view={narrowPage ? "page" : "root"}>
+          <nav className="settings-nav fluid-hover-surface" aria-label={t`Settings sections`}>
+            <FluidHoverSurface selector=".settings-nav-group > button" preserveSelection follow={null} />
+            <h2 className="settings-root-title">{t`Settings`}</h2>
+            <SettingsSearch
+              inputRef={searchRef}
+              autoFocus={!replacesShell}
+              entries={searchEntries}
+              query={searchQuery}
+              onQueryChange={setSearchQuery}
+              current={reveal && reveal.entry.tab === props.tab ? settingsEntryKey(reveal.entry) : null}
+              onOpen={openSearchResult}
+            />
+            {!searchQuery.trim() && settingsNavGroups.map((group, groupIndex) => (
+              <div key={group.label} className="settings-nav-group" role="group" aria-labelledby={`settings-nav-${groupIndex}`}>
+                <div className="settings-nav-group-label" id={`settings-nav-${groupIndex}`}>{group.label}</div>
+                {group.items.map((item) => (
+                  <button
+                    key={item.tab}
+                    type="button"
+                    className={props.tab === item.tab ? "active" : ""}
+                    aria-current={props.tab === item.tab ? "page" : undefined}
+                    onClick={(event) => openPage(item.tab, event.currentTarget)}
+                  >
+                    <AnimatedProductIcon kind={item.icon} size={15} />
+                    <span title={item.label}>{item.label}</span>
+                    <ChevronRight className="settings-nav-chevron" size={14} strokeWidth={1.6} aria-hidden="true" />
+                  </button>
+                ))}
+              </div>
+            ))}
+          </nav>
+          <ScrollArea className="settings-content" viewportRef={settingsViewportRef} fadeEdges={false}>
+            <button type="button" className="settings-back" onClick={(event) => closePage(event.currentTarget)}>
+              <ChevronLeft size={15} strokeWidth={1.7} aria-hidden="true" />
+              <span>{t`Settings`}</span>
+            </button>
+            <SynaraSettingsPane
+              runtime={props.synaraRuntime}
+              section={synaraSettingsSection}
+              url={synaraSettingsUrl}
+              synaraSettingsLabel={synaraSettingsSection ? settingsNavItems.find((item) => item.tab === props.tab)?.label : undefined}
+              viewportRef={settingsViewportRef}
+              appearance={{
+                theme: props.theme,
+                tint: props.appearance.tint,
+                accent: props.appearance.accent,
+                translucency: props.appearance.translucency,
+                translucent: props.windowBacking === "translucent",
+              }}
+              onRetry={props.onRetrySynaraRuntime}
+            />
+            {panes[props.tab]}
+          </ScrollArea>
+        </div>
+      </div>
+    </ModalDialog>
+  );
+}
+
+function patchAppearance(props: SettingsDialogProps, patch: Partial<AppearanceSettings>) {
+  props.setAppearance({ ...props.appearance, ...patch });
+}
+
+/** Which tool buttons sit at the right of the title bar; the commands stay in the palette either way. */
+function TitlebarToolsGroup(props: SettingsDialogProps) {
+  const { t } = useLingui();
+  const hidden = props.appearance.hiddenTitlebarTools;
+  const tools: Array<{ tool: TitlebarTool; label: string }> = [
+    { tool: "comments", label: t`Annotations` },
+    { tool: "overleaf", label: t`Overleaf` },
+    { tool: "git", label: t`Git status and commit` },
+    { tool: "history", label: t`Project history` },
+    { tool: "browser", label: t`Open in browser` },
+  ];
+  return (
+    <SettingsGroup title={t`Title bar tools`} data-setting="titlebar-tools">
+      {tools.map(({ tool, label }) => (
+        <SwitchField
+          key={tool}
+          label={label}
+          checked={!hidden.includes(tool)}
+          onChange={(shown) => patchAppearance(props, {
+            hiddenTitlebarTools: shown ? hidden.filter((item) => item !== tool) : [...hidden, tool],
+          })}
+        />
+      ))}
+    </SettingsGroup>
+  );
+}
+
+function AppearanceSettingsPane(props: SettingsDialogProps) {
+  const { t } = useLingui();
+
+  return (
+    <div className="settings-section">
+      <SettingsSectionHeader title={t`Appearance`} />
+      {/* The page title already names these; a "General" heading under it
+          would only repeat the sidebar. */}
+      <SettingsGroup>
+        <SelectRow
+          data-setting="interface-language"
+          label={t`Interface language`}
+          value={props.appearance.interfaceLanguage}
+          options={{ system: t`Match system`, en: t`English`, "zh-CN": t`Simplified Chinese` }}
+          onChange={(interfaceLanguage) => patchAppearance(props, { interfaceLanguage })}
+        />
+        <SettingsRow data-setting="interface-size" label={t`Interface size`}>
+          <SegmentedControl
+            ariaLabel={t`Interface size`}
+            className="interface-size-control"
+            value={String(nearestInterfaceStep(props.appearance.interfaceScale))}
+            onChange={(value) => patchAppearance(props, { interfaceScale: Number(value) })}
+            items={INTERFACE_SCALE_STEPS.map((step) => ({ value: String(step), label: interfaceScalePercent(step) }))}
+          />
+        </SettingsRow>
+        <SliderRow
+          id="editor-font-size"
+          data-setting="editor-font-size"
+          label={t`Source editor font size`}
+          min={10}
+          max={24}
+          value={props.appearance.editorFontSize}
+          unit="px"
+          onChange={(editorFontSize) => patchAppearance(props, { editorFontSize })}
+        />
+        <SwitchField
+          data-setting="interface-sounds"
+          label={t`Interface sounds`}
+          checked={props.appearance.interfaceSounds}
+          onChange={(interfaceSounds) => patchAppearance(props, { interfaceSounds })}
+        />
+        <SelectRow
+          data-setting="toast-position"
+          label={t`Notification position`}
+          value={props.appearance.toastPosition}
+          options={{
+            "top-right": t`Top right`,
+            "top-center": t`Top center`,
+            "bottom-right": t`Bottom right`,
+            "bottom-center": t`Bottom center`,
+          }}
+          onChange={(toastPosition) => patchAppearance(props, { toastPosition })}
+        />
+      </SettingsGroup>
+      <ThemeSettingsGroup {...props} />
+      <CodeThemeSettingsGroup {...props} />
+      <TitlebarToolsGroup {...props} />
+      <DesktopPetSettings />
+    </div>
+  );
+}
+
+/** What the updater has to report, if anything. The mode's own option label already says how updates arrive. */
+function useUpdateStatus(updater: UpdaterApi): { title: string | undefined; detail: string | undefined } {
+  const { t } = useLingui();
+  const phaseTitles: Partial<Record<UpdaterApi["phase"], string>> = {
+    available: t`Version ${updater.version ?? ""} is ready to install`,
+    downloading: t`Downloading update…`,
+    installing: t`Installing update…`,
+    ready: t`Version ${updater.version ?? ""} is installed. Restart Lattice to start using it.`,
+    restarting: t`Restarting…`,
+    // `errorKind` distinguishes the two failures that both land on phase
+    // "error": a check that never reached the release feed, and a
+    // download/install that started and then failed. Reporting one as the
+    // other sent people looking in the wrong place.
+    error: updater.errorKind === "install" ? t`Couldn’t install the update` : t`Couldn’t check for updates`,
+    "up-to-date": t`You’re on the latest version`,
+  };
+  return {
+    title: phaseTitles[updater.phase],
+    detail: updater.phase === "error" ? (updater.error ?? t`Check your connection and try again`) : undefined,
+  };
+}
+
+function EditorSettingsPane({ projectWordDraft, setProjectWordDraft, ...props }: SettingsDialogProps & {
+  projectWordDraft: string;
+  setProjectWordDraft: (draft: string) => void;
+}) {
+  const { t } = useLingui();
+  const updater = useUpdater();
+  const updateStatus = useUpdateStatus(updater);
+  const projectSpellingWords = props.project?.manifest.spellingWords ?? [];
+  const updateBusy = ["checking", "downloading", "installing", "restarting"].includes(updater.phase);
+  const addProjectSpellingWord = (event: FormEvent<HTMLFormElement>) => {
+    event.preventDefault();
+    const word = projectWordDraft.trim();
+    if (!word || !props.project) return;
+    if (!projectSpellingWords.some((existing) => existing.toLocaleLowerCase() === word.toLocaleLowerCase())) {
+      props.onUpdateManifest({ spellingWords: [...projectSpellingWords, word] });
+    }
+    setProjectWordDraft("");
+  };
+
+  return (
+    <div className="settings-section">
+      <SettingsSectionHeader title={t`Editor & builds`} />
+      <SettingsGroup title={t`Editor`}>
+        <SelectRow
+          data-setting="editor-keymap"
+          label={t`Editor keymap`}
+          value={props.appearance.editorKeymap}
+          options={{ default: t`Default`, vim: "Vim", emacs: "Emacs" }}
+          onChange={(editorKeymap) => patchAppearance(props, { editorKeymap })}
+        />
+        {/* A Git or Overleaf name signs comments ahead of this one, so the
+            row says whose it is; without one, the field is the signature. */}
+        <SettingsRow
+          data-setting="author-name"
+          label={t`Your name`}
+          description={props.knownAuthorName ? t`Comments are signed ${props.knownAuthorName}, from Git or Overleaf` : undefined}
+        >
+          <Input
+            aria-label={t`Your name`}
+            placeholder={props.knownAuthorName ?? t`Anonymous`}
+            value={props.authorName}
+            onChange={(event) => props.onAuthorNameChange(event.target.value)}
+          />
+        </SettingsRow>
+        <SwitchField
+          data-setting="spellcheck"
+          label={t`Check English spelling`}
+          checked={props.appearance.editorSpellcheck}
+          onChange={(editorSpellcheck) => patchAppearance(props, { editorSpellcheck })}
+        />
+        <SettingsRow
+          className="settings-project-dictionary-row"
+          data-setting="project-dictionary"
+          label={t`Project dictionary`}
+          // Says why its field and Add are disabled.
+          description={props.project ? undefined : t`Open a project to add terms`}
+        >
+          <div className="settings-project-dictionary">
+            <form className="settings-project-dictionary-form" onSubmit={addProjectSpellingWord}>
+              <Input
+                aria-label={t`Add project term`}
+                placeholder={t`e.g. Lattice`}
+                value={projectWordDraft}
+                disabled={!props.project}
+                onChange={(event) => setProjectWordDraft(event.target.value)}
+              />
+              <Button type="submit" disabled={!props.project || !projectWordDraft.trim()}>{t`Add`}</Button>
+            </form>
+            {projectSpellingWords.length > 0 && (
+              <div className="settings-project-dictionary-terms" role="list" aria-label={t`Project dictionary terms`}>
+                {projectSpellingWords.map((word) => (
+                  <span className="settings-project-dictionary-term" role="listitem" key={word}>
+                    <span>{word}</span>
+                    <button
+                      type="button"
+                      className="settings-project-dictionary-remove"
+                      aria-label={t`Remove ${word} from project dictionary`}
+                      onClick={() => props.onUpdateManifest({
+                        spellingWords: projectSpellingWords.filter((existing) => existing !== word),
+                      })}
+                    >
+                      <span aria-hidden="true">×</span>
+                    </button>
+                  </span>
+                ))}
+              </div>
+            )}
+          </div>
+        </SettingsRow>
+      </SettingsGroup>
+      <GrammarSettingsGroup
+        ignores={props.project ? {
+          rules: props.project.manifest.grammarIgnoredRules ?? [],
+          sentences: props.project.manifest.grammarIgnoredSentences ?? [],
+        } : null}
+        onIgnoresChange={(grammarIgnores) => props.onUpdateManifest({ grammarIgnores })}
+      />
+      <SettingsGroup title={t`Builds`}>
+        <SelectRow
+          data-setting="auto-build"
+          label={t`Automatic build`}
+          value={props.buildPreferences.autoBuildMode}
+          options={{ manual: t`Manual only`, automatic: t`Automatic` }}
+          onChange={(autoBuildMode) => props.setBuildPreferences({ autoBuildMode })}
+        />
+        <SettingsRow data-setting="aux-files" label={t`Auxiliary files`}>
+          <Button size="compact" disabled={!props.hasProject || props.cleaning || props.building} onClick={props.onCleanProject}>
+            {props.cleaning ? t`Cleaning…` : t`Clean`}
+          </Button>
+        </SettingsRow>
+        {props.project && (
+          <>
+            <SelectRow
+              data-setting="compile-engine"
+              label={t`Compile engine`}
+              description={t`A project latexmkrc overrides this`}
+              value={props.project.manifest.engine ?? "pdf"}
+              options={{ pdf: "pdfLaTeX", xelatex: "XeLaTeX", lualatex: "LuaLaTeX" }}
+              onChange={(engine) => props.onUpdateManifest({ engine })}
+            />
+            <SwitchField
+              data-setting="shell-escape"
+              label={t`Allow shell escape`}
+              checked={props.project.manifest.trusted}
+              onChange={(trusted) => props.onUpdateManifest({ trusted })}
+            />
+            {/* Off, TeX carries on past errors as Overleaf does: every error
+                is listed and the pages that typeset reach the PDF. */}
+            <SwitchField
+              data-setting="stop-on-first-error"
+              label={t`Stop on first error`}
+              checked={props.project.manifest.stopOnFirstError ?? false}
+              onChange={(stopOnFirstError) => props.onUpdateManifest({ stopOnFirstError })}
+            />
+            {props.livePreview && <LivePreviewSettings livePreview={props.livePreview} />}
+          </>
+        )}
+      </SettingsGroup>
+      <SettingsGroup title={t`App updates`}>
+        <SelectRow
+          data-setting="auto-updates"
+          label={t`Automatic updates`}
+          description={updateStatus.detail}
+          value={updater.mode}
+          options={{ manual: t`Notify me`, auto: t`Install automatically` }}
+          onChange={updater.setMode}
+        />
+        <SettingsRow data-setting="version" label={t`Version`} description={updateStatus.title}>
+          {updater.phase === "ready" ? (
+            <Button size="compact" onClick={() => void updater.restart()}>{t`Restart now`}</Button>
+          ) : (
+            <ReloadButton size="compact" busy={updateBusy} disabled={updateBusy} onClick={() => void updater.check(false)}>
+              {updater.phase === "checking" ? t`Checking…` : t`Check for updates`}
+            </ReloadButton>
+          )}
+        </SettingsRow>
+      </SettingsGroup>
+    </div>
+  );
+}

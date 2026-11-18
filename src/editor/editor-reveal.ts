@@ -1,0 +1,180 @@
+/**
+ * How a source editor lands on a place it was sent to — a TODO, an outline
+ * entry, a find result, a diagnostic, a SyncTeX click, a comment, a step back:
+ * one move straight to the target, the target centered in the viewport, the
+ * caret or selection on it, and its lines briefly marked so the eye finds it.
+ *
+ * The document ends at its last line: there is no room scrolled past it, so a
+ * target too near the end to center lands as low as the scroller goes — still
+ * whole on screen, at the bottom edge.
+ */
+import { StateEffect, StateField, type Extension, type Text } from "@codemirror/state";
+import { Decoration, EditorView, ViewPlugin, type DecorationSet } from "@codemirror/view";
+import type { SyncTexWord } from "../app-types";
+import { clamp } from "../settings/app-settings";
+import { sourceColumnForWord } from "./latex/synctex-word";
+import { focusWhenShown } from "./focus-when-shown";
+
+/** How long a revealed target stays marked; the CSS animation (`.cm-reveal-flash`) fades within it. */
+export const REVEAL_FLASH_MS = 1600;
+/** A long selection marks only its first lines: the mark is a pointer, not a highlighter. */
+const MAX_FLASH_LINES = 12;
+
+const setRevealFlash = StateEffect.define<{ from: number; to: number } | null>();
+const flashLine = Decoration.line({ class: "cm-reveal-flash" });
+
+function flashedLines(doc: Text, from: number, to: number): DecorationSet {
+  const first = doc.lineAt(from).number;
+  const last = Math.min(doc.lineAt(to).number, first + MAX_FLASH_LINES - 1);
+  const ranges = [];
+  for (let number = first; number <= last; number += 1) ranges.push(flashLine.range(doc.line(number).from));
+  return Decoration.set(ranges);
+}
+
+type Flash = { marks: DecorationSet; until: number };
+const NO_FLASH: Flash = { marks: Decoration.none, until: 0 };
+
+const revealFlash = StateField.define<Flash>({
+  create: () => NO_FLASH,
+  update(flash, transaction) {
+    // A state parked with its tab (see parked-editors.ts) outlives the timer
+    // that clears its mark, which died with its view; the next view built
+    // from it must not show the mark again, or keep it (reduced motion draws
+    // it as a plain highlight).
+    let next = flash.marks === Decoration.none ? flash
+      : Date.now() < flash.until ? { ...flash, marks: flash.marks.map(transaction.changes) } : NO_FLASH;
+    for (const effect of transaction.effects) {
+      if (!effect.is(setRevealFlash)) continue;
+      next = effect.value
+        ? { marks: flashedLines(transaction.state.doc, effect.value.from, effect.value.to), until: Date.now() + REVEAL_FLASH_MS }
+        : NO_FLASH;
+    }
+    return next;
+  },
+  provide: (field) => EditorView.decorations.from(field, (flash) => flash.marks),
+});
+
+const flashTimers = new WeakMap<EditorView, number>();
+
+/**
+ * A jump's timers belong to its view: one destroyed while its target is still
+ * settling or marked (a file switch, a closed tab, a test's unmount) ends the
+ * hold and drops the mark's timer with it, rather than leaving them to fire
+ * on a view, or a window, that is gone.
+ */
+const revealLifetime = ViewPlugin.define((view) => ({
+  destroy() {
+    releaseReveal(view);
+    window.clearTimeout(flashTimers.get(view));
+    flashTimers.delete(view);
+  },
+}));
+
+/** For every editor that can be sent somewhere: the target's mark, and its timers' lifetime. */
+export function revealExtension(): Extension {
+  return [revealFlash, revealLifetime];
+}
+
+/**
+ * Send `view` to `from`…`to` (a caret when `to` is omitted): select it,
+ * center its first line, mark its lines for a moment and focus the editor —
+ * once its surface is shown, if it is not yet. Positions are clamped to the
+ * document, so a stale target still lands.
+ */
+export function revealInEditor(view: EditorView, target: { from: number; to?: number }) {
+  const { length } = view.state.doc;
+  const from = clamp(target.from, 0, length);
+  const to = clamp(target.to ?? from, from, length);
+  const marks = view.state.field(revealFlash, false) !== undefined;
+  view.dispatch({
+    selection: { anchor: from, head: to },
+    effects: [
+      EditorView.scrollIntoView(from, { y: "center" }),
+      ...(marks ? [setRevealFlash.of({ from, to })] : []),
+    ],
+  });
+  focusWhenShown({ dom: view.dom, focus: () => view.focus(), hasFocus: () => view.hasFocus, alive: () => view.dom.isConnected });
+  centerAgainOnceDrawn(view, from);
+  if (!marks) return;
+  window.clearTimeout(flashTimers.get(view));
+  flashTimers.set(view, window.setTimeout(() => {
+    flashTimers.delete(view);
+    // Safe on a view destroyed meanwhile (a file switch remounts it): CodeMirror ignores it.
+    view.dispatch({ effects: setRevealFlash.of(null) });
+  }, REVEAL_FLASH_MS));
+}
+
+/**
+ * How long after a jump the target is kept centered while its document is
+ * drawn: past the flash's removal, whose redraw is the last that can move it.
+ */
+const SETTLE_MS = REVEAL_FLASH_MS + 400;
+/** What the writer does to take the view elsewhere; a jump stops holding the target once they do. */
+const WRITER_INPUT = ["wheel", "touchstart", "pointerdown", "keydown"] as const;
+/** Each view's jump still holding its target, by how to let it go. */
+const holds = new WeakMap<EditorView, () => void>();
+
+/**
+ * The writer scrolled `view` with a control outside its own DOM (the overlay
+ * scrollbar beside it), so input on the view itself never said so: stop
+ * holding a jump's target, or the hold scrolls it straight back.
+ */
+export function releaseReveal(view: EditorView) {
+  holds.get(view)?.();
+}
+
+/**
+ * CodeMirror scrolls to a target it has not drawn by the heights it estimated
+ * for the lines above it, and drawing them corrects the estimate — more than
+ * once, the last time well after the jump. A document swapped into a hidden
+ * tab just before a jump (a comment opened in another file with reduced
+ * motion) first scrolled tens of thousands of pixels past its quote, then lost
+ * that height in steps that clamped it to the end of the file. So until the
+ * drawing settles, every scroll the jump did not ask for and every change in
+ * the content's height re-checks the target, and centers it again if it
+ * moved — unless the writer has moved the selection or the view since, or
+ * sent it somewhere else. The viewport's own height counts too: a caret landed
+ * in math opens the preview beneath the editor, and with no room past the end a
+ * target at the bottom edge would drop out of sight below it.
+ */
+function centerAgainOnceDrawn(view: EditorView, from: number) {
+  releaseReveal(view);
+  const landed = view.state.selection;
+  const { scrollDOM, contentDOM } = view;
+  const check = () => {
+    if (!view.dom.isConnected || !view.state.selection.eq(landed)) return stop();
+    const box = scrollDOM.getBoundingClientRect();
+    const target = view.coordsAtPos(from);
+    if (!target || box.height <= 0) return;
+    const offset = (target.top + target.bottom) / 2 - (box.top + scrollDOM.clientHeight / 2);
+    if (Math.abs(offset) > view.defaultLineHeight) view.dispatch({ effects: EditorView.scrollIntoView(from, { y: "center" }) });
+  };
+  const resized = new ResizeObserver(check);
+  const timer = window.setTimeout(() => stop(), SETTLE_MS);
+  function stop() {
+    window.clearTimeout(timer);
+    resized.disconnect();
+    scrollDOM.removeEventListener("scroll", check);
+    for (const type of WRITER_INPUT) view.dom.removeEventListener(type, stop, true);
+    if (holds.get(view) === stop) holds.delete(view);
+  }
+  holds.set(view, stop);
+  scrollDOM.addEventListener("scroll", check);
+  resized.observe(contentDOM);
+  resized.observe(scrollDOM);
+  for (const type of WRITER_INPUT) view.dom.addEventListener(type, stop, true);
+}
+
+/**
+ * The 1-based `line` of `view`'s document as a caret target, clamped to the
+ * lines it has: at `word` on it when that word can be told apart there, at
+ * its start otherwise.
+ */
+export function lineTarget(view: EditorView, { line, word }: { line: number; word?: SyncTexWord | null }) {
+  const target = view.state.doc.line(clamp(line, 1, view.state.doc.lines));
+  const column = word ? sourceColumnForWord(target.text, word) : null;
+  return { from: target.from + (column ?? 0) };
+}
+
+/** The search panel's match placement: centered, like every other jump. */
+export const centerMatch = (range: { from: number }) => EditorView.scrollIntoView(range.from, { y: "center" });

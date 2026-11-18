@@ -1,0 +1,80 @@
+/* Tailwind v4 WITHOUT Preflight — theme + utilities only.
+ *
+ * We deliberately skip Tailwind's global reset (preflight) so the app's mature
+ * hand-written CSS in App.css is left completely untouched: no stripping of
+ * markdown list bullets, heading margins, form-control styling, etc. shadcn/ui
+ * components still work because they style themselves with utility classes and
+ * the design tokens below.
+ *
+ * The tokens map shadcn's colour names onto the app's OWN theme variables
+ * (App.css). We map through Tailwind's `--color-*` namespace via `@theme inline`
+ * and never redefine `--accent` / `--muted` themselves — those names already
+ * belong to App.css and reusing them would repaint the whole app. Because the
+ * mappings point at the app's vars, shadcn components flip automatically under
+ * :root[data-theme="dark"]; no separate dark block is needed.
+ *
+ * `source(".")` scans src/ for class names instead of the whole checkout.
+ * Tailwind's default skips only gitignored paths, so it also read untracked
+ * scratch trees (an agent's TMPDIR, caches or a copied cargo registry under
+ * the worktree): a 65,000-file one more than quadrupled the build and the dev
+ * server's first load and put utilities for random tokens into the app's CSS.
+ * Every class the app uses is in src/; the rest of the repository only
+ * contributed the Open Slide runtime's own classes (tools/open-slide-runtime),
+ * which style a separate page. */
+@layer theme, base, components, utilities;
+@import "tailwindcss/theme.css" layer(theme);
+@import "tailwindcss/utilities.css" layer(utilities) source(".");
+
+/* The app toggles dark mode with :root[data-theme="dark"] (not Tailwind's
+   default `.dark` class), so point the `dark:` variant at that selector —
+   otherwise every shadcn `dark:` utility silently no-ops. */
+@custom-variant dark (&:is([data-theme="dark"], [data-theme="dark"] *));
+
+:root {
+  --radius: 8px;
+}
+
+@theme inline {
+  --font-sans: var(--ui-font);
+  --font-mono: var(--editor-font);
+
+  --color-background: var(--bg);
+  --color-foreground: var(--text);
+  --color-card: var(--panel-strong);
+  --color-card-foreground: var(--text);
+  --color-popover: var(--panel-strong);
+  --color-popover-foreground: var(--text);
+  --color-primary: var(--control-active);
+  --color-primary-foreground: var(--accent-contrast);
+  --color-secondary: var(--panel);
+  --color-secondary-foreground: var(--text);
+  --color-muted: var(--panel);
+  --color-muted-foreground: var(--muted);
+  --color-accent: var(--accent-soft);
+  --color-accent-foreground: var(--accent);
+  --color-destructive: var(--danger);
+  --color-destructive-foreground: #ffffff;
+  --color-border: var(--line-strong);
+  --color-input: var(--line-strong);
+  --color-ring: var(--control-active);
+
+  --radius-sm: calc(var(--radius) - 4px);
+  --radius-md: calc(var(--radius) - 2px);
+  --radius-lg: var(--radius);
+  --radius-xl: calc(var(--radius) + 4px);
+  /* Fluid Functionalism's interaction fills follow the app's light/dark theme. */
+  --color-hover: var(--control-hover-surface);
+  --color-active: var(--control-pressed-surface);
+}
+
+@layer base {
+  /* shadcn components use a bare `border` utility for their 1px edges; give it a
+     sensible colour. Harmless to the existing app: this only sets border-COLOR
+     (never a width), it lives in @layer base (which every unlayered App.css rule
+     outranks), and App.css always uses the full `border:` shorthand anyway. */
+  *,
+  ::before,
+  ::after {
+    border-color: var(--line-strong);
+  }
+}

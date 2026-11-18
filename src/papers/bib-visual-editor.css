@@ -1,0 +1,184 @@
+/* A .bib file's visual form (bib-visual-editor.tsx): the reference list and,
+   beside it, the reference in front. A narrow pane shows one at a time. */
+.bib-visual { container: bib-visual / inline-size; height: 100%; min-height: 0; display: grid; grid-template-rows: auto minmax(0, 1fr); background: var(--editor-bg); color: var(--text-primary); font-family: var(--ui-font); }
+.bib-visual[data-state="unreadable"] { grid-template-rows: minmax(0, 1fr); place-items: center; padding: var(--space-16) var(--space-12); }
+
+/* One line down to the narrowest panels: the search takes what the filter,
+   the sort and Add leave it, and those give way in steps where the words
+   would crowd it — the carets, then Add's label, then the tools fold to
+   their icons. The narrowest panel gives the search a line of its own. */
+.bib-visual-toolbar { --list-tool-dot-ring: var(--editor-bg); container: bib-toolbar / inline-size; display: flex; flex-wrap: wrap; align-items: center; gap: var(--space-2); padding: var(--space-5) var(--space-8); border-bottom: 1px solid var(--border-subtle); }
+.bib-visual-search { flex: 1 1 10em; min-width: 0; }
+.bib-visual-search input { text-overflow: ellipsis; }
+.bib-visual-count { margin-inline-start: var(--space-2); color: var(--text-secondary); font-weight: var(--weight-regular); font-variant-numeric: tabular-nums; }
+.bib-visual-add { flex: none; margin-inline-start: var(--space-2); }
+.bib-visual-menu { min-width: 12rem; }
+.bib-visual-menu-check { width: 14px; flex: none; display: grid; place-items: center; }
+.bib-visual-menu-label { flex: 1; min-width: 0; }
+.bib-visual-menu-count { flex: none; color: var(--text-secondary); font-size: var(--type-caption-size); font-variant-numeric: tabular-nums; }
+@container bib-toolbar (width < 560px) {
+  .bib-visual-toolbar .list-tool { padding-inline-end: var(--pad-inline-control-tight); }
+  .bib-visual-toolbar .list-tool-caret { display: none; }
+}
+@container bib-toolbar (width < 480px) {
+  .bib-visual-add { width: var(--control-size-icon); padding: 0; justify-content: center; }
+  .bib-visual-add-label { position: absolute; width: 1px; height: 1px; overflow: hidden; clip-path: inset(50%); white-space: nowrap; }
+}
+@container bib-toolbar (width < 400px) {
+  .bib-visual-toolbar .list-tool { width: var(--control-size-icon); padding: 0; justify-content: center; }
+  .bib-visual-toolbar .list-tool-text { display: none; }
+  .bib-visual-toolbar .list-tool[data-on]::after { display: block; }
+}
+@container bib-toolbar (width < 260px) {
+  .bib-visual-search { flex-basis: 100%; }
+  .bib-visual-toolbar .list-tool:first-of-type { margin-inline-start: auto; }
+}
+
+/* The list, the divider and the reference. The list keeps the share the
+   divider left it, held where both sides keep their minimums, so a narrower
+   pane never pushes the reference off. bib-visual-editor.tsx sets all three
+   inline (BIB_LIST_RATIO_DEFAULT, LIST_MIN_WIDTH, DETAIL_MIN_WIDTH); these
+   are the same values. */
+.bib-visual-body { --bib-list-ratio: 0.44; --bib-list-min: 240px; --bib-detail-min: 320px; min-height: 0; display: grid; grid-template-columns: clamp(var(--bib-list-min), calc((100% - 1px) * var(--bib-list-ratio)), calc(100% - 1px - var(--bib-detail-min))) 1px minmax(0, 1fr); }
+.bib-visual-list { min-width: 0; min-height: 0; }
+/* ScrollArea's viewport drops the outline; the list still takes the product
+   ring, inside its edge, where the scroll area does not clip it. */
+.bib-visual-list-viewport:focus-visible { outline: var(--focus-ring-width) solid var(--focus-ring); outline-offset: calc(-1 * var(--focus-ring-width)); }
+.bib-visual-list-viewport .ui-empty-state { padding: var(--space-16) var(--space-8); }
+.bib-visual-rows { position: relative; }
+/* The app's split grip (the canvas's and the panels'): a hairline with a
+   wider invisible hold, darker under the pointer and in the drag; keyboard
+   focus takes the product ring, flush on the hairline. */
+.bib-visual-divider { position: relative; z-index: 1; width: 1px; min-height: 0; cursor: col-resize; outline: none; background: var(--border-subtle); touch-action: none; transition: background var(--motion-fast), box-shadow var(--motion-fast); }
+.bib-visual-divider::after { content: ""; position: absolute; inset: 0 -4px; }
+.bib-visual-divider:hover,
+.bib-visual-divider[data-dragging] { background: var(--border-strong); box-shadow: 0 0 0 .5px var(--border-strong); }
+.bib-visual-divider:focus-visible:not([data-pointer-focus]) { background: var(--focus-ring); outline: var(--focus-ring-width) solid var(--focus-ring); outline-offset: 0; }
+.bib-visual[data-resizing] { cursor: col-resize; user-select: none; }
+
+/* Every row is exactly ROW_HEIGHT tall (set inline), so the list can place
+   rows it has not drawn. Set as a reference list sets an entry: the year in a
+   margin column, the title in the reading face, authors and then the venue in
+   italic as a bibliography sets it; the key and its use sit quietly on the
+   right. The hairline starts after the margin, as a list's rule would. */
+.bib-row { --bib-year-column: 44px; position: absolute; inset-inline: 0; box-sizing: border-box; display: grid; grid-template-columns: var(--bib-year-column) minmax(0, 1fr) fit-content(40%); grid-template-rows: auto auto; align-content: center; column-gap: var(--space-6); row-gap: var(--space-2); padding: 0 var(--space-8) 0 var(--space-6); cursor: default; color: var(--text-secondary); transition: background-color var(--motion-fast-exit); }
+.bib-row::after { content: ""; position: absolute; inset-inline: calc(var(--space-6) + var(--bib-year-column) + var(--space-6)) var(--space-8); bottom: 0; height: 1px; background: var(--border-subtle); }
+.bib-row:hover { background: var(--control-hover-surface); }
+/* The one in front stands on the lift with the weft's edge; its rule and the
+   one above it give way to the lift's own ring. */
+.bib-row[aria-selected="true"] { background: var(--surface-panel-raised); box-shadow: inset 2px 0 0 var(--mark-weft), 0 0 0 1px var(--border-subtle); }
+.bib-row[aria-selected="true"]::after,
+.bib-row:has(+ .bib-row[aria-selected="true"])::after { visibility: hidden; }
+.bib-visual-list-viewport:focus-visible:not([data-pointer-focus]) .bib-row[aria-selected="true"] { box-shadow: inset 2px 0 0 var(--mark-weft), 0 0 0 1px var(--control-active-border-strong); }
+.bib-row > span { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.bib-row-year { grid-column: 1; grid-row: 1 / span 2; justify-self: end; color: var(--text-secondary); font-family: var(--reading-font); font-size: var(--type-typeset-size); line-height: var(--type-body-line-height); font-variant-numeric: oldstyle-nums proportional-nums; }
+.bib-row-title { grid-column: 2; grid-row: 1; color: var(--text-primary); font-family: var(--reading-font); font-size: var(--type-typeset-size); line-height: var(--type-body-line-height); font-weight: var(--weight-regular); }
+.bib-row-title em { color: var(--text-tertiary); }
+/* The venue gives way before the authors do. */
+.bib-row > .bib-row-meta { grid-column: 2; grid-row: 2; display: flex; gap: var(--space-3); color: var(--text-secondary); font-size: var(--type-caption-size); line-height: var(--type-caption-line-height); }
+.bib-row-authors,
+.bib-row-venue { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.bib-row-authors { flex: none; max-width: 60%; }
+.bib-row-venue { flex: 0 1 auto; font-family: var(--reading-font); font-style: italic; }
+.bib-row-authors + .bib-row-venue::before { content: "·"; margin-inline-end: var(--space-3); font-style: normal; }
+.bib-row > .bib-row-foot { grid-column: 3; grid-row: 1 / span 2; display: flex; flex-direction: column; align-items: flex-end; gap: var(--space-2); color: var(--text-secondary); font-size: var(--type-micro-size); line-height: var(--type-micro-line-height); }
+.bib-row-key { max-width: min(18ch, 100%); min-width: 0; overflow: hidden; text-overflow: ellipsis; padding: var(--gap-hairline) var(--space-3); border-radius: var(--radius-compact); background: var(--control-hover-surface); color: var(--text-primary); font-family: var(--editor-font); }
+.bib-row-cited { display: inline-flex; align-items: center; gap: var(--space-2); font-variant-numeric: tabular-nums; }
+.bib-row-dots { display: inline-flex; gap: var(--space-1); }
+.bib-row-dots > i { width: 4px; height: 4px; border-radius: var(--radius-pill); background: var(--mark-weft); }
+.bib-row-badge { flex: none; max-width: 100%; }
+
+/* Too narrow for a margin (NARROW_LIST_WIDTH: the narrowest panel, or the
+   list beside the reference): the year leads the byline, and the key and its
+   use take a third line. The row is taller here (NARROW_ROW_HEIGHT), so the
+   three lines keep their leading, the key's chip a little more than the two
+   lines of type above it. */
+.bib-visual-list-viewport[data-narrow] .bib-row { grid-template-columns: auto minmax(0, 1fr); grid-template-rows: auto auto auto; column-gap: var(--space-3); row-gap: var(--space-2); padding-inline: var(--space-6); }
+.bib-visual-list-viewport[data-narrow] .bib-row::after { inset-inline: var(--space-6); }
+.bib-visual-list-viewport[data-narrow] .bib-row-year { grid-row: 2; justify-self: start; font-size: var(--type-caption-size); line-height: var(--type-caption-line-height); }
+.bib-visual-list-viewport[data-narrow] .bib-row-year:not(:empty)::after { content: "·"; margin-inline-start: var(--space-3); }
+.bib-visual-list-viewport[data-narrow] .bib-row-title { grid-column: 1 / -1; }
+.bib-visual-list-viewport[data-narrow] .bib-row-year:empty ~ .bib-row-meta { grid-column: 1 / -1; }
+.bib-visual-list-viewport[data-narrow] .bib-row > .bib-row-foot { grid-column: 1 / -1; grid-row: 3; margin-top: var(--space-1); flex-direction: row; align-items: center; gap: var(--space-4); }
+
+.bib-visual-detail { min-width: 0; min-height: 0; display: grid; }
+.bib-visual-detail > .ui-empty-state { align-self: center; padding: var(--space-16) var(--space-8); }
+.bib-detail { min-height: 0; }
+/* The reference in front, set as a citation card: its title, byline and
+   venue as the paper would carry them, where the manuscript cites it, and
+   its fields on one raised card. It takes the pane's whole width, so widening
+   the pane unwraps the title and the values and shows the usages in full. */
+.bib-detail-content { padding: var(--space-12) var(--space-16) var(--space-16); }
+/* Only a pane too narrow for both columns needs the way back to the list. */
+.bib-detail-back { display: none; }
+
+.bib-detail-header { display: grid; gap: var(--space-3); }
+/* In the narrowest panel the key takes its own line under the type rather than running past the edge. */
+.bib-detail-identity { display: flex; flex-wrap: wrap; align-items: center; gap: var(--space-3); min-width: 0; }
+.bib-detail-identity .bib-detail-type { flex: none; width: auto; font-family: var(--editor-font); }
+.bib-detail-key { flex: 1 1 10em; min-width: 0; font-family: var(--editor-font); }
+.bib-detail-copy { flex: none; width: var(--control-size-icon); height: var(--control-size-icon); display: grid; place-items: center; padding: 0; border: 0; border-radius: var(--radius-icon); background: transparent; color: var(--text-tertiary); cursor: pointer; }
+.bib-detail-copy:hover { background: var(--control-hover-surface); color: var(--text-primary); }
+.bib-detail-title { margin: var(--space-6) 0 0; color: var(--text-primary); font-family: var(--reading-font); font-size: var(--type-title-size); line-height: var(--type-title-line-height); font-weight: var(--weight-regular); overflow-wrap: anywhere; text-wrap: balance; }
+.bib-detail-authors,
+.bib-detail-venue { margin: 0; color: var(--text-secondary); font-size: var(--type-body-size); line-height: var(--type-body-line-height); overflow-wrap: anywhere; }
+.bib-detail-venue { font-family: var(--reading-font); font-style: italic; font-variant-numeric: oldstyle-nums proportional-nums; }
+.bib-detail-actions { display: flex; flex-wrap: wrap; gap: var(--space-2); margin-top: var(--space-4); }
+.bib-detail-delete { color: var(--status-danger); }
+.bib-detail-error { margin: 0; }
+
+.bib-detail-section { margin-top: var(--space-12); }
+.bib-detail-section h3 { margin: 0 0 var(--space-4); color: var(--text-secondary); font-size: var(--type-caption-size); line-height: var(--type-caption-line-height); font-weight: var(--weight-medium); }
+.bib-detail-muted,
+.bib-detail-unused { margin: 0; color: var(--text-tertiary); font-size: var(--type-caption-size); line-height: var(--type-caption-line-height); }
+.bib-detail-unused { color: var(--status-warning); }
+.bib-detail-usages { container: bib-usages / inline-size; margin: 0; padding: 0; list-style: none; display: grid; gap: var(--space-1); }
+.bib-detail-usages button { width: 100%; min-width: 0; display: grid; grid-template-columns: auto minmax(0, 1fr); align-items: baseline; gap: var(--space-5); padding: var(--space-3) var(--space-4); border: 0; border-radius: var(--radius-icon); background: transparent; color: inherit; text-align: start; font: inherit; cursor: pointer; }
+.bib-detail-usages button:hover { background: var(--control-hover-surface); }
+/* Each place leads as a tag, the way the source names it: main.tex:37. */
+.bib-usage-place { max-width: 100%; overflow: hidden; text-overflow: ellipsis; padding: var(--gap-hairline) var(--space-3); border-radius: var(--radius-compact); background: var(--control-hover-surface); color: var(--text-primary); font-size: var(--type-micro-size); line-height: var(--type-micro-line-height); font-variant-numeric: tabular-nums; white-space: nowrap; }
+/* A snippet wraps rather than cutting off, so a wider pane shows more of each line. */
+.bib-usage-snippet { min-width: 0; overflow-wrap: anywhere; color: var(--text-secondary); font-family: var(--editor-font); font-size: var(--type-diff-code-size); line-height: var(--type-diff-code-line-height); }
+/* Too narrow to set the snippet beside its place: it goes under it, up to three lines. */
+@container bib-usages (width < 480px) {
+  .bib-detail-usages button { grid-template-columns: minmax(0, 1fr); gap: var(--space-2); }
+  .bib-usage-place { justify-self: start; }
+  .bib-usage-snippet { display: -webkit-box; -webkit-box-orient: vertical; -webkit-line-clamp: 3; overflow: hidden; }
+}
+
+.bib-detail-fields { display: grid; gap: var(--space-3); padding: var(--space-4) var(--space-6); border-radius: var(--radius-panel); background: var(--surface-panel-raised); box-shadow: var(--elevation-raised); }
+.bib-field + .bib-field { padding-top: var(--space-3); border-top: 1px solid var(--border-subtle); }
+/* The names' column grows with the card, inside the bounds a field name needs. */
+.bib-field { display: grid; grid-template-columns: clamp(6em, 18%, 10em) minmax(0, 1fr) auto; align-items: start; gap: var(--space-2) var(--space-4); }
+.bib-field-name { padding-top: var(--space-3); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; color: var(--text-secondary); font-family: var(--editor-font); font-size: var(--type-caption-size); line-height: var(--type-caption-line-height); }
+.bib-field-value { width: 100%; min-width: 0; font-family: var(--editor-font); }
+/* A value reads as the card's text until the pointer or the caret reaches it;
+   then it takes the field's border, as an invalid value always does. So does
+   a long value taller than its box (resizeTextareaToContent lets it scroll),
+   or its last line would read as cut off. */
+.bib-field-value:not(:hover, :focus, [aria-invalid="true"], [style*="overflow-y: auto"]) { border-color: transparent; background: transparent; }
+textarea.bib-field-value { min-height: var(--control-height-compact); max-height: 16em; resize: none; }
+.bib-field-remove { visibility: hidden; }
+.bib-field:is(:hover, :focus-within) .bib-field-remove { visibility: visible; }
+.bib-field-error { grid-column: 2 / -1; margin: 0; }
+.bib-detail-add-field { display: grid; grid-template-columns: clamp(6em, 18%, 10em) minmax(0, 1fr) auto; gap: var(--space-2) var(--space-4); margin-top: var(--space-6); }
+.bib-add-field-name { font-family: var(--editor-font); }
+.bib-detail-add-field > .bib-detail-error { grid-column: 1 / -1; }
+
+@container bib-visual (max-width: 720px) {
+  .bib-visual-body { grid-template-columns: minmax(0, 1fr); }
+  .bib-visual-divider { display: none; }
+  .bib-visual:not([data-detail="open"]) .bib-visual-detail,
+  .bib-visual[data-detail="open"] .bib-visual-list { display: none; }
+  .bib-detail-back { display: inline-flex; align-items: center; gap: var(--space-2); margin-bottom: var(--space-6); padding: var(--space-2) var(--space-3); border: 0; border-radius: var(--radius-icon); background: transparent; color: var(--text-secondary); font: inherit; font-size: var(--type-caption-size); line-height: var(--type-caption-line-height); cursor: pointer; }
+  .bib-detail-back:hover { background: var(--control-hover-surface); color: var(--text-primary); }
+  .bib-detail-content { padding: var(--space-8) var(--space-8) var(--space-16); }
+  .bib-field,
+  .bib-detail-add-field { grid-template-columns: minmax(0, 1fr) auto; }
+  .bib-field-name { grid-column: 1 / -1; padding-top: 0; }
+  .bib-detail-add-field > .bib-add-field-name { grid-column: 1 / -1; }
+}
+
+/* The source, shown in place of a list the file cannot make, with why. */
+.bib-source-fallback { height: 100%; min-height: 0; display: grid; grid-template-rows: auto minmax(0, 1fr); }
+.bib-source-fallback > .ui-inline-message { margin: 0; padding: var(--space-4) var(--space-6); border-bottom: 1px solid var(--border-subtle); }

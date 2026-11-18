@@ -1,0 +1,48 @@
+name: Headless Linux
+on:
+  pull_request:
+    paths: ['server/**', 'src-tauri/src/**', 'scripts/synara-runtime.json', 'pnpm-lock.yaml', 'package.json', '.github/actions/setup-pnpm/**', '.github/workflows/headless.yml']
+  push:
+    branches: [main]
+    paths: ['server/**', 'src-tauri/src/**', 'scripts/synara-runtime.json', 'pnpm-lock.yaml', 'package.json', '.github/actions/setup-pnpm/**', '.github/workflows/headless.yml']
+permissions:
+  contents: read
+jobs:
+  headless:
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v7
+      - uses: dtolnay/rust-toolchain@stable
+      - name: Install actual LaTeX toolchain
+        run: sudo apt-get update && sudo apt-get install -y latexmk texlive-latex-base
+      - name: Build without desktop dependencies
+        run: cargo build --locked --manifest-path server/Cargo.toml
+      - name: Exercise real CLI, HTTP and PDF without a display
+        env:
+          LATTICE_SERVER_BINARY: ${{ github.workspace }}/server/target/debug/lattice-server
+          LATTICE_TEST_LATEX: '1'
+        run: env -u DISPLAY -u WAYLAND_DISPLAY python3 server/tests/terminal_smoke.py
+      - name: Exercise shared project operations and real SyncTeX
+        env:
+          LATTICE_SERVER_BINARY: ${{ github.workspace }}/server/target/debug/lattice-server
+          LATTICE_TEST_LATEX: '1'
+        run: env -u DISPLAY -u WAYLAND_DISPLAY python3 server/tests/core_parity.py
+      - name: Exercise isolated agent supervisor without a display
+        env:
+          LATTICE_SERVER_BINARY: ${{ github.workspace }}/server/target/debug/lattice-server
+        run: env -u DISPLAY -u WAYLAND_DISPLAY python3 server/tests/agent_smoke.py
+      - name: Preserve authenticated HTTPS reverse-proxy origin handling
+        env:
+          LATTICE_SERVER_BINARY: ${{ github.workspace }}/server/target/debug/lattice-server
+        run: env -u DISPLAY -u WAYLAND_DISPLAY python3 server/tests/origin_smoke.py
+      - name: Exercise human Git versions with disposable repositories
+        env:
+          LATTICE_SERVER_BINARY: ${{ github.workspace }}/server/target/debug/lattice-server
+        run: env -u DISPLAY -u WAYLAND_DISPLAY python3 server/tests/git_parity.py
+  browser-resource-routing:
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v7
+      - uses: ./.github/actions/setup-pnpm
+      - name: Execute pinned production preloader against the proxy bootstrap
+        run: node --experimental-vm-modules server/tests/browser_assets.mjs

@@ -1,0 +1,548 @@
+/**
+ * The app's shared domain model: projects, editor and view state, papers,
+ * builds, and the Overleaf and Git wire shapes the Rust side serializes.
+ */
+import type { ReferenceAssetPreview } from "./project/reference-preview";
+import type { PdfSyncTarget } from "./pdf/pdf-viewer";
+import type { CompileDiagnostic } from "./build/compile-diagnostics";
+
+type RootDocument = {
+  path: string;
+  name: string;
+  isDefault: boolean;
+};
+
+export type ProjectVenue =
+  | "neurips" | "icml" | "iclr" | "acl" | "cvpr" | "aaai" | "thuthesis" | "ustcthesis" | "blank" | "chinese-article"
+  | `local:${string}`;
+
+export type ProjectManifest = {
+  schemaVersion: number;
+  projectId: string;
+  name: string;
+  rootDocuments: RootDocument[];
+  primaryBibliography: string;
+  trusted: boolean;
+  engine?: string;
+  /** The writer undid an automatic switch to pdfLaTeX; builds leave the engine alone. */
+  keepEngine?: boolean;
+  /** Builds stop at the first LaTeX error instead of carrying on past every one (latex/build.rs). */
+  stopOnFirstError?: boolean;
+  venue?: ProjectVenue | string;
+  wordBudget?: number | null;
+  pageBudget?: number | null;
+  deadline?: ProjectDeadline | null;
+  spellingWords?: string[];
+  /** Harper rules (by name) and sentences (whitespace-collapsed source) the project leaves unchecked. */
+  grammarIgnoredRules?: string[];
+  grammarIgnoredSentences?: string[];
+  submissionItems?: SubmissionItem[];
+};
+
+/**
+ * A requirement or material the writer tracks by hand on the submission
+ * checklist ("supplementary.pdf checked", "all authors approved"); the
+ * automatic checks passing never confirms one.
+ */
+export type SubmissionItem = {
+  id: string;
+  title: string;
+  /** "review": done, waiting for someone to check it. */
+  status: "todo" | "review" | "confirmed";
+  /** The project file it is about, relative to the project root. */
+  file?: string;
+  /** Where the requirement is written down: a call-for-papers URL or a note. */
+  source?: string;
+  /** The day the requirement was last read against its source ("2027-05-01"). */
+  sourceChecked?: string;
+  owner?: string;
+  /** The linked file's mtime when the item was confirmed; the backend stamps one sent without it. */
+  confirmedMtimeMs?: number;
+};
+
+/** The submission deadline, as a wall-clock time Anywhere on Earth ("2027-05-15T23:59"). */
+export type ProjectDeadline = {
+  venue: string;
+  kind: "abstract" | "paper" | "rebuttal";
+  due: string;
+};
+
+export type WordCount = {
+  text: number;
+  headers: number;
+  captions: number;
+  total: number;
+  source: string;
+};
+
+/**
+ * Where the main body ends in the compiled PDF: the last page holding any of
+ * it before its appendix or references. Without either, the whole PDF is the
+ * main body; with one SyncTeX has not placed (still looking, the count
+ * failed, or it found none of the body) the main-body page count is unknown,
+ * which is not the same as the PDF's total. Until every file the root
+ * document includes before the end has been read, where the body ends is
+ * unknown ("unread"): a file not yet read may hold the end.
+ */
+export type BodyBoundary =
+  | { kind: "none" }
+  | { kind: "unread" }
+  | { kind: "unresolved" }
+  | { kind: "resolved"; mainPages: number };
+
+export type UnusedSymbols = {
+  labels: string[];
+  citations: string[];
+};
+
+export type ReplaceResult = {
+  filesChanged: string[];
+  replacements: number;
+};
+
+export type EditorViewState = {
+  cursor: number;
+  scrollTop: number;
+};
+
+type SpreadsheetSheetViewState = {
+  zoomRatio: number;
+  scrollTop: number;
+  scrollLeft: number;
+};
+
+export type SpreadsheetFileViewState = {
+  activeSheetId: string;
+  activeRange?: string;
+  activeCell?: string;
+  sheets: Record<string, SpreadsheetSheetViewState>;
+};
+
+export type PdfFileViewState = {
+  page: number;
+  scale: number;
+  fitMode: "width" | "height" | null;
+  scrollTop: number;
+  scrollLeft: number;
+};
+
+export type BoardFileViewState = {
+  pageId: string;
+  camera: { x: number; y: number; z: number };
+};
+
+export type OpenSlideFileViewState = {
+  page: number;
+};
+
+type ScrollFileViewState = {
+  scrollTop: number;
+  scrollLeft?: number;
+  scrollRange?: number;
+};
+
+export type ImageFileViewState = ScrollFileViewState & {
+  scale: number;
+};
+
+export type HtmlFileViewState = ImageFileViewState;
+
+/**
+ * Where a visual Markdown document was read: its scroll, and the block at the
+ * top of the viewport (its index among the document's top-level blocks, its
+ * top relative to the viewport's, and its height). A Paper is drawn by its
+ * full reader and, beside the notes, by a read-only snapshot laid out
+ * differently (no masthead, figures not yet loaded above, another width), so
+ * only the block finds the same text in both.
+ */
+export type VisualMarkdownViewState = ScrollFileViewState & {
+  anchor?: { block: number; top: number; height?: number };
+};
+
+/**
+ * Per-user view state only. These values are stored in Lattice's local app
+ * settings and must never be serialized into project files or shared Y.Docs.
+ */
+export type FileViewState = {
+  text?: EditorViewState;
+  spreadsheet?: SpreadsheetFileViewState;
+  pdf?: PdfFileViewState;
+  board?: BoardFileViewState;
+  image?: ImageFileViewState;
+  html?: HtmlFileViewState;
+  openSlide?: OpenSlideFileViewState;
+  visualMarkdown?: VisualMarkdownViewState;
+};
+
+export type FileNode = {
+  name: string;
+  path: string;
+  kind: string;
+  /** Native, content-derived routing. v1 collaboration remains extension-scoped. */
+  contentKind?: "directory" | "text" | "binary" | "symlink";
+  size?: number;
+  children: FileNode[];
+};
+
+export type ProjectSnapshot = {
+  root: string;
+  manifest: ProjectManifest;
+  files: FileNode[];
+};
+
+export type GitFileStatus = {
+  path: string;
+  status: string;
+  staged: boolean;
+  unstaged: boolean;
+};
+
+export type GitStatus = {
+  available: boolean;
+  repository: boolean;
+  branch: string | null;
+  remote?: string | null;
+  remoteUrl?: string | null;
+  upstream?: string | null;
+  ahead?: number;
+  behind?: number;
+  files: GitFileStatus[];
+};
+
+export type AssetPreview = ReferenceAssetPreview;
+
+type FigureDropRequest = {
+  id: string;
+  paths: string[];
+  clientX: number;
+  clientY: number;
+};
+
+/** A line in a project file: a SyncTeX jump target, or a back/forward history entry. */
+export type SyncTexTarget = { path: string; line: number };
+export type NavigationEntry = SyncTexTarget;
+
+/**
+ * The word a reverse SyncTeX jump came from, read off the PDF's text layer:
+ * its key (`wordKey` in `src/editor/latex/synctex-word.ts`), which of the
+ * PDF line's occurrences of it was clicked and how many there are, and the
+ * words either side of it on that line.
+ */
+export type SyncTexWord = {
+  word: string;
+  occurrence: number;
+  count: number;
+  before: string | null;
+  after: string | null;
+};
+type EditorNavigation = SyncTexTarget & { id: string; word?: SyncTexWord | null };
+export type EditorPosition = { path: string; line: number; column: number };
+export type PdfSyncResponse = Omit<PdfSyncTarget, "id">;
+
+/** One pass a build ran, as latexmk announced it (`src-tauri/src/latex/build_steps.rs`). */
+export type BuildStep = {
+  /** The program: pdflatex, xelatex, lualatex, bibtex, biber, makeindex, xdvipdfmx, … */
+  tool: string;
+  /** Which run of that tool within the build, from 1. */
+  run: number;
+  /** A draft pass of the cold-build prewarm, which writes no PDF. */
+  draft: boolean;
+  startedMs: number;
+  /** Null while it runs. */
+  durationMs: number | null;
+};
+
+export type BuildResult = {
+  success: boolean;
+  hasPdf: boolean;
+  log: string;
+  durationMs: number;
+  diagnostics: CompileDiagnostic[];
+  /** Project-relative path of the document the build actually compiled. */
+  rootDocument: string;
+  /**
+   * The document compiled this once (a standalone figure, a subfiles chapter)
+   * and is not the project's root document, which stays as it was.
+   */
+  oneOff?: boolean;
+  /** The conference template that document loaded ("NeurIPS"), read from the build's log. */
+  venue?: string;
+  /** The passes it ran, in order; none when latexmk found the PDF up to date. */
+  steps: BuildStep[];
+  /** How many pages the last pass wrote, when TeX's log says. */
+  pages: number | null;
+  /** Whether the PDF has its SyncTeX map beside it; null without a PDF. */
+  synctex: boolean | null;
+  /** The project files the compile wrote, by its `.fls` recorder (watched-builds.ts). */
+  outputs?: string[];
+};
+
+export type PaperSummary = {
+  arxivId: string;
+  /** Normalized DOI from the authoritative bibliography entry. */
+  doi?: string;
+  /** The cited page for webpage references; how the row fetches when there is no arXiv id. */
+  url?: string;
+  title: string;
+  /**
+   * The BibTeX author field as written, braces included: they mark a
+   * corporate author ("{Google Brain}") as one name. Parse it with
+   * `papers/paper-identity.ts`; never show it raw.
+   */
+  authors?: string;
+  /** The bibliography entry's year as written. */
+  year?: string;
+  citationKey?: string;
+  /** False for works that are only cited — there is nothing to open. */
+  hasFullText: boolean;
+  /** True only when blog.md is already available locally. */
+  hasBlog: boolean;
+  /** Converter-owned files needed to render figures in the paper reader. */
+  assetPaths?: string[];
+  /** Advisory DOI-exact update metadata from Crossref. */
+  citationHealth?: CitationHealth;
+};
+
+type CitationHealth = {
+  kind: "retracted" | "expressionOfConcern" | "corrected" | "replaced" | "unknown" | "unavailable";
+  updateType?: string;
+  source?: string;
+  date?: string;
+  link?: string;
+  checkedAt: string;
+  stale?: boolean;
+};
+
+export type RenameTarget =
+  | { kind: "label"; label: string }
+  | { kind: "citation"; key: string }
+  | { kind: "environment"; name: string }
+  | { kind: "wrap-environment" };
+
+export type RenameSymbolResult = {
+  changedFiles: string[];
+  occurrenceCount: number;
+  transactionId: string;
+};
+
+export type DocumentViewMode = "source" | "split" | "pdf";
+export type CanvasMode = DocumentViewMode | "asset";
+export type SettingsTab = "appearance" | "editor" | "agent" | "agent-defaults" | "mcp" | "environment" | "overleaf" | "literature" | "google" | "api" | "doctor" | "logs" | "acknowledgements";
+type CiteCommand = "cite" | "citep" | "citet";
+export type InsertSymbolCommand = CiteCommand | "ref" | "eqref";
+type DoctorCheck = { name: string; detail: string; ok: boolean; code?: string; params?: Record<string, string> };
+export type DoctorReport = { ok: boolean; summary: string; checks: DoctorCheck[] };
+export type EditorKeymap = "default" | "vim" | "emacs";
+
+// ---- Callbacks App hands to the modules split out of it -------------------
+
+export type OpenFileOptions = {
+  /** Land on this 1-based line (and record it in back/forward history). */
+  line?: number;
+  /** The word on `line` to put the caret on, when it can be found there (a reverse SyncTeX jump). */
+  word?: SyncTexWord | null;
+  /**
+   * Whether a file with no preview of its own (.bib, .sty, .cls) may take
+   * the whole editor area. True (the default) for an ordinary open — that
+   * file has nothing to show beside itself. False for a reverse SyncTeX jump,
+   * which would otherwise close the very PDF the double-click came from.
+   */
+  revealSource?: boolean;
+  /**
+   * Whether the file's remembered cursor and scroll come back. True (the
+   * default) unless `line` is given; false when the caller sends the editor
+   * somewhere itself once the file is open (a comment), or the remembered
+   * place would land after that jump and undo it.
+   */
+  restoreView?: boolean;
+};
+/** Open a project file in the text editor. */
+export type OpenProjectFile = (path: string, options?: OpenFileOptions) => Promise<void>;
+export type RefreshProject = (scope?: { expectedRoot: string; generation: number }) => Promise<ProjectSnapshot>;
+export type CompileProject = (force?: boolean, sound?: boolean, options?: { consumeAgentAssociations?: boolean }) => Promise<void>;
+/** Put the caret (a character offset) and scroll position back in a file. */
+export type ViewRestoreRequest = { path: string; cursor: number; scrollTop: number; id: string };
+/** One-shot requests App hands the canvas; each is answered once and settled by its id. */
+export type CanvasRequests = {
+  /** Jump the editor holding `path` to a line. */
+  navigation: EditorNavigation | null;
+  /** Put a reopened file's cursor and scroll back where they were. */
+  restore: ViewRestoreRequest | null;
+  /** Rename the environment around the caret. */
+  rename: { newName: string; id: string } | null;
+  /** Wrap the selection in a new environment. */
+  wrap: { name: string; id: string } | null;
+  /** Insert `\cite{key}`-style commands at the caret. */
+  cite: { key: string; command: InsertSymbolCommand; id: string } | null;
+  /** Insert imported figures where they were dropped (or at the caret). */
+  figure: FigureDropRequest | null;
+  /** Proofread or polish the source editor's selection, as its ⌘⌥P and selection toolbar do. */
+  proofread: { mode: "proofread" | "polish"; id: string } | null;
+  /** Replace `token` on a line of `path` (a failed build's suggested fix). */
+  replace: { path: string; line: number; token: string; replacement: string; id: string } | null;
+};
+
+// ---- Overleaf bridge ----------------------------------------------------
+// Shapes mirror the Rust `overleaf` module's serde camelCase output exactly.
+
+export type OverleafStatus = {
+  connected: boolean;
+  /** Overleaf turned the stored session away: not connected, but the account is still known. */
+  expired: boolean;
+  email: string | null;
+  name: string | null;
+  host: string;
+};
+export type OverleafLoginPoll = {
+  status: "pending" | "connected" | "cancelled";
+  session: OverleafStatus | null;
+  /** Why sign-in is still pending, when the backend knows a reason. */
+  detail?: string | null;
+};
+export type OverleafProject = {
+  id: string;
+  name: string;
+  lastUpdated: string | null;
+  ownerEmail: string | null;
+  ownerName: string | null;
+  accessLevel: string | null;
+  archived: boolean;
+  trashed: boolean;
+};
+/** What "Open from Overleaf" would do with a project, before it does it. */
+export type CloneTarget = {
+  /**
+   * `open` — already linked to this folder, so opening it is all that happens.
+   * `fresh` — nothing in the way, it downloads.
+   * `occupied` — a folder of that name holds files but is linked to nothing,
+   * which is exactly what Stop syncing leaves behind.
+   */
+  kind: "open" | "fresh" | "occupied";
+  path: string;
+  folder: string;
+};
+export type OverleafLink = {
+  projectId: string;
+  projectName: string;
+  host: string;
+  lastSync: string | null;
+  /** Linked, but not syncing until it is resumed. */
+  paused: boolean;
+};
+type OverleafConflict = {
+  path: string;
+  localCopy: string;
+  /**
+   * Whether the file has conflict markers to work through. False for one that
+   * could not be merged line by line at all — a figure, a PDF — where
+   * Overleaf's version takes the path and yours is kept beside it.
+   */
+  markers?: boolean;
+};
+/** What a pending sync would do to one file, before anything is written. */
+export type OverleafChangeKind =
+  | "incoming"
+  | "outgoing"
+  | "merge"
+  | "conflict"
+  | "deleteLocal"
+  | "skippedRemoteDelete"
+  | "refusedIncoming";
+type OverleafChange = {
+  path: string;
+  kind: OverleafChangeKind;
+  /** The file as it stands locally; null when it does not exist here yet. */
+  before: string | null;
+  /** What it becomes if applied; null when it would be deleted. */
+  after: string | null;
+  binary: boolean;
+};
+export type OverleafPreview = {
+  changes: OverleafChange[];
+  remoteVersion: number | null;
+};
+
+export type OverleafProbe = {
+  changed: boolean;
+  /** True only when the caller requested a one-time local baseline check. */
+  localChanged: boolean;
+  /** False when this Overleaf gives no version to compare against. */
+  versionKnown: boolean;
+  remoteVersion: number | null;
+  lastSync: string | null;
+};
+/** One message in the project's Overleaf chat. */
+export type OverleafMessage = {
+  id: string;
+  content: string;
+  authorName: string;
+  authorEmail: string | null;
+  /** Milliseconds since the epoch, as Overleaf reports it. */
+  timestamp: number;
+  /** True when this account wrote it, so the panel can side it. */
+  mine: boolean;
+};
+
+/** One message in an Overleaf comment thread; the same shape as a chat message. */
+export type OverleafComment = OverleafMessage;
+
+/** A comment thread: everything said about one spot in the project. */
+export type OverleafThread = {
+  id: string;
+  messages: OverleafComment[];
+  resolved: boolean;
+  resolvedBy: string | null;
+  resolvedAt: string | null;
+};
+
+export type OverleafSyncResult = {
+  pulled: string[];
+  pushed: string[];
+  /** Files where both sides had edits that combined cleanly. */
+  merged: string[];
+  conflicts: OverleafConflict[];
+  deletedLocal: string[];
+  skippedRemoteDeletes: string[];
+  /** App-owned transient paths that should be removed without prompting. */
+  automaticRemoteDeletes?: string[];
+  /** Left behind for being bigger than Overleaf will take. */
+  skippedLarge?: string[];
+  /**
+   * Kept as they are here although Overleaf's download had them empty or
+   * cut to a fraction, without Overleaf's history confirming the change.
+   * Each is listed once per Overleaf copy, not again on every sync.
+   */
+  refusedIncoming?: string[];
+  readOnly?: boolean;
+  /**
+   * Overleaf paths that differ only in letter case, which one file or folder
+   * here cannot hold apart: `kept` syncs, `skipped` (and all under it) is
+   * left alone on both sides until one is renamed on Overleaf.
+   */
+  caseCollisions?: { kept: string; skipped: string }[];
+  /**
+   * Changed here while the sync ran by something other than the editor (an
+   * agent, another program). The sync left them exactly as edited; they go
+   * up with the next one.
+   */
+  editedDuringSync?: string[];
+};
+
+// ---- Git version timeline ------------------------------------------------
+// Shapes mirror the Rust `git` module's serde camelCase output exactly.
+
+export type GitLogFileKind = "added" | "modified" | "deleted" | "renamed";
+type GitLogFile = { path: string; kind: GitLogFileKind };
+export type GitLogEntry = {
+  hash: string;
+  shortHash: string;
+  authorName: string;
+  timestamp: string;
+  message: string;
+  files: GitLogFile[];
+};
+export type GitFileDiff = {
+  before: string | null;
+  after: string | null;
+  binary: boolean;
+};

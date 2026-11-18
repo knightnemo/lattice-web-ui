@@ -1,0 +1,614 @@
+diff --git a/build/pdf.worker.mjs b/build/pdf.worker.mjs
+index e33f30991d4e81617c2fec43e4eec96de095a39d..800307b180c9555d03b709001be1fc4268d7de19 100644
+--- a/build/pdf.worker.mjs
++++ b/build/pdf.worker.mjs
+@@ -5373,7 +5373,11 @@ class JpegStream extends DecodeStream {
+     return this.stream.isAsync;
+   }
+   async getTransferableImage(width, height) {
+-    if (!(await JpegStream.canUseImageDecoder)) {
++    // Lattice: WebKit has no ImageDecoder, which left every JPEG to the
++    // JavaScript decoder in decodeImage and photo-heavy pages blank for a
++    // moment while scrolling. createImageBitmap decodes natively there.
++    const canUseImageDecoder = await JpegStream.canUseImageDecoder;
++    if (!canUseImageDecoder && typeof createImageBitmap !== "function") {
+       return null;
+     }
+     const jpegOptions = this.jpegOptions;
+@@ -5410,6 +5414,15 @@ class JpegStream extends DecodeStream {
+         init.desiredWidth = Math.ceil(frameWidth / factor);
+         init.desiredHeight = Math.ceil(frameHeight / factor);
+       }
++      if (!canUseImageDecoder) {
++        const blob = new Blob([data], {
++          type: "image/jpeg"
++        });
++        return await createImageBitmap(blob, reducePower ? {
++          resizeWidth: init.desiredWidth,
++          resizeHeight: init.desiredHeight
++        } : undefined);
++      }
+       decoder = new ImageDecoder(init);
+       return (await decoder.decode()).image;
+     } catch (reason) {
+diff --git a/types/web/pdf_viewer.d.ts b/types/web/pdf_viewer.d.ts
+index 0a7957b1387b09a7332734c8a732ce7e80eec284..9007d81bb68502f17fe14010e1ed044812e136f4 100644
+--- a/types/web/pdf_viewer.d.ts
++++ b/types/web/pdf_viewer.d.ts
+@@ -276,6 +276,12 @@ export class PDFViewer {
+     imagesRightClickMinSize: number;
+     l10n: import("./l10n.js").L10n | undefined;
+     pageColors: object | null;
++    /**
++     * Lattice: when above 0 (a viewer scale), a vertical, borderless page list
++     * keeps only the pages the view could show zoomed out to this scale in the
++     * DOM, with spacers sized to stand in for the rest.
++     */
++    pageWindowMinScale: number;
+     defaultRenderingQueue: boolean;
+     renderingQueue: PDFRenderingQueue | undefined;
+     scroll: {
+diff --git a/web/pdf_viewer.mjs b/web/pdf_viewer.mjs
+index 8e4a82d3e8cde9f27ee4878534afeed701f1c017..4d7409248cfb34310452897f0459f877a56f3b15 100644
+--- a/web/pdf_viewer.mjs
++++ b/web/pdf_viewer.mjs
+@@ -1577,7 +1577,8 @@ class PDFLinkService {
+     const ac = new AbortController();
+     this.eventBus.on("textlayerrendered", evt => {
+       if (evt.pageNumber === pageNumber) {
+-        evt.source.textLayer.div.focus();
++        // Keep keyboard focus on the destination without replacing its XYZ scroll.
++        evt.source.textLayer.div.focus({ preventScroll: true });
+         ac.abort();
+       }
+     }, {
+@@ -6317,11 +6318,22 @@ class TextLayerBuilder {
+     }
+     this.#selectionChangeAC = new AbortController();
+     const signal = globalAbortSignal ? AbortSignal.any([this.#selectionChangeAC.signal, globalAbortSignal]) : this.#selectionChangeAC.signal;
++    // Lattice: runs on every keyup and selectionchange in the page, including
++    // typing in an editor beside the PDF; touch the DOM only when something
++    // changed, so an idle text layer costs no mutations or style recalcs.
+     const reset = (end, textLayer) => {
+-      textLayer.append(end);
+-      end.style.width = "";
+-      end.style.height = "";
+-      textLayer.classList.remove("selecting");
++      if (textLayer.lastChild !== end) {
++        textLayer.append(end);
++      }
++      if (end.style.width) {
++        end.style.width = "";
++      }
++      if (end.style.height) {
++        end.style.height = "";
++      }
++      if (textLayer.classList.contains("selecting")) {
++        textLayer.classList.remove("selecting");
++      }
+     };
+     let isPointerDown = false;
+     document.addEventListener("pointerdown", () => {
+@@ -6515,7 +6527,6 @@ class PDFPageView extends BasePDFPageView {
+   #layerProperties = null;
+   #needsRestrictedScaling = false;
+   #originalViewport = null;
+-  #previousRotation = null;
+   #scaleRoundX = 1;
+   #scaleRoundY = 1;
+   #textLayerMode = TextLayerMode.ENABLE;
+@@ -6526,6 +6537,9 @@ class PDFPageView extends BasePDFPageView {
+     regularAnnotations: true
+   };
+   #layers = [null, null, null, null];
++  // Lattice: the page box #setDimensions gives the page, in CSS pixels.
++  boxWidth = 0;
++  boxHeight = 0;
+   constructor(options) {
+     super(options);
+     const {
+@@ -6624,6 +6638,10 @@ class PDFPageView extends BasePDFPageView {
+     return clone;
+   }
+   #addLayer(div, name) {
++    // Lattice: only a page with layers is a positioned box; see reset().
++    if (!this.div.classList.contains("latticeLayered")) {
++      this.div.classList.add("latticeLayered");
++    }
+     const pos = LAYERS_ORDER.get(name);
+     const oldDiv = this.#layers[pos];
+     this.#layers[pos] = div;
+@@ -6653,13 +6671,22 @@ class PDFPageView extends BasePDFPageView {
+       }
+       this.#userUnit = viewport.userUnit;
+     }
+-    if (this.pdfPage) {
+-      if (this.#previousRotation === viewport.rotation) {
+-        return;
+-      }
+-      this.#previousRotation = viewport.rotation;
++    // Lattice: the page box in px, set again on every scale change, instead
++    // of setLayerDimensions' round(var(--total-scale-factor) * ...) style.
++    // A var() in each page's own style cannot share WebKit's matched-style
++    // cache, so every zoom restyled each of a long PDF's thousands of pages
++    // the slow way (a 1,930-page PDF: 36 ms per zoom step, 7 ms in Chromium).
++    // Same value: what the canvas code below sizes the page to.
++    const width = floorToDivide(calcRound(viewport.width), this.#scaleRoundX);
++    const height = floorToDivide(calcRound(viewport.height), this.#scaleRoundY);
++    if (width !== this.boxWidth || height !== this.boxHeight) {
++      this.boxWidth = width;
++      this.boxHeight = height;
++      div.style.width = `${width}px`;
++      div.style.height = `${height}px`;
++      // Lattice: the page window (PDFPageWindow) re-reads the page boxes.
++      pageBoxGeneration++;
+     }
+-    setLayerDimensions(div, viewport, true, false);
+   }
+   updatePageNumber(newPageNumber) {
+     const oldPageNumber = this.id;
+@@ -6923,6 +6950,14 @@ class PDFPageView extends BasePDFPageView {
+         this.detailView = null;
+       }
+     }
++    // Lattice: a page box without layers needs no containing block, and in
++    // WebKit every positioned page is a render layer of its own: thousands of
++    // them made each frame of a zoom or fling of a long PDF update thousands
++    // of layers (a 1,930-page PDF zoomed at 53 fps, 87 with static pages).
++    // The viewer CSS positions only the pages marked here.
++    if (!div.firstElementChild && div.classList.contains("latticeLayered")) {
++      div.classList.remove("latticeLayered");
++    }
+   }
+   toggleEditingMode(isEditing) {
+     this.#isEditing = isEditing;
+@@ -7265,13 +7300,17 @@ class PDFPageView extends BasePDFPageView {
+     const pageHeight = floorToDivide(calcRound(height), sfy[1]);
+     outputScale.sx = canvasWidth / pageWidth;
+     outputScale.sy = canvasHeight / pageHeight;
+-    if (this.#scaleRoundX !== sfx[1]) {
+-      div.style.setProperty("--scale-round-x", `${sfx[1]}px`);
+-      this.#scaleRoundX = sfx[1];
+-    }
+-    if (this.#scaleRoundY !== sfy[1]) {
+-      div.style.setProperty("--scale-round-y", `${sfy[1]}px`);
+-      this.#scaleRoundY = sfy[1];
++    if (this.#scaleRoundX !== sfx[1] || this.#scaleRoundY !== sfy[1]) {
++      if (this.#scaleRoundX !== sfx[1]) {
++        div.style.setProperty("--scale-round-x", `${sfx[1]}px`);
++        this.#scaleRoundX = sfx[1];
++      }
++      if (this.#scaleRoundY !== sfy[1]) {
++        div.style.setProperty("--scale-round-y", `${sfy[1]}px`);
++        this.#scaleRoundY = sfy[1];
++      }
++      // Lattice: the px page box rounds to these steps too.
++      this.#setDimensions();
+     }
+     const recordBBoxes = this.enableOptimizedPartialRendering && this.#hasRestrictedScaling && !this.recordedBBoxes;
+     const recordImages = this.imagesRightClickMinSize !== -1 && !this.imageCoordinates;
+@@ -7971,11 +8010,17 @@ function isValidAnnotationEditorMode(mode) {
+ class PDFPageViewBuffer {
+   #buf = new Set();
+   #size = 0;
+-  constructor(size) {
++  // Lattice: the views a selection runs through, and the views evicted while
++  // one did, which keep their text layers; see #destroyFirstView.
++  #selectedViews = null;
++  #textOnly = new Set();
++  constructor(size, selectedViews = null) {
+     this.#size = size;
++    this.#selectedViews = selectedViews;
+   }
+   push(view) {
+     const buf = this.#buf;
++    this.#textOnly.delete(view);
+     if (buf.has(view)) {
+       buf.delete(view);
+     }
+@@ -7984,6 +8029,21 @@ class PDFPageViewBuffer {
+       this.#destroyFirstView();
+     }
+   }
++  // Lattice: destroy what is left of the views evicted while a selection ran
++  // through them, once it no longer does (a cleared range, or a drag the app
++  // parked in its copy field).
++  release() {
++    if (this.#textOnly.size === 0) {
++      return;
++    }
++    const selected = this.#selectedViews?.() ?? new Set();
++    for (const view of this.#textOnly) {
++      if (!selected.has(view)) {
++        this.#textOnly.delete(view);
++        view.destroy();
++      }
++    }
++  }
+   resize(newSize, idsToKeep = null) {
+     this.#size = newSize;
+     const buf = this.#buf;
+@@ -8010,10 +8070,281 @@ class PDFPageViewBuffer {
+   [Symbol.iterator]() {
+     return this.#buf.keys();
+   }
++  // Lattice: a drag selecting from page 1 while the view scrolls on renders
++  // new pages, and destroying the oldest drawn one tore page 1's text out of
++  // the live range: the selection collapsed (Chromium) or re-anchored on a
++  // later page (WebKit), and the copy lost the first pages. A page a selection
++  // runs through keeps its text layer, still laid out so the drag can extend
++  // from it, and gives up only its drawing: the cache stays as bounded in
++  // canvas memory however long the selection.
+   #destroyFirstView() {
+     const firstView = this.#buf.keys().next().value;
+-    firstView?.destroy();
+     this.#buf.delete(firstView);
++    if (firstView?.textLayer && this.#selectedViews?.().has(firstView)) {
++      firstView.reset({
++        keepTextLayer: true
++      });
++      firstView.textLayer?.show();
++      firstView.pdfPage?.cleanup();
++      this.#textOnly.add(firstView);
++      return;
++    }
++    firstView?.destroy();
++  }
++}
++// Lattice: the index of the page `node` is in, or -1.
++function pageIndexOf(element, views, node) {
++  if (!node || node === element || !element.contains(node)) {
++    return -1;
++  }
++  const page = (node.nodeType === Node.ELEMENT_NODE ? node : node.parentElement)?.closest(".page");
++  if (!page) {
++    return -1;
++  }
++  const index = Number(page.getAttribute("data-page-number")) - 1;
++  return views[index]?.div === page ? index : views.findIndex(view => view.div === page);
++}
++// Lattice: the indices of the pages a selection range starts on, ends on or
++// runs through: a range from page 1 to page 3 holds page 2's text only while
++// page 2 is in the DOM. `attached` are the views in the DOM, in page order.
++function selectedPageIndices(element, views, attached) {
++  const selected = new Set();
++  const selection = document.getSelection();
++  for (let r = 0, rr = selection?.rangeCount ?? 0; r < rr; r++) {
++    const range = selection.getRangeAt(r);
++    let first = pageIndexOf(element, views, range.startContainer),
++      last = pageIndexOf(element, views, range.endContainer);
++    if (first < 0 || last < 0) {
++      // An end outside every page (beyond the viewer, or on it or a
++      // spacer): the range runs as far as the pages in the DOM it reaches.
++      const reached = attached.filter(view => range.intersectsNode(view.div));
++      if (reached.length === 0) {
++        continue;
++      }
++      if (first < 0) {
++        first = pageIndexOf(element, views, reached[0].div);
++      }
++      if (last < 0) {
++        last = pageIndexOf(element, views, reached.at(-1).div);
++      }
++    }
++    for (let i = first; i <= last; i++) {
++      selected.add(i);
++    }
++  }
++  return selected;
++}
++// Lattice: page virtualization. Every page of a long PDF used to be a box in
++// the DOM, and a zoom restyled and laid out all of them: in WebKit, which
++// pays 4-5x Chromium's per-element style cost, that kept zooming a 1,930-page
++// PDF below the display rate and froze a frame on each commit. With
++// `pageWindowMinScale` set (a viewer scale), the viewer holds only the pages
++// near the view, and a spacer stands in for each run of the others, sized so
++// the scroll extent and every page's offset are what they would be with all
++// of them there. The window reaches as far as the view would show zoomed out
++// to that scale, so a zoom previewed as a transform of the viewer finds its
++// pages in place, and twice that before it moves again, so it moves rarely.
++// Pages holding focus or any of a selection stay too: removing them would
++// drop the focus, or the page's text from the selection and from a copy.
++// The layout model is the viewer CSS's with removePageBorders: borderless
++// pages one under another, each but the last followed by its bottom margin.
++let pageBoxGeneration = 0;
++class PDFPageWindow {
++  #pdfViewer;
++  #attached = [];
++  #children = [];
++  #first = -1;
++  #last = -1;
++  #spacers = [];
++  #gap = null;
++  #tops = null;
++  #maxWidth = 0;
++  #generation = -1;
++  constructor(pdfViewer) {
++    this.#pdfViewer = pdfViewer;
++  }
++  // The views in the DOM, in page order.
++  get attached() {
++    return this.#attached;
++  }
++  get active() {
++    const pdfViewer = this.#pdfViewer;
++    return pdfViewer.pageWindowMinScale > 0 && !!pdfViewer.removePageBorders && pdfViewer._scrollMode === ScrollMode.VERTICAL && pdfViewer._spreadMode === SpreadMode.NONE && !pdfViewer.isInPresentationMode;
++  }
++  // Forget what is in the viewer element, after something else rebuilt it.
++  reset() {
++    this.#attached = [];
++    this.#children = [];
++    this.#first = this.#last = -1;
++    this.#tops = null;
++  }
++  // Bring the window to the view, or to `anchorOffset` into `anchorView` when
++  // about to scroll there, and return the views in the DOM, in page order.
++  // A window that still covers the view (and its pins) is left as it is.
++  sync(anchorView = null, anchorOffset = 0) {
++    const pdfViewer = this.#pdfViewer;
++    const views = pdfViewer._pages;
++    if (views.length === 0) {
++      return this.#attached;
++    }
++    const children = this.#children;
++    const element = pdfViewer.viewer;
++    // PDF.js's own code (page edits, the other scroll modes) may have
++    // rebuilt the viewer element.
++    if (children.length && (element.childElementCount !== children.length || element.firstElementChild !== children[0] || element.lastElementChild !== children.at(-1))) {
++      this.reset();
++    }
++    const relaid = this.#layOut(views);
++    const pinned = this.#pinned(views);
++    const {
++      container
++    } = pdfViewer;
++    const height = Math.max(container.clientHeight, window.innerHeight);
++    const reach = height * Math.max(1, pdfViewer.currentScale / pdfViewer.pageWindowMinScale);
++    const anchor = anchorView ? views.indexOf(anchorView) : -1;
++    const top = anchor >= 0 ? this.#tops[anchor] + anchorOffset : container.scrollTop;
++    const attached = new Set(this.#attached);
++    const covered = !relaid && this.#first >= 0 && this.#first <= this.#pageAt(top - reach) && this.#pageAt(top + height + reach) <= this.#last && pinned.every(i => attached.has(views[i]));
++    if (!covered) {
++      this.#render(views, this.#pageAt(top - 2 * reach), this.#pageAt(top + height + 2 * reach), pinned);
++      if (this.#gap === null && this.#measureGap()) {
++        this.#layOut(views);
++        this.#render(views, this.#pageAt(top - 2 * reach), this.#pageAt(top + height + 2 * reach), pinned);
++      }
++    }
++    return this.#attached;
++  }
++  // Where each page would start with all of them in the DOM (#tops; one past
++  // the end, the extent plus a gap), from the boxes the pages were last given.
++  // Returns whether that moved anything.
++  #layOut(views) {
++    const previous = this.#tops;
++    if (previous?.length === views.length + 1 && this.#generation === pageBoxGeneration) {
++      return false;
++    }
++    this.#generation = pageBoxGeneration;
++    const gap = this.#gap ?? 0;
++    const tops = new Float64Array(views.length + 1);
++    let top = 0,
++      maxWidth = 0,
++      same = previous?.length === tops.length;
++    for (let i = 0, ii = views.length; i < ii; i++) {
++      tops[i] = top;
++      same &&= previous[i] === top;
++      top += views[i].boxHeight + gap;
++      maxWidth = Math.max(maxWidth, views[i].boxWidth);
++    }
++    tops[views.length] = top;
++    if (same && previous[views.length] === top && maxWidth === this.#maxWidth) {
++      return false;
++    }
++    this.#tops = tops;
++    this.#maxWidth = maxWidth;
++    return true;
++  }
++  // The page whose box, or the gap after it, holds `y` (the first page for
++  // a `y` above it).
++  #pageAt(y) {
++    const tops = this.#tops;
++    let low = 0,
++      high = tops.length - 2;
++    while (low < high) {
++      const middle = low + high + 1 >> 1;
++      if (tops[middle] <= y) {
++        low = middle;
++      } else {
++        high = middle - 1;
++      }
++    }
++    return low;
++  }
++  // The page holding focus, and every page a selection runs through.
++  #pinned(views) {
++    const element = this.#pdfViewer.viewer;
++    const pinned = selectedPageIndices(element, views, this.#attached);
++    const focused = pageIndexOf(element, views, document.activeElement);
++    if (focused >= 0) {
++      pinned.add(focused);
++    }
++    return [...pinned];
++  }
++  // The bottom margin the viewer CSS gives a page that is not the last.
++  #measureGap() {
++    for (const view of this.#attached) {
++      if (view.div.nextElementSibling) {
++        const gap = parseFloat(getComputedStyle(view.div).marginBottom);
++        if (Number.isFinite(gap)) {
++          this.#gap = gap;
++          this.#tops = null;
++          return true;
++        }
++      }
++    }
++    return false;
++  }
++  // The `index`th spacer, sized for pages `first` to `last`: their boxes and
++  // the gaps after them, but none after the document's last page.
++  #spacer(index, first, last, count) {
++    let spacer = this.#spacers[index];
++    if (!spacer) {
++      spacer = this.#spacers[index] = document.createElement("div");
++      spacer.className = "pageSpacer";
++      spacer.setAttribute("aria-hidden", "true");
++    }
++    const tops = this.#tops;
++    const bottom = last + 1 < count ? tops[last + 1] : tops[count] - (this.#gap ?? 0);
++    const height = `${bottom - tops[first]}px`;
++    const width = `${this.#maxWidth}px`;
++    if (spacer.style.height !== height) {
++      spacer.style.height = height;
++    }
++    if (spacer.style.width !== width) {
++      spacer.style.width = width;
++    }
++    return spacer;
++  }
++  // Make the viewer element hold pages `first` to `last` and the pinned ones,
++  // with spacers between and around them.
++  #render(views, first, last, pinned) {
++    const indices = new Set(pinned);
++    for (let i = first; i <= last; i++) {
++      indices.add(i);
++    }
++    const attached = [...indices].sort((a, b) => a - b);
++    const children = [];
++    let next = 0,
++      spacers = 0;
++    for (const i of attached) {
++      if (i > next) {
++        children.push(this.#spacer(spacers++, next, i - 1, views.length));
++      }
++      children.push(views[i].div);
++      next = i + 1;
++    }
++    if (next < views.length) {
++      children.push(this.#spacer(spacers++, next, views.length - 1, views.length));
++    }
++    // Pages that stay are never moved: moving one would restyle all of its
++    // layers. The spacers, empty boxes, are taken out and put back.
++    const element = this.#pdfViewer.viewer;
++    const keep = new Set(children);
++    for (const child of [...element.children]) {
++      if (!keep.has(child) || this.#spacers.includes(child)) {
++        child.remove();
++      }
++    }
++    let cursor = element.firstElementChild;
++    for (const child of children) {
++      if (child === cursor) {
++        cursor = cursor.nextElementSibling;
++      } else {
++        element.insertBefore(child, cursor);
++      }
++    }
++    this.#children = children;
++    this.#attached = attached.map(i => views[i]);
++    this.#first = first;
++    this.#last = last;
+   }
+ }
+ class PDFViewer {
+@@ -8054,6 +8385,9 @@ class PDFViewer {
+   #copiedPageViews = null;
+   #savedPageViews = null;
+   #deletedPageNumbers = null;
++  // Lattice: virtualizes the page list when set; see PDFPageWindow.
++  pageWindowMinScale = 0;
++  #pageWindow = new PDFPageWindow(this);
+   constructor(options) {
+     const viewerVersion = "6.5.438";
+     if (version !== viewerVersion) {
+@@ -8155,6 +8489,16 @@ class PDFViewer {
+   getCachedPageViews() {
+     return new Set(this.#buffer);
+   }
++  // Lattice: the page views a selection runs through.
++  #selectedPageViews() {
++    const views = this._pages;
++    const attached = this.#pageWindow.active ? this.#pageWindow.attached : views;
++    const selected = new Set();
++    for (const i of selectedPageIndices(this.viewer, views, attached)) {
++      selected.add(views[i]);
++    }
++    return selected;
++  }
+   get pageViewsReady() {
+     return this._pages.every(pageView => pageView?.pdfPage);
+   }
+@@ -8557,7 +8901,7 @@ class PDFViewer {
+           console.error(`Invalid AnnotationEditor mode: ${mode}`);
+         }
+       }
+-      const viewerElement = this._scrollMode === ScrollMode.PAGE ? null : viewer;
++      const viewerElement = this._scrollMode === ScrollMode.PAGE || this.#pageWindow.active ? null : viewer;
+       const scale = this.currentScale;
+       const viewport = firstPdfPage.getViewport({
+         scale: scale * PixelsPerInch.PDF_TO_CSS_UNITS
+@@ -8604,6 +8948,8 @@ class PDFViewer {
+         this.#ensurePageViewVisible();
+       } else if (this._spreadMode !== SpreadMode.NONE) {
+         this._updateSpreadMode();
++      } else if (this.#pageWindow.active) {
++        this.#pageWindow.sync();
+       }
+       eventBus.on("annotationeditorlayerrendered", evt => {
+         if (this.#annotationEditorUIManager) {
+@@ -8794,7 +9140,7 @@ class PDFViewer {
+     this._currentScale = (/* inlined export .UNKNOWN_SCALE */0);
+     this._currentScaleValue = null;
+     this._pageLabels = null;
+-    this.#buffer = new PDFPageViewBuffer(DEFAULT_CACHE_SIZE);
++    this.#buffer = new PDFPageViewBuffer(DEFAULT_CACHE_SIZE, () => this.#selectedPageViews());
+     this._location = null;
+     this._pagesRotation = 0;
+     this._optionalContentConfigPromise = null;
+@@ -8812,6 +9158,7 @@ class PDFViewer {
+     this.#eventAC?.abort();
+     this.#eventAC = null;
+     this.viewer.textContent = "";
++    this.#pageWindow.reset();
+     this._updateScrollMode();
+     this.viewer.removeAttribute("lang");
+     this.#hiddenCopyElement?.remove();
+@@ -8890,6 +9237,8 @@ class PDFViewer {
+     if (this._scrollMode === ScrollMode.PAGE) {
+       this.#ensurePageViewVisible();
+       this.update();
++    } else if (this.#pageWindow.active) {
++      this.#pageWindow.sync(pageView, pageSpot?.top);
+     }
+     if (!pageSpot && !this.isInPresentationMode) {
+       const left = div.offsetLeft + div.clientLeft,
+@@ -9220,6 +9569,8 @@ class PDFViewer {
+     }
+     const newCacheSize = Math.max(DEFAULT_CACHE_SIZE, 2 * numVisiblePages + 1);
+     this.#buffer.resize(newCacheSize, visible.ids);
++    // Lattice: see PDFPageViewBuffer.#destroyFirstView.
++    this.#buffer.release();
+     for (const {
+       view,
+       visibleArea
+@@ -9301,7 +9652,7 @@ class PDFViewer {
+     return !this.isInPresentationMode && this.container.scrollHeight > this.container.clientHeight;
+   }
+   _getVisiblePages() {
+-    const views = this._scrollMode === ScrollMode.PAGE ? this.#scrollModePageState.pages : this._pages,
++    const views = this._scrollMode === ScrollMode.PAGE ? this.#scrollModePageState.pages : this.#pageWindow.active ? this.#pageWindow.sync() : this._pages,
+       horizontal = this._scrollMode === ScrollMode.HORIZONTAL,
+       rtl = horizontal && this._isContainerRtl;
+     return getVisibleElements({
+@@ -9503,7 +9854,10 @@ class PDFViewer {
+     } else {
+       this.l10n.pause();
+       viewer.textContent = "";
+-      if (this._spreadMode === SpreadMode.NONE) {
++      this.#pageWindow.reset();
++      if (this.#pageWindow.active) {
++        this.#pageWindow.sync();
++      } else if (this._spreadMode === SpreadMode.NONE) {
+         for (const pageView of this._pages) {
+           viewer.append(pageView.div);
+         }

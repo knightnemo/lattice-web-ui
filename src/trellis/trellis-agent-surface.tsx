@@ -1,0 +1,49 @@
+/**
+ * The agent panel's content under Trellis: just the Synara frame. Trellis never
+ * reparents view content, so the iframe (and its running session) survives
+ * docking, floating, hiding and zooming. It is never hibernated.
+ */
+import { useMemo } from "react";
+import { useLingui } from "@lingui/react/macro";
+import { HeadlessAgentControls } from "../agent/headless-agent-controls";
+import { AgentVisualDialog } from "../agent/agent-visual-dialog";
+import { SynaraLoadingSurface } from "../agent/synara-loading-surface";
+import { synaraEmbedUrl } from "../app/app-synara-embed";
+import type { SynaraHost } from "../app/use-synara-host";
+import type { AppLocale, Theme } from "../settings/app-settings";
+
+function TrellisAgentSurface({ synara, projectRoot, theme, appLocale, dropActive }: {
+  synara: SynaraHost;
+  projectRoot: string;
+  theme: Theme;
+  appLocale: AppLocale;
+  dropActive: boolean;
+}) {
+  const { t } = useLingui();
+  const {
+    origin, runtime, frameMounted, frameAttempt, frameReady, frameRef, retryAgent, expandedVisual, closeExpandedVisual,
+  } = synara;
+  // Recording navigation must not change src and reload an in-progress turn.
+  const src = useMemo(() => origin
+    ? synaraEmbedUrl({ origin, authToken: runtime.authToken, hostPreferences: runtime.hostPreferences, projectRoot, theme, locale: appLocale })
+    : undefined,
+  [origin, runtime.authToken, runtime.hostPreferences, projectRoot, theme, appLocale]);
+  return (
+    <div className={`synara-frame-shell ${dropActive ? "agent-drop-active" : ""}`} data-staged={runtime.workspaceMode === "staged-explicit-writeback" || undefined} data-tour="agent-panel" data-ready={frameReady || undefined}>
+      {runtime.workspaceMode === "staged-explicit-writeback" && <HeadlessAgentControls key={projectRoot} projectRoot={projectRoot} />}
+      {frameMounted && origin && <iframe
+        key={`${projectRoot}\0${frameAttempt}`}
+        ref={frameRef}
+        className="synara-poc-frame"
+        src={src}
+        title={t`Agent`}
+        allow="clipboard-read; clipboard-write; microphone"
+        sandbox="allow-scripts allow-same-origin allow-forms allow-downloads"
+      />}
+      {!frameReady && <SynaraLoadingSurface thread waiting={frameMounted} runtime={runtime} preparingWorkspace={Boolean(origin)} onRetry={retryAgent} />}
+      {expandedVisual && <AgentVisualDialog visual={expandedVisual} theme={theme} onClose={closeExpandedVisual} />}
+    </div>
+  );
+}
+
+export default TrellisAgentSurface;

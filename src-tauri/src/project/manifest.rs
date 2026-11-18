@@ -1,0 +1,666 @@
+//! Opening a folder as a project and keeping `.research/project.json` honest:
+//! root documents, compile roots, TeX magic comments, and project settings.
+
+use super::create::{default_brief, default_manifest, RESEARCH_GITIGNORE};
+use super::history::{
+    prune_conversation_checkpoints, MAX_CHECKPOINTS_PER_SESSION, MAX_CHECKPOINT_BYTES,
+};
+use super::paths::safe_path;
+use super::tree::{build_artifact_ignore_lines, scan_tree, TreeView};
+use crate::models::{FileNode, ProjectManifest, ProjectSnapshot, RootDocument};
+use crate::util::err;
+use crate::wide_event::{self, Failure};
+use serde::Serialize;
+use std::fs;
+use std::path::Path;
+use walkdir::WalkDir;
+
+pub(super) const MANIFEST_PATH: &str = ".research/project.json";
+/// The manifest's format; 2 is the first without a seeded word budget.
+pub(super) const MANIFEST_SCHEMA_VERSION: u32 = 2;
+
+pub fn open(root: &Path) -> Result<ProjectSnapshot, String> {
+    let root = root.canonicalize().map_err(err)?;
+    if !root.is_dir() {
+        return Err("The selected path is not a folder.".to_string());
+    }
+
+    for directory in [".research/history", ".research/papers", ".research/sessions"] {
+        fs::create_dir_all(root.join(directory)).map_err(err)?;
+    }
+    wide_event::project(&root);
+    if let Err(error) =
+        prune_conversation_checkpoints(&root, MAX_CHECKPOINTS_PER_SESSION, MAX_CHECKPOINT_BYTES)
+    {
+        wide_event::record("checkpoint_prune_error", error);
+    }
+    let research_ignore = root.join(".research/.gitignore");
+    if !research_ignore.exists() {
+        fs::write(&research_ignore, RESEARCH_GITIGNORE).map_err(err)?;
+    }
+    // A folder Lattice did not create gets the same artifact ignores a new
+    // project is born with. Version tracking usually starts here, so without
+    // them the first commit adopts every .log and .fls in the folder, and from
+    // then on each build dirties them and each agent turn diffs them.
+    for line in [".research/checkpoints/".to_string(), ".research/cache/".to_string()]
+        .into_iter()
+        .chain(build_artifact_ignore_lines())
+    {
+        ensure_ignore_line(&root.join(".gitignore"), &line)?;
+    }
+
+    let adopted = !root.join(MANIFEST_PATH).exists();
+    wide_event::record("adopted", adopted);
+    let mut manifest = if adopted { adopt_folder(&root)? } else { read_manifest(&root)? };
+    if apply_tex_magic_comments(&root, &mut manifest)? {
+        write_manifest(&root, &manifest)?;
+    }
+    if manifest.schema_version < MANIFEST_SCHEMA_VERSION {
+        upgrade_manifest(&mut manifest);
+        write_manifest(&root, &manifest)?;
+    }
+
+    let step = wide_event::step("scan");
+    let files = scan_tree(&root, TreeView::Project)?;
+    drop(step);
+    record_tree(&files);
+    wide_event::record("engine", manifest.engine.as_str());
+    wide_event::record("root_documents", manifest.root_documents.len());
+    Ok(ProjectSnapshot { root: root.to_string_lossy().to_string(), manifest, files })
+}
+
+/// The project's size on its open event: how many files, how many bytes.
+fn record_tree(nodes: &[FileNode]) {
+    fn walk(nodes: &[FileNode], totals: &mut (u64, u64)) {
+        for node in nodes {
+            if node.kind != "directory" {
+                totals.0 += 1;
+                totals.1 += node.size;
+            }
+            walk(&node.children, totals);
+        }
+    }
+    let mut totals = (0, 0);
+    walk(nodes, &mut totals);
+    wide_event::record("files", totals.0);
+    wide_event::record("bytes", totals.1);
+}
+
+/// What a project that would not open means for whoever reads the log.
+pub fn classify_open_error(error: &str) -> Failure {
+    let lower = error.to_ascii_lowercase();
+    if lower.contains("no such file") || lower.contains("not a folder") {
+        Failure {
+            kind: "not_found",
+            fix: "The folder moved or was deleted; open it from its new place.",
+        }
+    } else if lower.contains("permission denied") || lower.contains("operation not permitted") {
+        Failure {
+            kind: "permission_denied",
+            fix: "Give Lattice access to the folder (System Settings → Privacy & Security → Files and Folders).",
+        }
+    } else if lower.contains("already open in another") {
+        Failure { kind: "already_open", fix: "Switch to the window that has it open." }
+    } else if lower.contains(" at line ") {
+        // serde_json's position suffix: the manifest is not valid JSON.
+        Failure {
+            kind: "manifest_unreadable",
+            fix: "Fix or remove .research/project.json; Lattice recreates it.",
+        }
+    } else {
+        Failure { kind: "open_error", fix: "Try again; if it repeats, report it with the log." }
+    }
+}
+
+/// Write down a manifest for a folder Lattice did not create.
+/// Bring an older manifest up to [`MANIFEST_SCHEMA_VERSION`]. Before 2, every
+/// project was born with a 5,500-word budget that no venue sets, stored as if
+/// the writer had chosen it, so the checklist held every paper to it; that
+/// seeded value goes.
+fn upgrade_manifest(manifest: &mut ProjectManifest) {
+    if manifest.word_budget == Some(5500) {
+        manifest.word_budget = None;
+    }
+    manifest.schema_version = MANIFEST_SCHEMA_VERSION;
+}
+
+fn adopt_folder(root: &Path) -> Result<ProjectManifest, String> {
+    let name = root.file_name().and_then(|value| value.to_str()).unwrap_or("Research project");
+    let mut manifest = default_manifest(name);
+    // A folder Lattice did not create may hold no LaTeX at all (Markdown
+    // notes, say): record no root document rather than invent main.tex.
+    match detect_root_document(root) {
+        Some(relative) => {
+            manifest.root_documents[0].name = document_name(&relative, "Root");
+            manifest.root_documents[0].path = relative;
+        }
+        None => manifest.root_documents.clear(),
+    }
+    if !root.join("references.bib").exists() {
+        if let Some(entry) = WalkDir::new(root)
+            .max_depth(3)
+            .into_iter()
+            .filter_map(Result::ok)
+            .find(|entry| entry.path().extension().is_some_and(|ext| ext == "bib"))
+        {
+            manifest.primary_bibliography =
+                entry.path().strip_prefix(root).map_err(err)?.to_string_lossy().to_string();
+        }
+    }
+    write_manifest(root, &manifest)?;
+    if !root.join(".research/brief.md").exists() {
+        fs::write(root.join(".research/brief.md"), default_brief(name)).map_err(err)?;
+    }
+    Ok(manifest)
+}
+
+pub(crate) fn ensure_ignore_line(path: &Path, line: &str) -> Result<(), String> {
+    let current = fs::read_to_string(path).unwrap_or_default();
+    if current.lines().any(|existing| existing.trim() == line) {
+        return Ok(());
+    }
+    let separator = if current.is_empty() || current.ends_with('\n') { "" } else { "\n" };
+    fs::write(path, format!("{current}{separator}{line}\n")).map_err(err)
+}
+
+pub fn read_manifest(root: &Path) -> Result<ProjectManifest, String> {
+    serde_json::from_str(&fs::read_to_string(root.join(MANIFEST_PATH)).map_err(err)?).map_err(err)
+}
+
+pub fn write_manifest(root: &Path, manifest: &ProjectManifest) -> Result<(), String> {
+    write_pretty_json(&root.join(MANIFEST_PATH), manifest)
+}
+
+/// Pretty JSON plus a trailing newline — the shape of every `.research` file.
+pub(super) fn write_pretty_json<T: Serialize>(path: &Path, value: &T) -> Result<(), String> {
+    if let Some(parent) = path.parent() {
+        fs::create_dir_all(parent).map_err(err)?;
+    }
+    let raw = serde_json::to_string_pretty(value).map_err(err)?;
+    fs::write(path, format!("{raw}\n")).map_err(err)
+}
+
+/// The document builds compile: the marked default, else the first listed.
+pub(super) fn default_root_document(manifest: &ProjectManifest) -> Option<&RootDocument> {
+    manifest
+        .root_documents
+        .iter()
+        .find(|document| document.is_default)
+        .or_else(|| manifest.root_documents.first())
+}
+
+/// Display name of a root document: its file stem, else `fallback`.
+fn document_name(relative: &str, fallback: &str) -> String {
+    Path::new(relative).file_stem().and_then(|stem| stem.to_str()).unwrap_or(fallback).to_string()
+}
+
+/// Make `relative` the only default root document, listing it if it is new.
+/// Returns whether the manifest changed.
+fn make_default_root(manifest: &mut ProjectManifest, relative: &str, fallback_name: &str) -> bool {
+    let mut changed = false;
+    if !manifest.root_documents.iter().any(|document| document.path == relative) {
+        manifest.root_documents.push(RootDocument {
+            path: relative.to_string(),
+            name: document_name(relative, fallback_name),
+            is_default: false,
+        });
+        changed = true;
+    }
+    for document in &mut manifest.root_documents {
+        let is_default = document.path == relative;
+        changed |= document.is_default != is_default;
+        document.is_default = is_default;
+    }
+    changed
+}
+
+/// Honor `% !TEX root=` / `% !TEX program=` style magic comments when present.
+fn apply_tex_magic_comments(root: &Path, manifest: &mut ProjectManifest) -> Result<bool, String> {
+    let seed = default_root_document(manifest)
+        .map_or_else(|| "main.tex".to_string(), |document| document.path.clone());
+    let absolute = match safe_path(root, &seed) {
+        Ok(path) if path.is_file() => path,
+        _ => return Ok(false),
+    };
+    let hints = parse_tex_magic_comments(&fs::read_to_string(absolute).unwrap_or_default());
+    let mut changed = false;
+    if let Some(relative) = hints.root {
+        if safe_path(root, &relative).is_ok_and(|path| path.is_file()) {
+            changed |= make_default_root(manifest, &relative, "Root");
+        }
+    }
+    if let Some(engine) = hints.engine.filter(|engine| *engine != manifest.engine) {
+        manifest.engine = engine;
+        changed = true;
+    }
+    Ok(changed)
+}
+
+/// The engine a `% !TEX program` comment in `content` asks for, as a manifest
+/// engine name (`pdf`, `xelatex`, `lualatex`).
+pub fn tex_program_engine(content: &str) -> Option<String> {
+    parse_tex_magic_comments(content).engine
+}
+
+#[derive(Debug, Default, PartialEq, Eq)]
+struct TexMagicHints {
+    /// Forward-slashed path as written.
+    root: Option<String>,
+    /// Manifest engine name (`pdf`, `xelatex`, `lualatex`).
+    engine: Option<String>,
+}
+
+fn parse_tex_magic_comments(content: &str) -> TexMagicHints {
+    let mut hints = TexMagicHints::default();
+    for line in content.lines().take(40) {
+        let trimmed = line.trim();
+        let Some(rest) = ["% !TEX", "% !TeX", "%!TEX", "%!TeX"]
+            .into_iter()
+            .find_map(|prefix| trimmed.strip_prefix(prefix))
+        else {
+            continue;
+        };
+        let Some((key, value)) = rest.trim().trim_start_matches(':').trim().split_once('=') else {
+            continue;
+        };
+        let value = value.trim().trim_matches('"').trim_matches('\'').trim();
+        if value.is_empty() {
+            continue;
+        }
+        match key.trim().to_ascii_lowercase().as_str() {
+            "root" => hints.root = Some(value.replace('\\', "/")),
+            "program" | "ts-program" => {
+                hints.engine = match value.to_ascii_lowercase().as_str() {
+                    "xelatex" | "xetex" => Some("xelatex".to_string()),
+                    "lualatex" | "luatex" => Some("lualatex".to_string()),
+                    "pdflatex" | "latex" | "pdftex" => Some("pdf".to_string()),
+                    _ => None,
+                };
+            }
+            _ => {}
+        }
+    }
+    hints
+}
+
+pub fn has_latexmkrc(root: &Path) -> bool {
+    root.join("latexmkrc").is_file() || root.join(".latexmkrc").is_file()
+}
+
+pub fn latexmk_engine_arg(engine: &str) -> &'static str {
+    match engine.trim().to_ascii_lowercase().as_str() {
+        "xelatex" => "-pdfxe",
+        "lualatex" => "-pdflua",
+        _ => "-pdf",
+    }
+}
+
+/// Collapse `.` / `..` segments lexically. `safe_path` refuses `..` outright,
+/// but a `% !TEX root = ../main.tex` written in a chapter file is the normal
+/// way to name a root one directory up — resolve it here first, and refuse
+/// only paths that climb above the project root (`pop` on an empty stack).
+fn normalize_relative(path: &str) -> Option<String> {
+    let mut parts: Vec<&str> = Vec::new();
+    for part in path.split('/') {
+        match part {
+            "" | "." => continue,
+            ".." => {
+                parts.pop()?;
+            }
+            other => parts.push(other),
+        }
+    }
+    Some(parts.join("/"))
+}
+
+/// A document a build compiles in place of the manifest default.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct CompileRoot {
+    pub path: String,
+    /// A `standalone` figure or a `subfiles` chapter, built on its own for
+    /// this compile only. Recorded as the default, it would keep compiling
+    /// while the writer moved on to an ordinary chapter, whose build — and the
+    /// outline, word count and SyncTeX — would all follow the figure.
+    pub one_off: bool,
+}
+
+/// Which document should a build compile while `open_path` is the file in the
+/// editor? Overleaf's rule, extended with TeX magic comments: a `% !TEX root=`
+/// in the open file wins, then the open file itself if it declares a document
+/// class. `None` means the open file casts no vote (a chapter, a style file,
+/// Markdown) and the manifest default stands.
+pub fn resolve_compile_root(root: &Path, open_path: &str) -> Option<CompileRoot> {
+    let relative = open_path.trim().replace('\\', "/");
+    if !relative.to_ascii_lowercase().ends_with(".tex") {
+        return None;
+    }
+    let absolute = safe_path(root, &relative).ok()?;
+    if !absolute.is_file() {
+        return None;
+    }
+    let content = fs::read_to_string(&absolute).ok()?;
+    if let Some(magic) = parse_tex_magic_comments(&content).root {
+        let parent = Path::new(&relative).parent().and_then(|value| value.to_str()).unwrap_or("");
+        // The TeX convention resolves the magic path against the file that
+        // declares it; project-root-relative comes second because that is what
+        // `apply_tex_magic_comments` has always accepted.
+        let candidates =
+            [normalize_relative(&format!("{parent}/{magic}")), normalize_relative(&magic)];
+        if let Some(candidate) = candidates.into_iter().flatten().find(|candidate| {
+            candidate.to_ascii_lowercase().ends_with(".tex")
+                && safe_path(root, candidate).is_ok_and(|path| path.is_file())
+        }) {
+            return Some(CompileRoot { path: candidate, one_off: false });
+        }
+    }
+    if !declares_document_class(&content) {
+        return None;
+    }
+    // A standalone poster the writer chose as the root builds as the default
+    // it already is, and one in a project with no root yet becomes the root.
+    let default = read_manifest(root).ok().and_then(|manifest| {
+        default_root_document(&manifest).map(|document| document.path.clone())
+    });
+    let one_off = compiles_alone(&content) && default.is_some_and(|default| default != relative);
+    Some(CompileRoot { path: relative, one_off })
+}
+
+/// Whether the document class is one made for typesetting a piece of a
+/// document by itself: `standalone` (a figure, a TikZ picture) or `subfiles`
+/// (a chapter that names its main document in the class option). The option
+/// list may span lines, so the uncommented text is read as one.
+fn compiles_alone(content: &str) -> bool {
+    let code: String = content
+        .lines()
+        .map(|line| line.split('%').next().unwrap_or(""))
+        .collect::<Vec<_>>()
+        .join("\n");
+    let Some(at) = code.find("\\documentclass") else { return false };
+    let rest = code[at + "\\documentclass".len()..].trim_start();
+    let rest = match rest.strip_prefix('[') {
+        Some(options) => match options.find(']') {
+            Some(end) => options[end + 1..].trim_start(),
+            None => return false,
+        },
+        None => rest,
+    };
+    let Some(name) = rest.strip_prefix('{').and_then(|name| name.split_once('}')) else {
+        return false;
+    };
+    matches!(name.0.trim(), "standalone" | "subfiles")
+}
+
+/// A `\documentclass` on any line, ignoring what follows an unescaped `%` so a
+/// commented-out preamble in a chapter file does not turn it into a root.
+pub(super) fn declares_document_class(content: &str) -> bool {
+    content.lines().any(|line| line.split('%').next().unwrap_or("").contains("\\documentclass"))
+}
+
+/// Record `path` as the document builds compile from now on, upserting it into
+/// the root-documents list. Written to the manifest rather than kept as a
+/// one-shot override so everything that resolves the default root — the PDF
+/// preview, SyncTeX, clean, the outline, the next session — follows the
+/// document that was actually built.
+pub fn set_compile_root(root: &Path, path: &str) -> Result<ProjectManifest, String> {
+    let relative = path.trim().replace('\\', "/");
+    let mut manifest = read_manifest(root)?;
+    if manifest
+        .root_documents
+        .iter()
+        .any(|document| document.is_default && document.path == relative)
+    {
+        return Ok(manifest);
+    }
+    make_default_root(&mut manifest, &relative, &relative);
+    write_manifest(root, &manifest)?;
+    Ok(manifest)
+}
+
+/// Pick the best root `.tex` for foreign / Overleaf-style trees.
+fn detect_root_document(root: &Path) -> Option<String> {
+    let tex_files = || {
+        WalkDir::new(root).max_depth(4).into_iter().filter_map(Result::ok).filter(|entry| {
+            entry.path().is_file() && entry.path().extension().is_some_and(|ext| ext == "tex")
+        })
+    };
+    // Honor `% !TEX root=` first when it points at a real file.
+    for entry in tex_files() {
+        let content = fs::read_to_string(entry.path()).unwrap_or_default();
+        if let Some(candidate) = parse_tex_magic_comments(&content).root {
+            if safe_path(root, &candidate).is_ok_and(|path| path.is_file()) {
+                return Some(candidate);
+            }
+        }
+    }
+
+    let mut best: Option<(i32, String)> = None;
+    for entry in tex_files() {
+        let path = entry.path();
+        let Ok(relative) = path.strip_prefix(root) else {
+            continue;
+        };
+        let relative = relative.to_string_lossy().replace('\\', "/");
+        if relative.split('/').any(|part| part.starts_with('.')) {
+            continue;
+        }
+        let content = fs::read_to_string(path).unwrap_or_default();
+        let file_name =
+            path.file_name().and_then(|value| value.to_str()).unwrap_or("").to_ascii_lowercase();
+        let mut score = match file_name.as_str() {
+            "main.tex" => 120,
+            "paper.tex" | "manuscript.tex" | "root.tex" | "article.tex" => 90,
+            _ => 0,
+        };
+        if content.contains("\\documentclass") {
+            score += 80;
+        }
+        // A conflict copy is byte-identical to the real file when it is made,
+        // so on score alone it can win the tie and quietly become the document
+        // that gets compiled — edits to the real file then never reach the PDF.
+        if crate::overleaf::is_conflict_copy(&file_name) {
+            score -= 500;
+        }
+        if content.contains("\\begin{document}") {
+            score += 20;
+        }
+        // Prefer shallower files when scores tie.
+        score -= relative.matches('/').count() as i32 * 3;
+        if best.as_ref().is_none_or(|(best_score, _)| score > *best_score) {
+            best = Some((score, relative));
+        }
+    }
+    best.map(|(_, path)| path)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::project::set_spelling_words;
+    use crate::project::test_support::Fixture;
+
+    const ARTICLE: &str = "\\documentclass{article}\n\\begin{document}\nA\n\\end{document}\n";
+
+    fn root_paths(manifest: &ProjectManifest) -> Vec<(&str, bool)> {
+        manifest
+            .root_documents
+            .iter()
+            .map(|document| (document.path.as_str(), document.is_default))
+            .collect()
+    }
+
+    #[test]
+    fn opening_a_folder_ignores_the_build_artifacts_it_will_recompile() {
+        let fixture = Fixture::folder("adopted-ignores", "imported");
+        fixture.write("main.tex", "\\documentclass{article}\n");
+        // What an Overleaf import arrives with: a .gitignore that knows nothing about LaTeX.
+        fixture.write(".gitignore", "node_modules/\n");
+
+        open(&fixture.root).unwrap();
+
+        let ignore = fixture.read(".gitignore");
+        for line in [
+            "*.aux",
+            "*.log",
+            "*.fls",
+            "*.fdb_latexmk",
+            "*.run.xml",
+            "*-SAVE-ERROR",
+            "node_modules/",
+        ] {
+            assert!(
+                ignore.lines().any(|existing| existing.trim() == line),
+                "{line} missing from {ignore}"
+            );
+        }
+        // Opening twice must not append a second copy of the same rules.
+        open(&fixture.root).unwrap();
+        assert_eq!(fixture.read(".gitignore"), ignore);
+    }
+
+    #[test]
+    fn a_rewrite_keeps_the_keys_it_does_not_read() {
+        let fixture = Fixture::folder("unread-keys", "paper");
+        let mut manifest = serde_json::to_value(default_manifest("paper")).unwrap();
+        let terms = serde_json::json!([{ "term": "ResNet", "variants": ["Resnet"] }]);
+        manifest["termRules"] = terms.clone();
+        manifest["englishVariant"] = "british".into();
+        fixture.write(MANIFEST_PATH, manifest.to_string());
+
+        set_spelling_words(&fixture.root, vec!["frobnicator".to_string()]).unwrap();
+
+        let written: serde_json::Value =
+            serde_json::from_str(&fixture.read(MANIFEST_PATH)).unwrap();
+        assert_eq!(written["termRules"], terms);
+        assert_eq!(written["englishVariant"], "british");
+        assert_eq!(written["spellingWords"], serde_json::json!(["frobnicator"]));
+    }
+
+    #[test]
+    fn opening_a_folder_claims_only_root_documents_it_has() {
+        let fixture = Fixture::folder("markdown-only", "notes");
+        fixture.write("ideas.md", "# Ideas\n");
+        let roots = || root_paths(&open(&fixture.root).unwrap().manifest).len();
+        assert_eq!(roots(), 0);
+
+        // Adding LaTeX later is still detected on the next open.
+        fixture.write("paper.tex", ARTICLE);
+        fs::remove_file(fixture.path(MANIFEST_PATH)).unwrap();
+        let reopened = open(&fixture.root).unwrap();
+        assert_eq!(root_paths(&reopened.manifest), vec![("paper.tex", true)]);
+
+        // With a .tex present, a named root that is merely absent is kept.
+        write_manifest(&fixture.root, &default_manifest("notes")).unwrap();
+        let snapshot = open(&fixture.root).unwrap();
+        assert_eq!(root_paths(&snapshot.manifest), vec![("main.tex", true)]);
+    }
+
+    #[test]
+    fn the_open_file_wins_the_compile_when_it_is_a_root_and_is_recorded() {
+        let fixture = Fixture::folder("compile-root", "papers");
+        fixture.write("main.tex", ARTICLE);
+        fixture.write("second.tex", ARTICLE);
+        fixture.write("chapters/intro.tex", "\\section{Intro}\n");
+        // A commented-out preamble does not turn a chapter into a root.
+        fixture.write("chapters/outro.tex", "% \\documentclass{article}\ntext\n");
+        // `../main.tex` is the TeX convention: relative to the declaring file.
+        // `safe_path` alone refuses `..`, which is why this needs its own case.
+        fixture.write("chapters/one.tex", "% !TEX root = ../main.tex\n\\section{One}\n");
+        // Classes made to typeset a piece alone compile, but only this once.
+        fixture.write(
+            "figures/plot.tex",
+            "\\documentclass[tikz]{standalone}\n\\begin{document}x\\end{document}\n",
+        );
+        fixture.write(
+            "chapters/sub.tex",
+            "\\documentclass[\n  ../main.tex\n]{subfiles}\n\\begin{document}x\\end{document}\n",
+        );
+        // A class whose name merely starts like one is a real root.
+        fixture.write("third.tex", "\\documentclass{standalonepaper} % {standalone}\n");
+        open(&fixture.root).unwrap();
+
+        let target = |path: &str, one_off| Some(CompileRoot { path: path.to_string(), one_off });
+        for (open_path, compiled) in [
+            // The open file declares a document class: it is the compile target.
+            ("second.tex", target("second.tex", false)),
+            ("third.tex", target("third.tex", false)),
+            ("figures/plot.tex", target("figures/plot.tex", true)),
+            ("chapters/sub.tex", target("chapters/sub.tex", true)),
+            // A chapter casts no vote; the manifest default stands.
+            ("chapters/intro.tex", None),
+            ("chapters/outro.tex", None),
+            // Non-.tex files never vote.
+            ("notes.md", None),
+            ("chapters/one.tex", target("main.tex", false)),
+        ] {
+            assert_eq!(resolve_compile_root(&fixture.root, open_path), compiled, "{open_path}");
+        }
+        // A standalone document the writer chose as the root builds as the default.
+        set_compile_root(&fixture.root, "figures/plot.tex").unwrap();
+        assert_eq!(
+            resolve_compile_root(&fixture.root, "figures/plot.tex"),
+            target("figures/plot.tex", false)
+        );
+        set_compile_root(&fixture.root, "main.tex").unwrap();
+
+        // Recording the compiled document upserts it as the only default.
+        let manifest = set_compile_root(&fixture.root, "second.tex").unwrap();
+        assert_eq!(
+            root_paths(&manifest),
+            vec![("main.tex", false), ("figures/plot.tex", false), ("second.tex", true)]
+        );
+        // Written down, not just returned: the next read agrees.
+        assert_eq!(root_paths(&read_manifest(&fixture.root).unwrap()), root_paths(&manifest));
+        // Re-recording the current default neither duplicates nor reorders.
+        let again = set_compile_root(&fixture.root, "second.tex").unwrap();
+        assert_eq!(root_paths(&again), root_paths(&manifest));
+    }
+
+    #[test]
+    fn root_documents_are_detected_from_magic_comments_and_names() {
+        for (label, files, expected) in [
+            // A byte-identical conflict copy loses to the real file on its name.
+            (
+                "detect-conflict-copy",
+                vec![("neurips_2026.tex", ARTICLE), ("neurips_2026 (local conflict 20260724-1308).tex", ARTICLE)],
+                "neurips_2026.tex",
+            ),
+            (
+                "detect-root",
+                vec![
+                    ("sections/intro.tex", "Intro text\n"),
+                    ("paper.tex", "\\documentclass{article}\n\\begin{document}\n\\input{sections/intro}\n\\end{document}\n"),
+                ],
+                "paper.tex",
+            ),
+            (
+                "detect-magic-root",
+                vec![
+                    ("main.tex", "% !TEX root = manuscript.tex\n\\input{manuscript}\n"),
+                    ("manuscript.tex", ARTICLE),
+                ],
+                "manuscript.tex",
+            ),
+        ] {
+            let fixture = Fixture::folder(label, "proj");
+            for (path, contents) in files {
+                fixture.write(path, contents);
+            }
+            assert_eq!(detect_root_document(&fixture.root).as_deref(), Some(expected), "{label}");
+        }
+    }
+
+    #[test]
+    fn magic_comments_and_engines_map_to_latexmk_arguments() {
+        let hints = parse_tex_magic_comments(
+            "% !TEX root = paper.tex\n% !TEX program = xelatex\n\\documentclass{article}\n",
+        );
+        let expected =
+            TexMagicHints { root: Some("paper.tex".into()), engine: Some("xelatex".into()) };
+        assert_eq!(hints, expected);
+        for (engine, argument) in
+            [("pdf", "-pdf"), ("xelatex", "-pdfxe"), ("lualatex", "-pdflua"), ("unknown", "-pdf")]
+        {
+            assert_eq!(latexmk_engine_arg(engine), argument, "{engine}");
+        }
+    }
+}

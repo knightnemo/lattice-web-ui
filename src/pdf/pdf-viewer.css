@@ -1,0 +1,182 @@
+/* The toolbar stays on one row so resizing the source/PDF split never moves
+   search away from page navigation. A narrow one keeps what a reader reaches
+   for while reading (pages, search, SyncTeX and the fit in use) and moves the
+   rest — zoom steps, the other fit, location history, saving — into one
+   overflow menu (the `.pdf-overflow` controls); trackpad zoom always works.
+   The size container is the toolbar's own frame, not the whole preview: when
+   a query container's width changes, WebKit restyles everything inside it, so
+   with the preview as the container every frame of a panel-divider drag
+   restyled each page box of the PDF (82 fps against 123 with this frame). */
+.pdf-toolbar-frame { flex: none; container: pdf-toolbar / inline-size; }
+.pdf-toolbar { min-height: var(--toolbar-height); flex: none; padding: var(--space-2) var(--space-4); border-bottom: 1px solid var(--border-subtle); background: var(--editor-bg); contain: layout paint; display: grid; grid-template-columns: auto minmax(0, 1fr) auto; gap: var(--space-2); align-items: center; }
+.pdf-toolbar button { width: var(--toolbar-icon-width); height: var(--toolbar-icon-height); border-radius: var(--toolbar-icon-radius); padding: 0; background: transparent; color: var(--text-secondary); display: grid; place-items: center; transition: color var(--motion-fast), background-color var(--motion-fast); }
+.pdf-toolbar button:hover:not(:disabled) { background: var(--toolbar-hover-surface); color: var(--text-primary); }
+.pdf-toolbar button:active:not(:disabled) { background: var(--control-pressed-surface); }
+.pdf-find-controls { min-width: 0; grid-column: 2; display: grid; grid-template-columns: minmax(0, 1fr); align-items: center; gap: var(--space-2); }
+/* `outline` can be a React component that ultimately renders null. Base the
+   extra track on the actual button in the DOM, not the truthiness of that
+   ReactNode, or the search lands in the 24px outline track by itself. */
+.pdf-find-controls:has(.pdf-outline-trigger) { grid-template-columns: 24px minmax(0, 1fr); }
+.pdf-find-controls .pdf-search { width: 100%; min-width: 0; }
+.pdf-outline-trigger { justify-self: center; }
+.pdf-page-controls, .pdf-history-controls, .pdf-zoom-controls { display: flex; align-items: center; color: var(--text-secondary); font-size: var(--type-micro-size); }
+.pdf-navigation-controls { grid-column: 1; justify-self: start; display: flex; align-items: center; gap: var(--space-3); }
+.pdf-page-controls { justify-self: start; display: grid; grid-template-columns: 24px 44px 24px; gap: var(--gap-hairline); }
+.pdf-history-controls { display: grid; grid-template-columns: 24px 24px; gap: var(--gap-hairline); }
+.pdf-zoom-controls { width: auto; grid-column: 3; justify-self: end; gap: var(--space-2); }
+.pdf-page-value, .pdf-zoom-value { position: relative; width: 44px; min-width: 44px; height: var(--control-height-compact); border-radius: var(--radius-compact); display: inline-flex; align-items: center; justify-content: center; color: var(--text-secondary); }
+.pdf-page-value:focus-within, .pdf-zoom-value:focus-within { background: var(--field-control-background); box-shadow: inset 0 0 0 var(--field-control-border-width) var(--field-control-interactive-border-color); }
+.pdf-page-value { font-variant-numeric: tabular-nums; }
+.pdf-page-value input { position: absolute; inset: 0; width: 100%; min-width: 0; border: 0; outline: 0; padding: 0; opacity: 0; background: transparent; color: inherit; font: inherit; text-align: right; font-variant-numeric: inherit; cursor: text; overflow-x: hidden; }
+.pdf-page-value.editing input { position: static; inset: auto; opacity: 1; }
+.pdf-page-display, .pdf-page-total { white-space: nowrap; }
+.pdf-page-total { padding-left: 3px; }
+/* The percent sign closes up to the number ("184%", never "184 %"): the field
+   is three tabular digits wide, the most a zoom takes (30–500), with the
+   digits set against the sign and the pair centred in the box. */
+.pdf-zoom-value input { flex: none; width: 3ch; border: 0; outline: 0; padding: 0; background: transparent; color: inherit; font: inherit; text-align: right; font-variant-numeric: tabular-nums; overflow-x: hidden; }
+.pdf-zoom-value span { pointer-events: none; }
+.pdf-zoom-controls .pdf-fit-divider { width: 1px; height: 16px; background: var(--border-strong); }
+.pdf-zoom-controls button.active { color: var(--control-active); background: var(--toolbar-active-surface); border-radius: var(--toolbar-icon-radius); }
+.pdf-search { min-width: 0; padding-right: var(--space-2); }
+/* A stand-in for the match controls stays mounted while the field is empty so the panel's
+   minimum width can reserve their room before the first keystroke. */
+.pdf-search-idle .ui-search-field-trailing { display: none; }
+.pdf-search .pdf-search-position { flex: none; min-width: 31px; color: var(--text-secondary); font-size: var(--type-micro-size); font-variant-numeric: tabular-nums; text-align: center; white-space: nowrap; }
+.pdf-search button { flex: none; width: var(--search-clear-width); height: var(--search-clear-height); }
+.pdf-search .pdf-search-option[aria-pressed="true"] { color: var(--control-active); background: var(--toolbar-active-surface); }
+.pdf-scroll-area { position: relative; flex: 1; min-height: 0; overflow: hidden; }
+.pdf-viewer-host { position: absolute; inset: 0; overflow: hidden; }
+/* The notice and the loading status are one kind of thing, a short status
+   over the pages: the same popover plate, at the same size. */
+.pdf-notice { position: absolute; top: var(--space-4); left: 50%; transform: translateX(-50%); z-index: 10; max-width: calc(100% - var(--space-8)); margin: 0; padding: var(--space-2) var(--space-5); border-radius: var(--radius-control); background: var(--surface-elevated); box-shadow: var(--elevation-popover); color: var(--text-secondary); font-size: var(--type-micro-size); line-height: var(--type-micro-line-height); }
+/* The breathing room around the pages is a transparent border, not padding, and
+   that is load-bearing. PDF.js derives its `page-width` / `page-fit` scale from
+   `container.clientWidth`, which includes padding but excludes a border, and
+   with `removePageBorders` it subtracts nothing for the scrollbar. Padding here
+   therefore sized every fitted page to the padded width and left the pane
+   permanently scrolled sideways by exactly the horizontal padding. */
+.pdf-scroll-area-viewport { position: absolute; inset: 0; overflow: auto; border: var(--space-4) solid transparent; box-sizing: border-box; }
+/* One scrollbar per surface: the Lattice overlay bars draw this pane's. The
+   compound selector is deliberate — PDFSlick's stylesheet sets
+   `scrollbar-width: thin` on this very element through `.pdfSlick`, at equal
+   specificity and from a different CSS chunk, so order cannot be relied on. It
+   is also why the pane used to show a platform scrollbar rather than Lattice's:
+   WebKit ignores every `::-webkit-scrollbar` rule on a scroller that sets the
+   standard property. */
+.pdf-scroll-area-viewport.pdfSlick { scrollbar-width: none; }
+.pdf-scroll-area-viewport::-webkit-scrollbar { display: none; width: 0; height: 0; }
+.pdf-scroll-area-viewport.pdf-viewer-staging { visibility: hidden; pointer-events: none; }
+.pdf-preview .pdfViewer { min-width: 100%; min-height: 100%; }
+.pdf-preview .pdfViewer.removePageBorders .page { margin: 0 auto var(--space-5); background: var(--pdf-page-surface); box-shadow: var(--pdf-page-shadow); }
+/* A page is a containing block only while it holds layers (canvas, text,
+   links) or shows its loading spinner; PDF.js marks the first (our patch,
+   `latticeLayered`). Each positioned page is a render layer in WebKit, and a
+   long PDF's thousands of them made every zoom and fling frame update all of
+   them. */
+.pdf-preview .pdfViewer .page:not(.latticeLayered, .loadingIcon) { position: static; }
+/* The viewport's border already ends the column, and a trailing gap inside the
+   scroll extent would make a height-fitted page scrollable by that gap. The
+   page window in our PDF.js patch sizes the spacers that stand in for pages
+   outside it to this layout: no gap after the last page, a page's bottom
+   margin after every other. */
+.pdf-preview .pdfViewer.removePageBorders .page:last-child { margin-bottom: 0; }
+.pdf-preview .pdfViewer .page.synctex-enabled { cursor: text; }
+.pdf-preview .pdfViewer .canvasWrapper canvas { background: var(--pdf-page-surface); image-rendering: auto; }
+/* Glyph spans stay unselectable so Command-A in the editor (or anywhere else
+   in the webview) cannot wash the page blue. They opt into selection only
+   while the user is dragging or holding a range that started in this layer. */
+.pdf-text-layer { --min-font-size: 1; --text-scale-factor: calc(var(--total-scale-factor) * var(--min-font-size)); --min-font-size-inv: calc(1 / var(--min-font-size)); position: absolute; z-index: 1; inset: 0; overflow: clip; line-height: 1; transform-origin: 0 0; text-align: initial; text-size-adjust: none; forced-color-adjust: none; pointer-events: none; user-select: none; }
+/* Keep drag hit-testing inside the text layer, including the gaps between
+   glyphs/lines. Otherwise WebKit hits the canvas/page and jumps the range to
+   the page start. Outside a drag, blank clicks still pass through normally. */
+.pdf-text-layer.selecting { pointer-events: auto; }
+/* pdf.js makes the layer focusable, and it is as wide as a fitted page: its ring stays inside the clipping viewport. */
+.pdf-text-layer:focus-visible { outline-offset: calc(-1 * var(--focus-ring-width)); }
+.pdf-text-layer :is(span, br) { position: absolute; color: transparent; white-space: pre; cursor: text; transform-origin: 0 0; user-select: none; pointer-events: auto; }
+.pdf-text-layer span:not(.markedContent) { line-height: 1; height: 1em; overflow: clip; }
+.pdf-text-layer.selecting :is(span, br),
+.pdf-text-layer.has-selection :is(span, br) { user-select: text; }
+.pdfViewer .page.is-selecting-text .annotationLayer { pointer-events: none; }
+.pdf-text-layer > :not(.markedContent), .pdf-text-layer .markedContent span:not(.markedContent) { --font-height: 0; --scale-x: 1; --rotate: 0deg; font-size: calc(var(--text-scale-factor) * var(--font-height)); transform: rotate(var(--rotate)) scaleX(var(--scale-x)) scale(var(--min-font-size-inv)); z-index: 1; }
+.pdf-text-layer span.markedContent { top: 0; height: 0; }
+.pdf-text-layer span::selection, .pdf-text-layer br::selection, .pdf-text-layer .endOfContent::selection { color: transparent; background: transparent; }
+/* The page is paper in both themes, so its highlight is the editor's
+   selection blue at one strength: the dark theme's graphite accent is near
+   white and its highlight did not show on the page. */
+.pdf-text-layer .pdf-sel-rect { position: absolute; z-index: 0; pointer-events: none; background: color-mix(in srgb, var(--editor-selection-tint) 35%, transparent); }
+.pdf-copy-field { position: fixed; top: 0; left: 0; width: 1px; height: 1px; margin: 0; padding: 0; opacity: 0; pointer-events: none; }
+.pdf-text-layer .endOfContent { display: block; position: absolute; inset: 100% 0 0; z-index: 0; cursor: default; user-select: none; }
+.pdf-text-layer.selecting .endOfContent { top: 0; }
+.pdf-text-layer .highlight { background: var(--highlight-match-surface); color: transparent; }
+.pdf-text-layer .highlight.selected { outline: 1px solid var(--highlight-match-current-border); outline-offset: 0; background: var(--highlight-match-current-surface); }
+.pdf-text-layer .pdf-source-quote-highlight { background: var(--highlight-match-current-surface); color: transparent; outline: 1px solid var(--highlight-match-current-border); outline-offset: 0; }
+.pdf-zoom-controls button { position: relative; }
+/* A forward-SyncTeX mark holds while the eye finds it, then leaves on the
+   slow exit: 1.6s in all, the editor's reveal flash for a jump the other way.
+   The hold is a delay, not a duration, so reduced motion (whose clamp
+   shortens durations only) keeps the mark for the same moment and drops only
+   the fade. */
+.pdf-synctex-highlight { position: absolute; z-index: 3; border: 2px solid var(--control-active); border-radius: var(--radius-compact); background: color-mix(in srgb, var(--control-active) 16%, transparent); pointer-events: none; animation: synctex-highlight-out var(--motion-slow-exit) 1.44s forwards; }
+.pdf-loading { position: absolute; top: 50%; left: 50%; transform: translate(-50%, -50%); min-height: var(--control-height-compact); max-width: calc(100% - var(--space-8)); padding: var(--space-2) var(--space-5); border-radius: var(--radius-control); background: var(--surface-elevated); box-shadow: var(--elevation-popover); color: var(--text-secondary); display: flex; align-items: center; justify-content: center; flex-wrap: wrap; gap: var(--space-3); font-size: var(--type-micro-size); line-height: var(--type-micro-line-height); z-index: 10; }
+/* The first load's page-shaped skeleton (pdf-loading.tsx), where the first
+   page will be: inside the same transparent border as the pages' viewport, at
+   the top, as wide as a width-fitted page, as tall as a height-fitted one, or
+   at the zoom's width. It is a raised card in each theme rather than
+   paper-colored: a bright page that is not the paper yet would glare in the
+   dark theme. */
+.pdf-skeleton { --pdf-skeleton-width: 100%; position: absolute; inset: 0; z-index: 5; overflow: hidden; border: var(--space-4) solid transparent; pointer-events: none; }
+.pdf-skeleton-page { --loading-sheen-surface: var(--surface-panel-raised); width: 100%; aspect-ratio: 8.5 / 11; margin-inline: auto; padding: 9% 8%; border-radius: var(--radius-compact); background: var(--surface-panel-raised); box-shadow: 0 0 0 1px var(--border-subtle); display: flex; flex-direction: column; align-items: center; gap: var(--space-2); }
+.pdf-skeleton[data-fit="height"] .pdf-skeleton-page { width: auto; height: 100%; }
+.pdf-skeleton[data-fit="zoom"] .pdf-skeleton-page { width: var(--pdf-skeleton-width); }
+.pdf-skeleton-page span { display: block; flex: none; height: 1.1%; min-height: 3px; border-radius: var(--radius-pill); background: var(--border-strong); }
+.pdf-skeleton-page .pdf-skeleton-title { width: 72%; height: 2.4%; }
+.pdf-skeleton-page .pdf-skeleton-title[data-short] { width: 48%; }
+.pdf-skeleton-byline { width: 36%; margin-block: 3% 5%; }
+.pdf-skeleton-abstract { width: 78%; display: flex; flex-direction: column; align-items: center; gap: var(--space-2); margin-bottom: 6%; }
+.pdf-skeleton-columns { width: 100%; display: grid; grid-template-columns: 1fr 1fr; gap: 7%; }
+.pdf-skeleton-columns > div { display: flex; flex-direction: column; gap: var(--space-2); }
+.pdf-skeleton-columns span[data-gap] { background: transparent; }
+.pdf-skeleton-page .pdf-skeleton-figure { width: 64%; height: 16%; margin-block: 5%; border-radius: var(--radius-compact); background: var(--border-subtle); }
+.pdf-skeleton-page > .pdf-load-progress { position: absolute; inset: 0 0 auto; width: auto; height: var(--space-1); border-radius: 0; }
+.pdf-loading-quiet { top: var(--space-6); transform: translateX(-50%); opacity: 0.85; }
+.pdf-load-progress { width: calc(var(--space-16) * 2); height: var(--space-2); overflow: hidden; border-radius: var(--radius-pill); background: var(--border-subtle); }
+.pdf-load-progress-fill { height: 100%; border-radius: inherit; corner-shape: inherit; background: var(--control-active); transition: width var(--motion-slow); }
+.pdf-toolbar-empty > :first-child, .pdf-toolbar-empty > :last-child { min-width: 74px; }
+.pdf-toolbar .pdf-overflow-trigger { display: none; }
+.pdf-toolbar .pdf-overflow-trigger[data-state="open"] { background: var(--toolbar-hover-surface); color: var(--text-primary); }
+@container pdf-toolbar (max-width: 640px) {
+  .pdf-toolbar { padding-inline: var(--space-3); gap: var(--space-2); }
+  .pdf-zoom-controls { gap: var(--space-1); }
+  .pdf-toolbar .pdf-overflow { display: none; }
+  .pdf-toolbar .pdf-overflow-trigger { display: grid; }
+  /* "Zoom percentage" in the menu brings the field back until it is left. It
+     floats over the end of Find rather than taking a slot in the row, so the
+     measured minimum holds and Find keeps its width. */
+  .pdf-toolbar[data-zoom-entry] .pdf-zoom-controls { position: relative; }
+  .pdf-toolbar[data-zoom-entry] .pdf-zoom-value { position: absolute; inset-block: 0; right: calc(100% + var(--space-2)); z-index: 1; margin-block: auto; display: inline-flex; }
+}
+/* The same narrow layout, for the one synchronous read that measures the PDF
+   panel's minimum width (pdf-toolbar-min-width.ts); keep the two in step. */
+.pdf-toolbar[data-measure-narrow] { padding-inline: var(--space-3); gap: var(--space-2); }
+.pdf-toolbar[data-measure-narrow] .pdf-zoom-controls { gap: var(--space-1); }
+.pdf-toolbar[data-measure-narrow] .pdf-overflow { display: none; }
+.pdf-toolbar[data-measure-narrow] .pdf-overflow-trigger { display: grid; }
+.pdf-toolbar[data-measure-narrow] .pdf-search-idle .ui-search-field-trailing { display: inline-flex; }
+/* A query the row has no room for folds the toolbar (measurePdfSearchFold in
+   pdf-toolbar-min-width.ts): first SyncTeX and the fit in use join the rest in
+   the overflow menu; then, narrower still, the search takes the whole row
+   until it is cleared, the match counter standing in for the page. Nothing is
+   ever drawn over another control, and the query is never hidden. */
+.pdf-toolbar[data-search-fold] .pdf-search-fold { display: none; }
+.pdf-toolbar[data-search-fold] .pdf-overflow-trigger { display: grid; }
+.pdf-toolbar[data-search-fold="2"] :is(.pdf-navigation-controls, .pdf-zoom-controls, .pdf-outline-trigger) { display: none; }
+.pdf-toolbar[data-search-fold="2"] .pdf-find-controls { grid-column: 1 / -1; grid-template-columns: minmax(0, 1fr); }
+.pdf-overflow-check { color: var(--text-tertiary); }
+/* The overflow menu opens on a zoom row: steps around the percentage, which
+   hands off to the toolbar's own field for typing. */
+.pdf-overflow-zoom { display: flex; align-items: center; gap: var(--gap-hairline); padding: var(--gap-hairline) 0 var(--gap-hairline) var(--space-5); }
+.pdf-overflow-zoom-label { flex: 1; color: var(--text-secondary); font-size: var(--type-body-size); }
+.pdf-overflow-zoom [data-slot="dropdown-menu-item"] { justify-content: center; min-width: var(--space-16); height: var(--control-height-compact); padding: 0 var(--space-3); }
+.pdf-overflow-zoom .pdf-overflow-zoom-value { min-width: 52px; font-variant-numeric: tabular-nums; }
+@keyframes synctex-highlight-out { to { opacity: 0; } }

@@ -1,0 +1,481 @@
+import { useEffect, useId, useMemo, useRef, useState, type KeyboardEvent as ReactKeyboardEvent } from "react";
+import { BookMarked, ChevronDown, ChevronRight, ChevronUp, PenLine } from "lucide-react";
+import { useLingui } from "@lingui/react/macro";
+import { Badge } from "../components/ui/badge";
+import { Button } from "../components/ui/button";
+import { CheckboxField } from "../components/ui/checkbox-field";
+import { Input, type InputProps } from "../components/ui/input";
+import { hostErrorMessage } from "../app-utils";
+import { bibTextToPlain } from "./bib-document";
+import { BIB_ENTRY_TYPES, formatBibEntry, slugifyCitationKey, type BibEntryDraft, type BibEntryType } from "./bib-entry";
+import { VENUES, type Venue } from "./venues";
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "../components/ui/select";
+import { PanelHeader } from "../components/ui/panel-header";
+import { popupMotionClassName } from "../components/ui/popup-motion";
+import { SearchField } from "../components/ui/search-field";
+import { SheetDialog } from "../components/ui/sheet-dialog";
+import { FluidHoverSurface } from "../components/ui/fluid-hover-surface";
+import { CitationCandidates, CitationEvidence } from "./citation-candidates";
+import { readableAuthors, recordVenue } from "./paper-add";
+
+/** The form's text fields; a seed or a resolved record replaces all of them at once. */
+const TEXT_FIELDS = ["key", "title", "author", "year", "journal", "booktitle", "publisher", "url", "doi"] as const;
+type TextField = (typeof TEXT_FIELDS)[number];
+
+/** A citation record from the resolver: every text field, plus how it was found. */
+export type ResolvedCitationDraft = Record<TextField, string> & {
+  entryType: string;
+  bibtex?: string;
+  candidates?: ResolvedCitationDraft[];
+  evidence?: {
+    source?: string;
+    url?: string;
+    title_match?: string;
+    author_match?: string;
+    [key: string]: unknown;
+  };
+  extraFields?: Record<string, string>;
+};
+
+function fieldsOf(draft?: ResolvedCitationDraft): Record<TextField, string> {
+  return Object.fromEntries(TEXT_FIELDS.map((name) => [name, draft?.[name] ?? ""])) as Record<TextField, string>;
+}
+
+/**
+ * What a lookup query already says about the work. Only a query that is
+ * wholly a DOI, a link or an arXiv ID fills that field; anything else is
+ * taken as the title.
+ */
+function fieldsFromQuery(query: string): Partial<Record<TextField, string>> {
+  const value = query.trim();
+  const doi = /^(?:https?:\/\/(?:dx\.)?doi\.org\/|doi:\s*)?(10\.\d{4,9}\/\S+)$/i.exec(value)?.[1];
+  if (doi) return { doi };
+  if (/^https?:\/\/\S+$/i.test(value)) return { url: value };
+  const arxiv = /^(?:arxiv:\s*)?(\d{4}\.\d{4,5}(?:v\d+)?|[a-z-]+(?:\.[a-z]{2})?\/\d{7}(?:v\d+)?)$/i.exec(value)?.[1];
+  if (arxiv) return { url: `https://arxiv.org/abs/${arxiv}` };
+  return value ? { title: value } : {};
+}
+
+function inferType(draft?: ResolvedCitationDraft): BibEntryType {
+  if (draft && (BIB_ENTRY_TYPES as readonly string[]).includes(draft.entryType)) {
+    return draft.entryType as BibEntryType;
+  }
+  if (draft?.journal) return "article";
+  if (draft?.booktitle) return "inproceedings";
+  if (draft?.publisher) return "book";
+  return draft ? "misc" : "article";
+}
+
+export function BibEntryDialog(props: {
+  open: boolean;
+  busy: boolean;
+  error: string | null;
+  mode?: "add" | "edit";
+  /** Offer to insert `\cite{key}` at the editor's caret once a new entry is saved. */
+  offerCite?: boolean;
+  initialResolveQuery?: string;
+  initialDraft?: ResolvedCitationDraft;
+  onClose: () => void;
+  onSave: (draft: BibEntryDraft, insertCite: boolean) => void;
+  /**
+   * Looks a citation up; a rejection is the lookup's error. The dialog owns
+   * the lookup from here on: it alone decides whether the answer (or the
+   * error) still applies, so a lookup the writer abandoned changes nothing.
+   */
+  onResolve?: (query: string) => Promise<ResolvedCitationDraft>;
+}) {
+  const { t } = useLingui();
+  const editing = props.mode === "edit";
+  const seed = props.initialDraft;
+  const [initialType] = useState<BibEntryType>(() => inferType(seed));
+  const [initialFields] = useState(() => fieldsOf(seed));
+  const [type, setType] = useState<BibEntryType>(initialType);
+  const [fields, setFields] = useState(initialFields);
+  const offerCite = !editing && props.offerCite !== false;
+  const [insertCite, setInsertCite] = useState(offerCite);
+  const [resolveQuery, setResolveQuery] = useState(props.initialResolveQuery ?? "");
+  const [venueOpen, setVenueOpen] = useState(false);
+  // The suggestion the arrows (or the pointer) last lit; Enter takes it.
+  const [venueActive, setVenueActive] = useState<number | null>(null);
+  const venueListId = useId();
+  const [candidates, setCandidates] = useState<ResolvedCitationDraft[]>(seed?.candidates ?? []);
+  // The record the radio list has chosen; the first, the resolver's best, until the writer picks.
+  const [chosen, setChosen] = useState(0);
+  const [evidence, setEvidence] = useState<ResolvedCitationDraft["evidence"]>(seed?.evidence);
+  const [extraFields, setExtraFields] = useState<Record<string, string> | undefined>(seed?.extraFields);
+  const [retrievedEdited, setRetrievedEdited] = useState(false);
+  const [resolveInFlight, setResolveInFlight] = useState(false);
+  const [lookupError, setLookupError] = useState<string | null>(null);
+  // A new entry starts at the lookup; the fields appear once a record is
+  // chosen or the writer enters it by hand. Editing, a record handed over
+  // whole, or a dialog without a resolver open on the fields.
+  const [showFields, setShowFields] = useState(() => editing || !props.onResolve || Boolean(seed && !seed.candidates?.length));
+  // Set when the writer moved to the fields, so the title takes the keyboard as they appear.
+  const [focusFields, setFocusFields] = useState(false);
+  const requestGeneration = useRef(0);
+  const requestInFlight = useRef(false);
+
+  useEffect(() => () => {
+    requestGeneration.current += 1;
+  }, []);
+
+  const normalizedDoi = fields.doi.replace(/^https?:\/\/(dx\.)?doi\.org\//i, "").trim();
+  const draft: BibEntryDraft = useMemo(() => ({
+    ...fields,
+    type,
+    key: fields.key.trim() || slugifyCitationKey(fields.title, fields.author, fields.year),
+    url: fields.url || (normalizedDoi ? `https://doi.org/${normalizedDoi}` : ""),
+    doi: normalizedDoi || undefined,
+    extraFields,
+  }), [extraFields, fields, normalizedDoi, type]);
+
+  // Match information describes the retrieved record, so flag any later edit.
+  const markEdited = () => {
+    if (evidence) setRetrievedEdited(true);
+  };
+  const setField = (name: TextField, value: string) => {
+    setFields((current) => ({ ...current, [name]: value }));
+    markEdited();
+  };
+
+  // The venue field is the journal (article) or booktitle (anything else); a
+  // preprint (@misc) with no venue yet edits into booktitle and is promoted to
+  // @inproceedings once a real venue is chosen.
+  const venueField = type === "article" ? "journal" : "booktitle";
+  const venue = fields[venueField];
+  const venueMatches = useMemo(() => {
+    const query = venue.toLowerCase().replace(/[^a-z0-9]+/g, " ").trim();
+    if (!query) return [];
+    const tokens = query.split(" ");
+    return VENUES.filter((item) => tokens.every((token) => item.search.includes(token))).slice(0, 8);
+  }, [venue]);
+  const chooseVenue = (choice: Venue) => {
+    markEdited();
+    setType(choice.entryType);
+    const article = choice.entryType === "article";
+    setFields((current) => ({ ...current, journal: article ? choice.name : "", booktitle: article ? "" : choice.name }));
+    setVenueOpen(false);
+    setVenueActive(null);
+  };
+  const venueListOpen = venueOpen && venueMatches.length > 0;
+  const onVenueKeyDown = (event: ReactKeyboardEvent<HTMLInputElement>) => {
+    if (event.nativeEvent.isComposing) return;
+    const count = venueMatches.length;
+    if (event.key === "ArrowDown" || event.key === "ArrowUp") {
+      if (!count) return;
+      event.preventDefault();
+      setVenueOpen(true);
+      setVenueActive((current) => event.key === "ArrowDown"
+        ? current === null ? 0 : (current + 1) % count
+        : current === null ? count - 1 : (current - 1 + count) % count);
+    } else if (event.key === "Enter" && venueListOpen && venueActive !== null && venueMatches[venueActive]) {
+      event.preventDefault();
+      chooseVenue(venueMatches[venueActive]);
+    } else if (event.key === "Escape" && venueListOpen) {
+      // The dialog leaves Escape to an open suggestion list (see ModalDialog).
+      event.preventDefault();
+      setVenueOpen(false);
+      setVenueActive(null);
+    }
+  };
+
+  const stepYear = (delta: number) => {
+    const parsed = Number.parseInt(fields.year, 10);
+    if (Number.isFinite(parsed)) setField("year", String(parsed + delta));
+  };
+
+  if (!props.open) return null;
+
+  const applyResolved = (resolved: ResolvedCitationDraft, chosen = false) => {
+    setShowFields(true);
+    if (chosen) setFocusFields(true);
+    setType(inferType(resolved));
+    setFields(fieldsOf(resolved));
+    setEvidence(resolved.evidence);
+    setExtraFields(resolved.extraFields);
+    setRetrievedEdited(false);
+    setCandidates([]);
+  };
+
+  const resolveCitation = async () => {
+    const query = resolveQuery.trim();
+    if (!query || requestInFlight.current || props.busy || !props.onResolve) return;
+    requestInFlight.current = true;
+    setResolveInFlight(true);
+    setLookupError(null);
+    const generation = ++requestGeneration.current;
+    try {
+      const resolved = await props.onResolve(query);
+      if (generation !== requestGeneration.current) return;
+      if (resolved.candidates?.length) {
+        setCandidates(resolved.candidates);
+        setChosen(0);
+      } else {
+        applyResolved(resolved);
+      }
+    } catch (reason) {
+      if (generation === requestGeneration.current) setLookupError(hostErrorMessage(reason));
+    } finally {
+      if (generation === requestGeneration.current) {
+        requestInFlight.current = false;
+        setResolveInFlight(false);
+      }
+    }
+  };
+
+  // A new query abandons the lookup in flight, the candidates it offered and
+  // the error it reported; whatever it later answers is ignored.
+  const abandonLookup = () => {
+    requestGeneration.current += 1;
+    requestInFlight.current = false;
+    setResolveInFlight(false);
+    setLookupError(null);
+    setCandidates([]);
+  };
+  const changeResolveQuery = (value: string) => {
+    abandonLookup();
+    setResolveQuery(value);
+  };
+  // Entering by hand declines every candidate and any lookup still running;
+  // whatever the query already says about the work fills the fields still empty.
+  const enterManually = () => {
+    abandonLookup();
+    const fromQuery = Object.entries(fieldsFromQuery(resolveQuery)) as [TextField, string][];
+    setFields((current) => ({
+      ...current,
+      ...Object.fromEntries(fromQuery.filter(([name]) => !current[name].trim())),
+    }));
+    setShowFields(true);
+    setFocusFields(true);
+  };
+
+  const textField = (name: TextField, label: string, extra?: InputProps) => (
+    <label>
+      <span className="bib-entry-label">{label}</span>
+      <Input aria-label={label} value={fields[name]} onChange={(event) => setField(name, event.target.value)} {...extra} />
+    </label>
+  );
+
+  // A book's publisher, else the venue the type writes to.
+  const typesetVenue = type === "book" ? bibTextToPlain(fields.publisher) : recordVenue(fields);
+  const heading = editing ? t`Edit bibliography entry` : t`Add bibliography entry`;
+  // The lookup's own failure, else the last save's; saving clears the lookup's.
+  const error = lookupError ?? props.error;
+  // Anything typed or picked since the dialog opened; a click outside must not throw it away.
+  const dirty = type !== initialType || TEXT_FIELDS.some((name) => fields[name] !== initialFields[name])
+    || resolveQuery !== (props.initialResolveQuery ?? "") || insertCite !== offerCite;
+  // `BIB_ENTRY_TYPES` is BibTeX wire format; only the menu label is prose.
+  const entryTypeLabel: Record<BibEntryType, string> = {
+    article: t`Article`,
+    inproceedings: t`In proceedings`,
+    book: t`Book`,
+    misc: t`Misc`,
+  };
+
+  return (
+    <SheetDialog className={showFields ? "bib-entry-dialog" : "bib-entry-dialog bib-entry-lookup"} label={heading} dirty={dirty} onClose={props.onClose}>
+      <PanelHeader className="drawer-header" icon={<BookMarked size={16} />} title={heading} onClose={props.onClose} />
+      <div className="bib-entry-form">
+        {!editing && props.onResolve && (
+          <label className="bib-resolve-field">
+            <div className="bib-resolve-row">
+              <SearchField
+                autoFocus
+                aria-label={t`Citation resolve query`}
+                value={resolveQuery}
+                onChange={(event) => changeResolveQuery(event.target.value)}
+                onClear={() => changeResolveQuery("")}
+                placeholder={t`10.1038/… or arXiv:1706.03762 or paper title`}
+                onKeyDown={(event) => {
+                  if (event.key === "Enter" && resolveQuery.trim() && !props.busy) {
+                    event.preventDefault();
+                    void resolveCitation();
+                  }
+                }}
+                showIcon={false}
+              />
+              <Button
+                variant={showFields || candidates.length > 0 ? "secondary" : "primary"}
+                disabled={!resolveQuery.trim() || resolveInFlight || props.busy}
+                onClick={() => void resolveCitation()}
+              >
+                {resolveInFlight ? t`Resolving…` : t`Resolve`}
+              </Button>
+            </div>
+          </label>
+        )}
+        {!showFields && (
+          <div className="bib-entry-manual">
+            <Button variant="ghost" size="compact" onClick={enterManually}>
+              <PenLine size={13} />
+              {t`Enter manually`}
+            </Button>
+          </div>
+        )}
+        {!showFields && error && <p className="dialog-error bib-entry-lookup-error" role="alert">{error}</p>}
+        {candidates.length > 0 && (
+          <section className="bib-candidates">
+            <CitationCandidates
+              candidates={candidates}
+              chosen={chosen}
+              onChoose={setChosen}
+              onUse={(index) => applyResolved(candidates[index], true)}
+            />
+            {showFields && (
+              <div className="bib-candidates-actions">
+                <Button variant="ghost" size="compact" onClick={abandonLookup}>{t`Keep my fields`}</Button>
+              </div>
+            )}
+          </section>
+        )}
+        {evidence && (
+          // Once a field differs, the match describes the record, not the
+          // entry: it dims and says so in a chip.
+          <section className="bib-citation-records" aria-label={t`Retrieved record information`} data-edited={retrievedEdited || undefined}>
+            <CitationEvidence evidence={evidence} authorsPresent={Boolean(fields.author)} />
+            {retrievedEdited && <Badge size="compact">{t`Edited`}</Badge>}
+          </section>
+        )}
+        {/* The entry as a reference list will print it, its key beside it:
+            what the fields below add up to, read before the fields themselves.
+            It stands from the first keystroke, a line the writer has not
+            filled yet named in the faint ink, so typing never moves the
+            fields under the caret. */}
+        {showFields && !candidates.length && (
+          <figure className="bib-typeset" aria-label={t`How the entry reads`}>
+            {fields.title.trim() && <code className="bib-typeset-key">{draft.key}</code>}
+            {fields.author.trim()
+              ? <span className="bib-typeset-authors">{readableAuthors(fields.author)}</span>
+              : <span className="bib-typeset-authors" data-unfilled aria-hidden="true">{t`Author`}</span>}
+            {fields.title.trim()
+              ? <strong>{bibTextToPlain(fields.title)}</strong>
+              : <strong data-unfilled aria-hidden="true">{t`Title`}</strong>}
+            {typesetVenue || fields.year.trim() || normalizedDoi ? (
+              <span className="bib-typeset-venue">
+                {typesetVenue && <em>{typesetVenue}</em>}
+                {typesetVenue && fields.year.trim() ? ", " : ""}
+                {fields.year.trim()}
+                {normalizedDoi && (
+                  <span className="bib-typeset-doi" data-joined={typesetVenue || fields.year.trim() ? "" : undefined}>doi:{normalizedDoi}</span>
+                )}
+              </span>
+            ) : (
+              <span className="bib-typeset-venue" data-unfilled aria-hidden="true">{type === "book" ? t`Publisher` : t`Venue`}</span>
+            )}
+          </figure>
+        )}
+        {/* The work first: title and authors at full width, the year beside
+            its venue; then, a step apart, what identifies the record. */}
+        {showFields && <>
+          <div className="bib-entry-group bib-entry-work">
+            {textField("title", t`Title`, { autoFocus: focusFields })}
+            {textField("author", t`Author`, { placeholder: t`Last, First and Last, First` })}
+            <label>
+              <span className="bib-entry-label">{t`Year`}</span>
+              <div className="year-stepper">
+                <Input aria-label={t`Year`} value={fields.year} onChange={(event) => setField("year", event.target.value)} inputMode="numeric" />
+                <div className="year-stepper-buttons">
+                  <button type="button" aria-label={t`Increment year`} onClick={() => stepYear(1)}><ChevronUp size={12} /></button>
+                  <button type="button" aria-label={t`Decrement year`} onClick={() => stepYear(-1)}><ChevronDown size={12} /></button>
+                </div>
+              </div>
+            </label>
+            {type === "book" ? textField("publisher", t`Publisher`) : (
+              <label>
+                <span className="bib-entry-label">{t`Venue`}</span>
+                <div className="venue-combobox">
+                  <SearchField
+                    aria-label={t`Venue`}
+                    role="combobox"
+                    aria-autocomplete="list"
+                    aria-expanded={venueListOpen}
+                    aria-controls={venueListOpen ? venueListId : undefined}
+                    aria-activedescendant={venueListOpen && venueActive !== null ? `${venueListId}-${venueActive}` : undefined}
+                    value={venue}
+                    placeholder={t`NeurIPS, CVPR, Nature, …`}
+                    onChange={(event) => { setField(venueField, event.target.value); setVenueOpen(true); setVenueActive(null); }}
+                    onClear={() => { setField(venueField, ""); setVenueOpen(true); setVenueActive(null); }}
+                    onFocus={() => setVenueOpen(true)}
+                    onBlur={() => { setVenueOpen(false); setVenueActive(null); }}
+                    onKeyDown={onVenueKeyDown}
+                  />
+                  {venueListOpen && (
+                    <div id={venueListId} className={`venue-menu fluid-hover-surface ${popupMotionClassName}`} role="listbox">
+                      <FluidHoverSurface />
+                      {venueMatches.map((item, index) => (
+                        <button
+                          key={item.name}
+                          id={`${venueListId}-${index}`}
+                          type="button"
+                          role="option"
+                          tabIndex={-1}
+                          aria-selected={item.name === venue}
+                          data-highlighted={index === venueActive ? "" : undefined}
+                          onMouseMove={() => { if (index !== venueActive) setVenueActive(index); }}
+                          onMouseDown={(event) => { event.preventDefault(); chooseVenue(item); }}
+                        >
+                          <span>{item.name}</span>
+                          <em>{item.entryType === "article" ? t`journal` : t`conference`}</em>
+                        </button>
+                      ))}
+                    </div>
+                  )}
+                </div>
+              </label>
+            )}
+          </div>
+          <div className="bib-entry-group bib-entry-record">
+            {textField("doi", "DOI", { placeholder: "10.…" })}
+            {textField("url", "URL")}
+            <label>
+              <span className="bib-entry-label">{t`Type`}</span>
+              <Select value={type} onValueChange={(value) => { setType(value as BibEntryType); markEdited(); }}>
+                <SelectTrigger aria-label={t`Entry type`}><SelectValue /></SelectTrigger>
+                <SelectContent position="popper" align="start">
+                  {BIB_ENTRY_TYPES.map((value) => <SelectItem key={value} value={value}>{entryTypeLabel[value]}</SelectItem>)}
+                </SelectContent>
+              </Select>
+            </label>
+            {textField("key", t`Citation key`, { readOnly: editing, placeholder: fields.title.trim() || fields.author.trim() ? draft.key : "author2024title" })}
+          </div>
+        </>}
+      </div>
+      {showFields && (
+        <details className="bib-entry-preview-disclosure">
+          <summary><ChevronRight size={13} aria-hidden="true" />{t`BibTeX preview`}</summary>
+          <pre className="bib-entry-preview" aria-label={t`BibTeX preview`}>{formatBibEntry(draft)}</pre>
+        </details>
+      )}
+      {showFields && error && <p className="dialog-error" role="alert">{error}</p>}
+      <div className="table-generator-actions bib-entry-footer">
+        {showFields && offerCite && (
+          <CheckboxField
+            className="bib-entry-cite"
+            checked={insertCite}
+            label={t`Insert cite at cursor after saving`}
+            onChange={(event) => setInsertCite(event.target.checked)}
+          />
+        )}
+        <Button variant="ghost" onClick={props.onClose}>{t`Cancel`}</Button>
+        {candidates.length > 0 && (
+          <Button variant="primary" disabled={props.busy} onClick={() => applyResolved(candidates[chosen] ?? candidates[0], true)}>
+            {t`Use this record`}
+          </Button>
+        )}
+        {showFields && (
+          <Button
+            variant="primary"
+            disabled={props.busy || resolveInFlight || candidates.length > 0
+              || !fields.title.trim() || !fields.author.trim() || !fields.year.trim()}
+            onClick={() => {
+              setLookupError(null);
+              props.onSave(draft, insertCite);
+            }}
+          >
+            {props.busy ? t`Saving…` : editing ? t`Save changes` : t`Save entry`}
+          </Button>
+        )}
+      </div>
+    </SheetDialog>
+  );
+}

@@ -1,0 +1,96 @@
+import { applyStoredTheme, browserRuntimeError, browserRuntimeReady, isHeadlessHosted } from "./platform/browser-runtime";
+// The visual editor's image view (engine/views/image-view.tsx) zooms with
+// react-medium-image-zoom, whose structural stylesheet is imported once at the
+// app root. Without it, the native dialog expands as an unstyled white page,
+// its close control becomes a stray black button, and the zoom transition
+// cannot complete reliably.
+import "react-medium-image-zoom/dist/styles.css";
+import "./index.css";
+import ReactDOM from "react-dom/client";
+import { I18nProvider } from "@lingui/react";
+import { MotionConfig } from "motion/react";
+import "@fontsource-variable/inter";
+import "./assets/fonts/ioskeley-mono/ioskeley-mono.css";
+import "@fontsource/instrument-serif/400.css";
+// Timeless @font-face rules and font tokens when this build embeds them, else empty.
+import "virtual:lattice-private-fonts.css";
+import App from "./App";
+import { PRODUCTION_SURFACES } from "./app/production-surfaces";
+import { UpdaterProvider } from "./telemetry/app-updater";
+import { RootErrorBoundary } from "./telemetry/root-error-boundary";
+import { ToastStack } from "./telemetry/toast-stack";
+import { ConfirmActionProvider } from "./components/ui/confirm-action-dialog";
+import { TipProvider } from "./components/icon-tip";
+import { installGlobalErrorCapture } from "./telemetry/global-error-capture";
+import { loadAppearance, resolveAppLocale } from "./settings/app-settings";
+import { activateAppLocale, i18n } from "./i18n";
+import { installNativeLocaleSync } from "./app/native-locale";
+import { installEditHistoryMenu } from "./app/edit-history";
+import { installPointerFocus } from "./components/ui/pointer-focus";
+
+async function startApp() {
+  await activateAppLocale(resolveAppLocale(loadAppearance().interfaceLanguage));
+  if (isHeadlessHosted()) await import("./platform/headless-runtime").then(({ initializeHeadlessRuntime }) => initializeHeadlessRuntime());
+  await browserRuntimeReady();
+  void import("./platform/install-web-app").then(({ registerWebApp }) => registerWebApp()).catch(() => undefined);
+  installGlobalErrorCapture();
+  installPointerFocus();
+
+  // Dev-only perf probe (docs/performance.md). The DEV guard makes the whole
+  // branch dead code in production builds; the dynamic import keeps it out of
+  // the startup chunk in dev.
+  if (import.meta.env.DEV && localStorage.getItem("lattice-perf")) {
+    void import("./platform/perf-probe").then((probe) => probe.installPerfProbe());
+  }
+
+  // The real-app measurement lab (docs/driving-the-app.md). VITE_PERF_LAB is
+  // set only by scripts/perf-lab.mjs, so every other build drops this branch
+  // and never emits the harness chunk. It must prepare (seed settings, start
+  // its startup marks) before the first render.
+  const lab = import.meta.env.VITE_PERF_LAB === "1"
+    ? await import("./platform/perf-lab-harness")
+      .then(async (harness) => (await harness.labPrepare()) ? harness : null)
+      .catch(() => null)
+    : null;
+
+  const root = ReactDOM.createRoot(document.getElementById("root") as HTMLElement);
+  installNativeLocaleSync();
+  installEditHistoryMenu();
+  if (lab) void lab.startLabHarness();
+  root.render(
+    <MotionConfig reducedMotion="user">
+      <I18nProvider i18n={i18n}>
+        <RootErrorBoundary>
+          <UpdaterProvider>
+            <ConfirmActionProvider>
+              <TipProvider>
+                <App surfaces={PRODUCTION_SURFACES} />
+                <ToastStack />
+              </TipProvider>
+            </ConfirmActionProvider>
+          </UpdaterProvider>
+        </RootErrorBoundary>
+      </I18nProvider>
+    </MotionConfig>,
+  );
+}
+
+function showUnavailable(reason: unknown) {
+  const root = document.getElementById("root");
+  if (!root) return;
+  const unavailableStyle = `min-height:100vh;display:grid;place-items:center;padding:var(--space-16);font:var(--font-ui-body) system-ui;color-scheme:${applyStoredTheme()};color:var(--text-primary, CanvasText);background:var(--surface-app, Canvas)`;
+  root.style.cssText = unavailableStyle;
+  root.textContent = reason instanceof Error ? reason.message : String(reason);
+}
+
+const hostConfig = window.__LATTICE_BROWSER_HOST_CONFIG__;
+const unavailable = browserRuntimeError();
+if (hostConfig) {
+  void import("./platform/browser-host-bridge").then(({ startBrowserHostBridge }) => {
+    startBrowserHostBridge(hostConfig);
+  });
+} else if (unavailable) {
+  showUnavailable(unavailable);
+} else {
+  void startApp().catch(showUnavailable);
+}

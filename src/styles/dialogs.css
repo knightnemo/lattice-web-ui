@@ -1,0 +1,1186 @@
+.tex-setup-modal {
+  width: min(440px, calc(100vw - 40px));
+  max-height: min(85vh, 640px);
+  overflow-x: hidden;
+  overflow-y: auto;
+  overscroll-behavior: contain;
+}
+.tex-setup-modal > p { margin-bottom: var(--space-8); }
+.tex-setup-install {
+  width: 100%;
+  justify-content: center;
+  gap: var(--space-3);
+}
+.modal-actions .tex-setup-install { width: auto; }
+.tex-setup-install .tex-setup-install-loader > img {
+  filter: invert(1);
+  opacity: 1;
+}
+.tex-setup-progress-block {
+  display: grid;
+  gap: var(--space-4);
+  margin-bottom: var(--space-8);
+}
+.tex-setup-progress-copy {
+  display: grid;
+  gap: var(--space-2);
+}
+.tex-setup-progress-copy > span {
+  color: var(--text-secondary);
+  font-size: var(--type-caption-size);
+  line-height: var(--type-caption-line-height);
+}
+.tex-setup-progress-copy > small {
+  color: var(--text-tertiary);
+  font-size: var(--type-micro-size);
+  line-height: var(--type-caption-line-height);
+}
+.tex-setup-progress {
+  height: var(--space-3);
+  overflow: hidden;
+  border-radius: var(--radius-pill);
+  background: var(--border-subtle);
+}
+.tex-setup-progress-fill {
+  position: relative;
+  height: 100%;
+  overflow: hidden;
+  border-radius: inherit;
+  corner-shape: inherit;
+  background: var(--control-active);
+  transition: width var(--motion-slow);
+}
+.tex-setup-progress-fill::after {
+  position: absolute;
+  inset: 0;
+  background: linear-gradient(90deg, transparent, color-mix(in srgb, var(--surface-app) 35%, transparent), transparent);
+  animation: tex-setup-progress-shimmer 1.4s linear infinite;
+  content: "";
+  transform: translateX(-100%);
+}
+.tex-setup-status {
+  margin: 0 0 var(--space-8);
+  padding: var(--space-4) var(--space-5);
+  border-radius: var(--radius-control);
+  white-space: pre-wrap;
+}
+/* tlmgr's own words, folded under the plain-language summary. */
+.tex-setup-error-details {
+  margin: calc(var(--space-6) * -1) 0 var(--space-8);
+  color: var(--text-tertiary);
+  font-size: var(--type-caption-size);
+  line-height: var(--type-caption-line-height);
+}
+.tex-setup-error-details > summary {
+  width: max-content;
+  padding: var(--space-1) var(--space-3);
+  border-radius: var(--radius-compact);
+  display: flex;
+  align-items: center;
+  gap: var(--gap-tight);
+  list-style: none;
+  cursor: pointer;
+  transition: color var(--motion-fast), background-color var(--motion-fast);
+}
+.tex-setup-error-details > summary::-webkit-details-marker { display: none; }
+.tex-setup-error-details > summary:hover { color: var(--text-secondary); background: var(--tone-hover-surface); }
+.tex-setup-error-details > summary > svg { transition: transform var(--motion-fast); }
+.tex-setup-error-details[open] > summary > svg { transform: rotate(90deg); }
+.tex-setup-error-details > pre {
+  max-height: 132px;
+  margin: var(--space-3) 0 0;
+  padding: var(--space-4) var(--space-5);
+  overflow: auto;
+  border: 1px solid var(--border-subtle);
+  border-radius: var(--radius-chrome);
+  background: var(--surface-panel);
+  color: var(--text-secondary);
+  font-family: var(--editor-font);
+  font-size: var(--type-micro-size);
+  line-height: 1.5;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+  user-select: text;
+}
+@keyframes tex-setup-progress-shimmer {
+  to { transform: translateX(100%); }
+}
+
+.todo-drawer { width: min(460px, 100%); }
+/* Empty: the note spike on the drawer's own surface (trellis.css), a title,
+   one line on where markers come from, then the markers themselves. */
+.todo-empty { --art-paper: var(--surface-input); padding: var(--space-10) var(--space-6); }
+.todo-empty .research-art { width: 144px; margin-bottom: var(--space-4); }
+.todo-empty .ui-empty-state-description { max-width: 34ch; color: var(--text-secondary); text-wrap: pretty; }
+.todo-empty .ui-empty-state-actions { margin-top: var(--space-4); }
+.todo-empty-markers { list-style: none; margin: 0; padding: 0; display: flex; flex-wrap: wrap; justify-content: center; gap: var(--space-3); }
+.todo-empty-markers code { display: block; padding: var(--space-1) var(--space-4); border-radius: var(--radius-compact); box-shadow: 0 0 0 1px var(--border-subtle); background: var(--surface-panel-raised); color: var(--text-secondary); font-family: var(--editor-font); font-size: var(--type-micro-size); line-height: var(--type-caption-line-height); white-space: nowrap; }
+/* With markers: a count, then each file's markers under its name, as Find
+   groups its hits. A row is the kind as the writer typed it, the line, and
+   the comment itself; FIXME and XXX take the danger tone, as flagged work. */
+.todo-summary { margin: 0 0 var(--space-4); display: flex; flex-wrap: wrap; gap: 0 var(--space-3); color: var(--text-primary); font-size: var(--type-subtitle-size); line-height: var(--type-subtitle-line-height); font-weight: var(--type-subtitle-weight); font-variant-numeric: tabular-nums; }
+.todo-summary span { color: var(--text-secondary); font-weight: var(--weight-regular); }
+/* Rows reach into the drawer's inset so their text lines up with the count. */
+.todo-hits { --nested-radius: var(--radius-control); margin: 0 calc(-1 * var(--space-5)); display: grid; gap: var(--space-6); }
+.todo-file { min-width: 0; }
+.todo-file-head { min-width: 0; margin: 0 0 var(--space-2); padding: 0 var(--space-5); display: flex; align-items: center; gap: var(--space-3); color: var(--text-secondary); font-size: var(--type-caption-size); line-height: var(--type-caption-line-height); font-weight: var(--weight-medium); }
+.todo-file-head svg { flex: none; color: var(--text-tertiary); }
+.todo-file-path { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.todo-file-count { flex: none; margin-left: auto; color: var(--text-tertiary); font-variant-numeric: tabular-nums; }
+.todo-file-hits { list-style: none; margin: 0; padding: 0; display: grid; gap: var(--space-1); }
+.todo-hit {
+  position: relative;
+  width: 100%;
+  padding: var(--space-4) var(--space-5);
+  border: 0;
+  border-radius: var(--radius-control);
+  background: transparent;
+  color: inherit;
+  font: inherit;
+  text-align: left;
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr);
+  align-items: baseline;
+  gap: var(--space-2) var(--space-4);
+  cursor: pointer;
+}
+.todo-hit:hover { background: var(--control-hover-surface); }
+.todo-hit-kind { padding: 0 var(--space-3); border-radius: var(--radius-compact); background: var(--control-active-soft); color: var(--control-active); font-family: var(--editor-font); font-size: var(--type-micro-size); line-height: var(--type-caption-line-height); font-weight: var(--weight-semibold); white-space: nowrap; }
+.todo-hit:is([data-kind="fixme"], [data-kind="xxx"]) .todo-hit-kind { background: var(--status-danger-soft); color: var(--status-danger); }
+.todo-hit-path { position: absolute; width: 1px; height: 1px; overflow: hidden; clip-path: inset(50%); white-space: nowrap; }
+.todo-hit-line { justify-self: end; color: var(--text-tertiary); font-size: var(--type-caption-size); line-height: var(--type-caption-line-height); font-variant-numeric: tabular-nums; }
+.todo-hit-preview { grid-column: 1 / -1; display: -webkit-box; -webkit-box-orient: vertical; -webkit-line-clamp: 2; overflow: hidden; overflow-wrap: anywhere; color: var(--text-primary); font-family: var(--editor-font); font-size: var(--type-caption-size); line-height: var(--type-caption-line-height); }
+.checklist-drawer { width: min(420px, 100%); }
+/* The verdict first, in the title serif: whether anything stands between the
+   manuscript and submission. The track below it gives each check one segment
+   in the order of the rows, so a glance finds which ones are holding it. */
+.checklist-summary {
+  margin-bottom: var(--space-6);
+  padding: var(--space-6) var(--space-6) var(--space-5);
+  border-radius: var(--radius-panel);
+  background: var(--surface-panel-raised);
+  box-shadow: 0 0 0 1px var(--border-subtle);
+}
+.checklist-verdict { margin: 0; color: var(--text-primary); font-family: var(--type-title-font); font-size: var(--type-title-size); line-height: var(--type-title-line-height); font-weight: var(--type-title-weight); text-wrap: balance; }
+.checklist-progress { margin-top: var(--space-4); display: flex; align-items: center; gap: var(--space-4); }
+.checklist-progress-count { flex: none; color: var(--text-secondary); font-size: var(--type-caption-size); line-height: var(--type-caption-line-height); font-variant-numeric: tabular-nums; }
+.checklist-track { flex: 1; display: grid; grid-auto-flow: column; grid-auto-columns: 1fr; gap: var(--space-1); height: 4px; }
+.checklist-track > span { border-radius: var(--radius-pill); background: var(--border-strong); }
+.checklist-track > [data-state="ok"] { background: var(--status-success); }
+.checklist-track > [data-state="warn"] { background: var(--status-warning); }
+/* The deadline sits above the verdict on the same raised plate. Its urgency
+   tints only the clock (grey, then amber under three days, then red), and the
+   countdown itself turns red once a day is left, so the panel never shouts
+   while there is time. */
+.deadline-card {
+  margin-bottom: var(--space-4);
+  padding: var(--space-5) var(--space-6) var(--space-6);
+  border-radius: var(--radius-panel);
+  background: var(--surface-panel-raised);
+  box-shadow: 0 0 0 1px var(--border-subtle);
+  display: grid;
+  gap: var(--space-1);
+}
+.deadline-card-head { min-width: 0; display: flex; align-items: center; justify-content: space-between; gap: var(--space-4); }
+/* A long venue name gives way with an ellipsis; the edit button keeps its place. */
+.deadline-card-venue { min-width: 0; display: inline-flex; align-items: center; gap: var(--space-3); color: var(--text-secondary); font-size: var(--type-caption-size); line-height: var(--type-caption-line-height); font-weight: var(--weight-medium); }
+.deadline-card-venue > span { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.deadline-card-venue svg { flex: none; color: var(--text-tertiary); }
+.deadline-card[data-urgency="soon"] .deadline-card-venue svg { color: var(--status-warning); }
+.deadline-card[data-urgency="urgent"] .deadline-card-venue svg { color: var(--status-danger); }
+.deadline-card-left { margin: 0; word-break: keep-all; overflow-wrap: anywhere; color: var(--text-primary); font-family: var(--type-title-font); font-size: var(--type-title-size); line-height: var(--type-title-line-height); font-weight: var(--type-title-weight); font-variant-numeric: tabular-nums; text-wrap: balance; }
+.deadline-card[data-urgency="urgent"] .deadline-card-left { color: var(--status-danger); }
+.deadline-card-when { margin: var(--space-2) 0 0; color: var(--text-secondary); font-size: var(--type-caption-size); line-height: var(--type-caption-line-height); font-variant-numeric: tabular-nums; }
+.deadline-card-when b { color: var(--text-primary); font-weight: var(--weight-medium); }
+.deadline-card-local { min-height: var(--type-caption-line-height); margin: 0; color: var(--text-tertiary); font-size: var(--type-micro-size); line-height: var(--type-caption-line-height); font-variant-numeric: tabular-nums; }
+/* Without a deadline, one quiet line in the card's place offers to add it. */
+.deadline-add {
+  width: 100%;
+  margin-bottom: var(--space-4);
+  padding: var(--space-5) var(--space-6);
+  border: 1px dashed var(--border-strong);
+  border-radius: var(--radius-panel);
+  background: transparent;
+  color: var(--text-secondary);
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr);
+  align-items: start;
+  gap: var(--space-4);
+  text-align: left;
+  font: inherit;
+  cursor: pointer;
+  transition: background-color var(--motion-fast);
+}
+.deadline-add:hover { background: var(--control-hover-surface); }
+.deadline-add svg { position: relative; top: 3px; }
+.deadline-add span { display: grid; gap: var(--space-1); }
+.deadline-add b { color: var(--text-primary); font-size: var(--type-body-size); line-height: var(--type-body-line-height); font-weight: var(--weight-medium); }
+/* One column that never grows past the card: the date input and the segmented
+   control would otherwise hold it at their intrinsic width in a narrow drawer. */
+.deadline-form { grid-template-columns: minmax(0, 1fr); gap: var(--space-5); }
+.deadline-form .ui-segmented { min-width: 0; }
+.deadline-form .ui-segmented-tab { flex: 1 1 auto; padding-inline: var(--space-3); white-space: nowrap; }
+.deadline-form label { min-width: 0; display: grid; gap: var(--space-2); color: var(--text-secondary); font-size: var(--type-caption-size); line-height: var(--type-caption-line-height); font-weight: var(--weight-medium); }
+/* Date and time side by side when there is room, stacked in a narrow panel. */
+.deadline-form-when { display: flex; flex-wrap: wrap; gap: var(--space-4); }
+.deadline-form-when label { flex: 1 1 120px; }
+.deadline-form-actions { display: flex; flex-wrap: wrap; justify-content: flex-end; gap: var(--space-3); }
+.deadline-form-remove { margin-inline-end: auto; }
+/* One grouped list, divided by hairlines, rather than a stack of outlined
+   cards. Each row leads with its result as a mark; the values stay in ink, so
+   colour is the mark's alone and never the only carrier of a result. */
+.checklist-rows {
+  margin-bottom: var(--space-8);
+  border: 1px solid var(--border-subtle);
+  border-radius: var(--radius-panel);
+  background: var(--surface-panel-raised);
+  overflow: hidden;
+  display: grid;
+  container: checklist-rows / inline-size;
+}
+.checklist-row {
+  display: grid;
+  /* The label keeps its words whole and the value gives way first, wrapping
+     at its " / ", so a narrow panel or a large budget never breaks a label
+     letter by letter. */
+  grid-template-columns: 18px minmax(min-content, 1fr) auto;
+  align-items: center;
+  gap: var(--space-1) var(--space-5);
+  padding: var(--space-5) var(--space-6);
+  border: 0;
+  background: transparent;
+  color: inherit;
+  text-align: left;
+  font: inherit;
+}
+.checklist-row + .checklist-row { border-top: 1px solid var(--border-subtle); }
+button.checklist-row { cursor: pointer; transition: background-color var(--motion-fast); }
+button.checklist-row:hover { background: var(--control-hover-surface); }
+/* On the label's first line, centred on its 20px leading, even when the label wraps. */
+.checklist-status { align-self: start; position: relative; top: 1px; width: 18px; height: 18px; border-radius: 50%; display: grid; place-items: center; background: var(--border-subtle); color: var(--text-secondary); }
+.checklist-status svg { stroke-width: 2.25; }
+.checklist-row.ok .checklist-status { background: var(--status-success-soft); color: var(--status-success); }
+.checklist-row.warn .checklist-status { background: var(--status-warning-soft); color: var(--status-warning); }
+.checklist-row strong { font-size: var(--type-body-size); line-height: var(--type-body-line-height); font-weight: var(--weight-medium); word-break: keep-all; overflow-wrap: break-word; }
+.checklist-row span { display: inline-flex; align-items: center; gap: var(--space-2); justify-self: end; text-align: end; color: var(--text-primary); font-size: var(--type-body-size); line-height: var(--type-body-line-height); font-weight: var(--weight-medium); font-variant-numeric: tabular-nums; }
+.checklist-row span svg { color: var(--text-secondary); }
+/* Too narrow for a label and its value side by side (a tool panel at its
+   minimum width, or a large budget): the value drops under its label. */
+@container checklist-rows (width < 240px) {
+  .checklist-row { grid-template-columns: 18px minmax(0, 1fr); }
+  .checklist-row > span { grid-column: 2; justify-self: start; text-align: start; }
+}
+.checklist-row small { grid-column: 2 / -1; color: var(--text-secondary); font-size: var(--type-caption-size); line-height: var(--type-caption-line-height); }
+/* A quiet hairline gauge under the label: the fill takes the row's result
+   colour at reduced strength, and an overshoot past the limit mark reads in
+   the full warning the row's mark carries. */
+.checklist-row .checklist-meter {
+  --meter-tone: var(--text-secondary);
+  grid-column: 2 / -1;
+  justify-self: stretch;
+  position: relative;
+  display: block;
+  height: 4px;
+  margin-block: var(--space-3) var(--space-1);
+  border-radius: var(--radius-pill);
+  background: var(--border-subtle);
+  overflow: hidden;
+}
+.checklist-row.ok .checklist-meter { --meter-tone: var(--status-success); }
+.checklist-row.warn .checklist-meter { --meter-tone: var(--status-warning); }
+.checklist-row .checklist-meter > span { position: absolute; inset-block: 0; left: 0; display: block; }
+.checklist-row .checklist-meter-fill { border-radius: inherit; corner-shape: inherit; background: color-mix(in srgb, var(--meter-tone) 56%, transparent); }
+/* Over the limit, the allowance itself is not the problem: it greys out and
+   only the excess, past a notch at the limit, carries the warning. */
+.checklist-row .checklist-meter.over .checklist-meter-fill { border-radius: var(--radius-pill) 0 0 var(--radius-pill); background: color-mix(in srgb, var(--text-secondary) 42%, transparent); }
+.checklist-row .checklist-meter-over { background: var(--meter-tone); }
+.checklist-row .checklist-meter-over:not(:first-child) { border-left: 2px solid var(--surface-panel-raised); }
+.checklist-row small b { color: var(--text-primary); font-weight: var(--weight-semibold); }
+/* The figure inventory leads elsewhere rather than passing or failing, so its
+   mark stays the neutral disc and its row reads as a way in, like TODOs. */
+.checklist-link .checklist-status svg { stroke-width: 2; }
+/* The double-blind and font checks, headed like the writer's items. Each
+   finding is a line under its row: where it is (a way to it) and what it says,
+   cut to one line, since the source line is the place to read it whole. */
+.checklist-review h3 { margin: 0 0 var(--space-3); color: var(--text-primary); font-size: var(--type-subtitle-size); line-height: var(--type-subtitle-line-height); font-weight: var(--type-subtitle-weight); word-break: keep-all; overflow-wrap: break-word; }
+.checklist-review p { margin: 0 0 var(--space-8); color: var(--text-secondary); font-size: var(--type-caption-size); line-height: var(--type-caption-line-height); }
+.checklist-findings { grid-column: 2 / -1; min-width: 0; margin: var(--space-1) 0 0; padding: 0; list-style: none; display: grid; gap: var(--space-1); }
+.checklist-findings li { min-width: 0; display: flex; align-items: baseline; gap: var(--space-3); font-size: var(--type-caption-size); line-height: var(--type-caption-line-height); }
+.checklist-findings button { flex: none; max-width: 60%; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; padding: 0; border: 0; background: transparent; color: var(--control-active); font: inherit; font-variant-numeric: tabular-nums; cursor: pointer; }
+.checklist-findings button:hover { text-decoration: underline; text-underline-offset: 3px; }
+.checklist-findings .checklist-finding-text { display: block; min-width: 0; justify-self: auto; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; text-align: start; color: var(--text-secondary); font-size: inherit; line-height: inherit; font-weight: var(--weight-regular); font-variant-numeric: normal; }
+/* The limits close the panel as a section of their own, headed like the
+   writer's items above, so the fields never read as part of either list. */
+.checklist-limits h3 { margin: 0 0 var(--space-3); color: var(--text-primary); font-size: var(--type-subtitle-size); line-height: var(--type-subtitle-line-height); font-weight: var(--type-subtitle-weight); word-break: keep-all; overflow-wrap: break-word; }
+/* One row when the drawer has room; in a narrow one the button wraps to a row
+   of its own rather than squeezing the two fields down to an ellipsis. */
+.checklist-budgets {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--space-4);
+  align-items: end;
+}
+.checklist-budgets label {
+  flex: 3 1 88px;
+  min-width: 0;
+  display: grid;
+  gap: var(--space-2);
+  color: var(--text-secondary);
+  font-size: var(--type-caption-size);
+  line-height: var(--type-caption-line-height);
+  font-weight: var(--weight-medium);
+}
+.checklist-budgets input {
+  height: var(--control-height-default);
+  border-color: var(--field-control-border-color);
+  border-radius: var(--field-control-radius);
+  padding: 0 var(--space-4);
+  background: var(--field-control-background);
+  color: var(--text-primary);
+  font-size: var(--type-body-compact-size);
+}
+.checklist-budgets button {
+  /* A field's basis, so it never pairs up with a lone field. */
+  flex: 1 0 88px;
+  height: var(--control-height-default);
+  border: 1px solid var(--control-active-border);
+  border-radius: var(--radius-icon);
+  padding: 0 var(--space-6);
+  background: var(--control-active-soft);
+  color: var(--control-active);
+  font-size: var(--type-body-compact-size);
+  font-weight: var(--type-body-compact-weight);
+}
+
+/* The writer's own items: the same hairline list as the automatic checks, the
+   mark a button that ticks the item, the title a button that opens its fields
+   in place. A file gone or changed since sign-off takes the warning mark. */
+.submission-items { margin-bottom: var(--space-8); }
+.submission-items .checklist-rows { margin-bottom: 0; }
+.submission-items-head { min-width: 0; display: flex; align-items: center; gap: var(--space-3); margin-bottom: var(--space-3); }
+/* The title and its count wrap as words beside the template button, never letter by letter. */
+.submission-items-title { min-width: 0; flex: 1 1 auto; display: flex; flex-wrap: wrap; align-items: baseline; gap: 0 var(--space-3); }
+.submission-items-head h3 { margin: 0; min-width: 0; word-break: keep-all; overflow-wrap: break-word; color: var(--text-primary); font-size: var(--type-subtitle-size); line-height: var(--type-subtitle-line-height); font-weight: var(--type-subtitle-weight); }
+.submission-items-title > span { color: var(--text-secondary); font-size: var(--type-caption-size); line-height: var(--type-caption-line-height); font-variant-numeric: tabular-nums; white-space: nowrap; }
+.submission-items-head > :last-child { flex: none; align-self: start; }
+.submission-template-form { margin-bottom: var(--space-4); }
+.submission-template-menu [data-slot="dropdown-menu-item"] { gap: var(--space-4); }
+.submission-template-name { min-width: 0; flex: 1; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.submission-template-count { color: var(--text-tertiary); font-variant-numeric: tabular-nums; }
+.submission-rows > * + * { border-top: 1px solid var(--border-subtle); }
+.checklist-row.submission-row { grid-template-columns: 18px minmax(0, 1fr); }
+.submission-row span { display: inline; justify-self: auto; text-align: inherit; color: inherit; font: inherit; }
+.submission-toggle {
+  align-self: start;
+  width: 18px;
+  height: 18px;
+  padding: 0;
+  border: 0;
+  border-radius: 50%;
+  background: transparent;
+  cursor: pointer;
+}
+.submission-toggle .checklist-status { top: 0; transition: box-shadow var(--motion-fast); }
+.submission-toggle:hover .checklist-status { box-shadow: 0 0 0 1px var(--border-strong); }
+.submission-title {
+  min-width: 0;
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  align-items: baseline;
+  gap: var(--space-1) var(--space-5);
+  padding: 0;
+  border: 0;
+  background: transparent;
+  color: inherit;
+  text-align: start;
+  font: inherit;
+  cursor: pointer;
+}
+.submission-title:hover strong { text-decoration: underline; text-decoration-color: var(--border-strong); text-underline-offset: 3px; }
+.submission-title strong { overflow-wrap: anywhere; }
+.submission-row .submission-state { color: var(--text-secondary); font-size: var(--type-caption-size); line-height: var(--type-caption-line-height); white-space: nowrap; }
+.submission-row.warn .submission-state { color: var(--status-warning); font-weight: var(--weight-medium); }
+/* A narrow drawer puts the state under the title rather than squeezing either. */
+@container checklist-rows (width < 360px) {
+  .submission-title { grid-template-columns: minmax(0, 1fr); }
+  .submission-row .submission-state { white-space: normal; }
+}
+.submission-row .submission-meta { min-width: 0; display: flex; flex-wrap: wrap; align-items: center; gap: var(--space-1) var(--space-4); }
+.submission-meta > * { min-width: 0; max-width: 100%; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.submission-row .submission-owner { color: var(--text-primary); font-weight: var(--weight-medium); }
+.submission-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-1);
+  padding: 0;
+  border: 0;
+  background: transparent;
+  color: var(--control-active);
+  font: inherit;
+  cursor: pointer;
+}
+.submission-chip > span { overflow: hidden; text-overflow: ellipsis; }
+.submission-chip svg { flex: none; }
+.submission-chip:hover > span { text-decoration: underline; text-underline-offset: 2px; }
+.submission-row.warn[data-condition="missing"] .submission-chip { color: var(--text-secondary); text-decoration: line-through; }
+.submission-form { padding: var(--space-5) var(--space-6) var(--space-6); display: grid; }
+.submission-add { display: grid; grid-template-columns: 18px minmax(0, 1fr); align-items: center; gap: var(--space-5); padding: var(--space-4) var(--space-6); color: var(--text-tertiary); }
+.submission-add svg { justify-self: center; }
+.submission-add input { min-width: 0; height: var(--control-height-compact); padding: 0; border: 0; outline: none; background: transparent; color: var(--text-primary); font-size: var(--type-body-size); line-height: var(--type-body-line-height); }
+.submission-add input::placeholder { color: var(--text-tertiary); }
+.submission-add:focus-within { background: var(--control-hover-surface); }
+
+.welcome-screen { width: 100%; height: 100%; background: var(--surface-backdrop); position: relative; overflow: hidden; }
+.welcome-titlebar { position: absolute; z-index: 3; top: 0; left: 0; right: 0; height: 48px; display: flex; justify-content: flex-end; align-items: center; padding: 0 14px; }
+.welcome-content { position: relative; z-index: 1; width: min(520px, calc(100% - 48px)); height: 100%; margin: auto; display: flex; flex-direction: column; align-items: center; justify-content: center; text-align: center; padding-bottom: var(--space-10); }
+.brand-mark { width: 50px; height: 50px; border-radius: 14px; display: grid; place-items: center; color: var(--control-active); }
+/* The one brand moment: the mark, then a serif title at a size that greets
+   rather than advertises. Chinese takes Songti SC through --display-font, a
+   serif like the Latin; it sets solid, so it opens its tracking a little
+   where the Latin tightens. */
+.welcome-content h1 { margin: var(--space-10) 0 0; font-family: var(--display-font); font-size: clamp(36px, 4.4vw, 48px); line-height: 1.08; font-weight: 400; letter-spacing: -.02em; text-wrap: balance; }
+
+/* Only the welcome composition enters; busy updates and project contents do not. */
+.welcome-content > :not(.busy-label) { animation: welcome-rise var(--motion-slow) both; }
+.welcome-content > .welcome-actions,
+.welcome-content > .welcome-more,
+.welcome-content > .welcome-recents { animation-delay: 60ms; }
+@keyframes welcome-rise {
+  from { opacity: 0; transform: translateY(6px); }
+  to { opacity: 1; transform: translateY(0); }
+}
+.welcome-actions { margin-top: var(--space-12); display: flex; flex-wrap: wrap; justify-content: center; gap: var(--space-4); }
+
+/* The other ways in, last: quieter than the actions and the recent projects
+   above them, and on one line at the width the content column actually has. */
+.welcome-more {
+  margin-top: var(--space-8);
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: center;
+  align-items: center;
+  gap: var(--space-2);
+}
+.welcome-more-action {
+  height: var(--control-height-compact);
+  padding: 0 var(--pad-inline-control);
+  border-radius: var(--radius-chrome);
+  background: transparent;
+  color: var(--text-secondary);
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-3);
+  font-size: var(--type-caption-size);
+  font-weight: var(--weight-regular);
+  white-space: nowrap;
+}
+.welcome-more-action:hover { background: var(--border-subtle); color: var(--text-primary); }
+/* The projects to go back to, and why the last one did not open: the
+   writer's way back, so it comes straight after the actions. Wider than the
+   column above it, so three pages read at a size where a title shows. */
+.welcome-recents { width: min(720px, calc(100vw - 64px)); margin-top: var(--space-16); display: grid; grid-template-columns: minmax(0, 1fr); gap: var(--space-4); text-align: start; }
+.welcome-unopened { padding-inline: var(--space-1); }
+.welcome-recents-title { margin: 0; padding-inline: var(--space-1); color: var(--text-secondary); font-size: var(--type-caption-size); line-height: var(--type-caption-line-height); font-weight: var(--weight-medium); }
+/* The desk: each project as the first page of its paper, paper-coloured in
+   both themes as the PDF preview draws it, its name in the title serif under
+   it. Cards keep a third of the width however many there are; fewer than
+   three shrink the desk around them, so the title stays at its start. */
+.welcome-desk-frame { --desk-count: 3; width: calc((100% + var(--space-8)) * var(--desk-count) / 3 - var(--space-8)); justify-self: center; display: grid; gap: var(--space-4); }
+.welcome-desk { margin: 0; padding: 0; list-style: none; display: grid; grid-template-columns: repeat(var(--desk-count), minmax(0, 1fr)); gap: var(--space-8); }
+.welcome-desk-card {
+  width: 100%;
+  padding: 0;
+  border: 0;
+  border-radius: calc(var(--radius-panel) * var(--corner-smoothing));
+  corner-shape: squircle;
+  background: transparent;
+  color: var(--text-secondary);
+  display: grid;
+  grid-template-columns: minmax(0, 1fr);
+  text-align: start;
+}
+/* The ring stands off the page rather than tracing its edge. */
+.welcome-desk-card:focus-visible { outline-offset: var(--space-3); }
+/* Drawn first, read last: the name leads for assistive technology. */
+.welcome-desk-sheet {
+  order: -1;
+  position: relative;
+  margin-bottom: var(--space-5);
+  aspect-ratio: 1.3;
+  overflow: hidden;
+  border-radius: var(--radius-compact);
+  background: var(--pdf-page-surface);
+  box-shadow: 0 0 0 1px var(--elevation-ring), var(--pdf-page-shadow);
+  transition: transform var(--motion-moderate), box-shadow var(--motion-moderate), opacity var(--motion-moderate);
+}
+.welcome-desk-card:hover:not(:disabled) .welcome-desk-sheet { transform: translateY(-2px); box-shadow: 0 0 0 1px var(--elevation-ring), var(--elevation-floating-shadow); }
+/* The top of the page: the title, the authors and the abstract. */
+.welcome-desk-sheet > img { width: 100%; height: 100%; display: block; object-fit: cover; object-position: top; }
+.welcome-desk-venue {
+  position: absolute;
+  left: var(--space-4);
+  bottom: var(--space-4);
+  padding-inline: var(--space-3);
+  background-color: var(--surface-elevated);
+  color: var(--text-primary);
+  box-shadow: var(--elevation-raised);
+}
+/* No PDF yet: a card on the lift with a page glyph, rather than a blank page. */
+.welcome-desk-sheet:not([data-kind="page"]) {
+  display: grid;
+  place-content: center;
+  background: var(--surface-elevated);
+  box-shadow: var(--elevation-raised);
+}
+/* The stored pages are a moment away; an empty card would flash in between.
+   The page fades in when it lands instead of appearing in one frame. */
+.welcome-desk-sheet[data-kind="loading"] { opacity: 0; }
+.welcome-desk-name { min-width: 0; overflow: hidden; color: var(--text-primary); font-family: var(--type-title-font); font-size: var(--type-title-size); line-height: var(--type-title-line-height); font-weight: var(--type-title-weight); text-overflow: ellipsis; white-space: nowrap; }
+.welcome-desk-when { min-width: 0; min-height: var(--type-caption-line-height); overflow: hidden; font-size: var(--type-caption-size); line-height: var(--type-caption-line-height); text-overflow: ellipsis; white-space: nowrap; }
+/* A short window keeps the actions and drops the desk rather than clipping the title. */
+@media (max-height: 620px) { .welcome-desk-frame { display: none; } }
+.busy-label { display: flex; align-items: center; gap: var(--space-3); color: var(--text-secondary); font-size: var(--type-micro-size); }
+.modal-backdrop { position: fixed; inset: 0; z-index: var(--z-modal-backdrop); background: var(--scrim-dialog-surface); display: grid; place-items: center; }
+.modal-window-drag-strip { position: fixed; z-index: var(--z-modal); top: 0; left: 0; right: 0; height: var(--titlebar-height); pointer-events: auto; user-select: none; }
+.modal-dialog-content { position: fixed; top: 50%; left: 50%; z-index: var(--z-modal); width: max-content; transform: translate(-50%, -50%); }
+/* A small dialog or picker stands in the upper third, where the eye already
+   is, and its top stays put as a list under it grows or shrinks. One taller
+   than the room below rises just enough to keep a 20px margin. Sheets,
+   Settings, a dialog that holds a whole tool (`modal-large`: a review, a
+   conflict, a project browser) and a confirmation stay centred: a
+   confirmation has no list to grow, and it often stands over Settings, whose
+   top edge it straddled at 18vh. The leaving picture is the same element, so
+   it leaves from where it stood. */
+.modal-dialog-content:has(> .modal:not(.sheet-dialog, .modal-large, .confirm-action-modal)) { top: 18vh; transform: translate(-50%, min(0px, calc(82vh - 100% - 20px))); }
+/* Dialogs arrive: the scrim fades in while the card rises a few pixels and
+   settles. `translate` and `scale` are their own properties, so they compose
+   with the centring transform above instead of replacing it. A closed dialog
+   leaves as a picture of itself (`useExitPicture`, `data-leaving`): a quicker
+   tween back the way it came, so the close reads as final. */
+.modal-backdrop { animation: modal-scrim-in var(--motion-slow) both; }
+.modal-dialog-content { animation: modal-rise var(--motion-slow) both; }
+.modal-backdrop[data-leaving] { animation: modal-scrim-out var(--motion-slow-exit) both; pointer-events: none; }
+.modal-dialog-content[data-leaving] { animation: modal-sink var(--motion-slow-exit) both; pointer-events: none; }
+@keyframes modal-scrim-in {
+  from { opacity: 0; }
+  to { opacity: 1; }
+}
+@keyframes modal-rise {
+  from { opacity: 0; translate: 0 var(--space-3); scale: .98; }
+  to { opacity: 1; translate: 0 0; scale: 1; }
+}
+@keyframes modal-scrim-out {
+  to { opacity: 0; }
+}
+@keyframes modal-sink {
+  to { opacity: 0; translate: 0 var(--space-2); scale: .98; }
+}
+/* A lazy tool's loading shell (app/tool-loading-shell.tsx) holds the tool's
+   place at its size. Settings that takes its shell's place is already on
+   screen, so it does not arrive a second time. */
+.tool-loading-shell-body { height: 100%; display: grid; place-items: center; }
+/* Its loading message is for assistive technology; the loader says it to the eye. */
+/* A shell outstaying its tool (useLoadingShell's minimum time) lies over it. */
+.modal-dialog-content.tool-loading-shell-card { z-index: calc(var(--z-modal) + 1); }
+.modal-backdrop.settings-replaces-shell:not([data-leaving]),
+.modal-backdrop.settings-replaces-shell ~ .modal-dialog-content:not([data-leaving]):has(> .settings-modal) { animation: none; }
+/* The install guide (launched from Settings) and confirmations open over
+   another dialog, so both stack above it. */
+.tex-setup-backdrop, .confirm-action-backdrop { z-index: var(--z-nested-modal-backdrop); }
+.tex-setup-backdrop + .modal-dialog-content, .confirm-action-backdrop + .modal-dialog-content { z-index: var(--z-nested-modal); }
+/* The anatomy every small dialog shares: a mark only when the dialog asks
+   something dangerous, a serif title, one line of copy, the fields, and the
+   action row. Fields stand 12px apart; a title followed straight by a field
+   keeps the copy's distance from it. */
+.modal { width: min(390px, calc(100vw - 40px)); border-radius: calc(var(--radius-dialog) * var(--corner-smoothing)); corner-shape: squircle; padding: var(--space-10) var(--space-10) var(--space-8); text-align: left; }
+.confirm-action-modal[data-has-alternative="true"] { width: min(520px, calc(100vw - 40px)); }
+.confirm-action-modal[data-has-alternative="true"] .modal-actions { flex-wrap: wrap; }
+.create-project-modal { width: min(440px, calc(100vw - 40px)); }
+.venue-picker { display: grid; gap: var(--space-3); }
+.venue-picker-label { color: var(--text-primary); font-size: var(--type-caption-size); line-height: var(--type-caption-line-height); font-weight: var(--weight-medium); }
+.venue-picker-content { min-width: var(--radix-select-trigger-width); }
+/* The mark says what a dialog asks when that is a risk (a deletion, a
+   conflict), in the tone of the risk. A neutral dialog has no mark: its title
+   says enough. */
+.modal-icon { width: 36px; height: 36px; flex: none; border-radius: var(--radius-surface); display: grid; place-items: center; }
+.modal-icon[data-tone="danger"] { color: var(--status-danger); background: var(--status-danger-soft); }
+.modal-icon[data-tone="warning"] { color: var(--status-warning); background: var(--status-warning-soft); }
+.modal h2 { margin: var(--space-8) 0 var(--space-2); font-family: var(--type-title-font); font-size: var(--type-title-size); line-height: var(--type-title-line-height); font-weight: var(--type-title-weight); text-wrap: balance; }
+.modal > h2:first-child { margin-top: 0; }
+/* `:where` keeps this at one class, so an InlineMessage (also a <p>) and a
+   field error keep their own type. */
+.modal > p:where(:not(.ui-inline-message)) { margin: 0 0 var(--space-10); color: var(--text-secondary); font-size: var(--type-body-size); line-height: var(--type-body-line-height); text-wrap: pretty; }
+.modal > h2 + :not(p) { margin-top: var(--space-8); }
+.modal label { display: flex; flex-direction: column; gap: var(--space-3); color: var(--text-primary); font-size: var(--type-caption-size); line-height: var(--type-caption-line-height); font-weight: var(--weight-medium); }
+.modal > :is(label, .venue-picker) + :is(label, .venue-picker) { margin-top: var(--space-6); }
+.modal .field-error { margin: var(--space-3) 0 0; color: var(--status-danger); font-size: var(--type-caption-size); line-height: var(--type-caption-line-height); }
+.modal .field-error + .modal-actions { margin-top: var(--space-8); }
+.rename-modal { width: min(420px, calc(100vw - 40px)); }
+/* Forms and tools that used to slide in from the right edge, now centered
+   dialogs (sheet-dialog.tsx). They share Settings' size (--dialog-large-*) and
+   keep the drawers' inset and title row; the title row and the action row stay
+   put while a long form scrolls between them. */
+.modal.sheet-dialog { width: var(--dialog-large-width); height: var(--dialog-large-height); padding: var(--drawer-content-inset); overflow: auto; display: flex; flex-direction: column; gap: var(--space-6); }
+.sheet-dialog > .drawer-header { position: sticky; z-index: 1; top: calc(-1 * var(--drawer-content-inset)); flex: none; height: 40px; margin: calc(-1 * var(--drawer-content-inset)) calc(-1 * var(--drawer-content-inset)) 0; padding: 0 var(--space-4) 0 var(--drawer-content-inset); border-bottom: 1px solid var(--border-subtle); background: var(--surface-panel-raised); }
+.sheet-dialog > .drawer-copy { margin: 0; }
+/* The action row sits at the bottom of the fixed height: after a short form
+   its auto margin takes up the room, and a long one scrolls under it. */
+.sheet-dialog > .table-generator-actions { position: sticky; z-index: 1; bottom: calc(-1 * var(--drawer-content-inset)); flex: none; margin: auto calc(-1 * var(--drawer-content-inset)) calc(-1 * var(--drawer-content-inset)); padding: var(--space-6) var(--drawer-content-inset) var(--drawer-content-inset); border-top: 1px solid var(--border-subtle); background: var(--surface-panel-raised); }
+/* Surfaces with their own scrolling results scroll the list instead of the dialog. */
+.modal.sheet-dialog:is(.project-find, .bibliography-audit) { overflow: hidden; }
+.modal.sheet-dialog.bibliography-audit { gap: 0; }
+.settings-modal { position: relative; width: var(--dialog-large-width); height: var(--dialog-large-height); border-radius: calc(var(--radius-dialog) * var(--corner-smoothing)); corner-shape: squircle; overflow: hidden; text-align: left; }
+/* The band above the search field and the page title: empty in both columns,
+   so it can take the window drag a title bar would. */
+.settings-drag-strip { position: absolute; z-index: 1; inset: 0 0 auto; height: var(--settings-nav-padding-block); user-select: none; }
+.settings-close { position: absolute; z-index: 2; top: var(--space-5); right: var(--space-5); }
+.settings-body { height: 100%; display: grid; grid-template-columns: var(--settings-nav-width) minmax(0, 1fr); }
+/* Its rows are controls on the dialog's continuous corners, and so is the
+   hover fill that glides between them (fluid-hover.css). */
+.settings-nav { --nested-corner-shape: squircle; --nested-corner-smoothing: var(--corner-smoothing); padding: var(--settings-nav-padding-block) var(--settings-nav-padding-inline); border-right: 1px solid var(--border-subtle); background: var(--surface-chrome); overflow-y: auto; }
+.settings-nav-group + .settings-nav-group { margin-top: var(--settings-nav-group-gap); }
+/* The margin equalizes optical rhythm, not box gaps: nav buttons are 32px tall
+   around an 18px line box, so adjacent item labels sit 14px apart, while the
+   group label's own 20px line box leaves only ~4px under its text. The extra
+   4px puts the label about the same distance from the first item as the items
+   are from each other. */
+.settings-nav-group-label { padding: 0 var(--space-5); margin-bottom: var(--space-2); color: var(--text-tertiary); font-size: var(--type-micro-size); font-weight: 600; line-height: 20px; }
+.settings-nav :is(.settings-nav-group, .settings-search-results) > button { width: 100%; height: var(--control-height-default); padding: 0 var(--space-5); border-radius: calc(var(--radius-control) * var(--corner-smoothing)); corner-shape: squircle; background: transparent; color: var(--text-secondary); display: flex; align-items: center; gap: var(--space-4); font-size: var(--type-body-compact-size); line-height: var(--type-body-compact-line-height); text-align: left; }
+.settings-nav button > .animated-product-icon { width: 15px; flex: none; }
+.settings-nav .animated-product-icon--sparkle { transform: translateY(-1px); }
+.settings-nav :is(.settings-nav-group, .settings-search-results) > button:hover { background: var(--border-subtle); color: var(--text-primary); }
+.settings-nav-group > button.active { background: var(--control-active-soft); color: var(--control-active); font-weight: 600; }
+/* The pages sit on the sheet, a step under the dialog, so their cards can
+   lift off it. */
+.settings-content { min-width: 0; background: var(--surface-panel); }
+/* Search sits above the page list and, while it holds a query, replaces it.
+   A result reads as its setting first and its page second; the keyboard's
+   result is lit like a hovered page, the one open now carries the accent. */
+.settings-search { margin-bottom: var(--settings-nav-group-gap); }
+.settings-search-results { display: flex; flex-direction: column; gap: var(--space-1); }
+.settings-nav .settings-search-results > button { height: auto; min-height: var(--control-height-default); padding-block: var(--space-3); flex-direction: column; align-items: stretch; gap: 0; }
+.settings-nav .settings-search-results > button.active { background: var(--border-subtle); }
+.settings-search-result-label { color: var(--text-primary); line-height: var(--type-caption-line-height); overflow-wrap: anywhere; }
+.settings-search-results > button[aria-current] .settings-search-result-label { color: var(--control-active); font-weight: 600; }
+.settings-search-result-place { color: var(--text-tertiary); font-size: var(--type-micro-size); line-height: var(--type-micro-line-height); }
+.settings-search-empty { margin: 0; padding: var(--space-3) var(--space-5); color: var(--text-tertiary); font-size: var(--type-caption-size); line-height: var(--type-caption-line-height); }
+/* The row a search opened glows once. The glow reaches past the row's sides,
+   so the copy and control both sit well inside it, but stays within its own
+   height, never over a neighbour's text. */
+[data-setting-revealed] { position: relative; isolation: isolate; }
+[data-setting-revealed]::before {
+  content: "";
+  position: absolute;
+  inset: 0 calc(-1 * var(--space-6));
+  z-index: -1;
+  border-radius: var(--radius-control);
+  background: var(--control-active-soft);
+  opacity: 0;
+  animation: settings-row-reveal 1.6s ease;
+  pointer-events: none;
+}
+@keyframes settings-row-reveal {
+  0%, 40% { opacity: 1; }
+  100% { opacity: 0; }
+}
+.synara-settings-embed { position: relative; width: 100%; min-width: 0; }
+.synara-settings-frame { position: absolute; inset: 0 auto auto 0; display: block; width: 100%; min-height: var(--settings-embed-min-height); overflow: hidden; border: 0; background: var(--surface-panel); opacity: 1; transition: opacity var(--motion-fast); }
+/* Hidden at once, with no fade: a fade-out is the previous page still on
+   screen under the new tab's name. Only the reveal fades. */
+.synara-settings-embed[data-ready="false"] .synara-settings-frame { opacity: 0; transition: none; }
+/* On a native tab the page stays loaded, out of sight and out of the scroll range. */
+.synara-settings-embed[data-active="false"] { overflow: hidden; visibility: hidden; pointer-events: none; }
+/* A switch the page answers within a few frames shows only the empty sheet;
+   the label comes when the wait is long enough to need one. */
+.synara-settings-loading { position: absolute; inset: 0 0 auto; height: var(--settings-embed-min-height); display: flex; align-items: center; justify-content: center; gap: var(--space-3); color: var(--text-tertiary); font-size: var(--type-caption-size); line-height: var(--type-caption-line-height); animation: synara-settings-loading-in var(--motion-moderate) calc(var(--duration-slow) * 2) both; }
+@keyframes synara-settings-loading-in { from { opacity: 0; } }
+.synara-settings-state { position: relative; min-height: var(--settings-embed-min-height); display: flex; flex-direction: column; }
+.synara-settings-state > .synara-loading-surface { background: var(--surface-panel); }
+.settings-section {
+  --form-control-border-width: var(--settings-frame-border-width);
+  --form-control-border-color: var(--settings-control-border-color);
+  --form-control-radius: var(--settings-frame-radius);
+  max-width: var(--settings-content-max-width);
+  padding: var(--settings-content-padding-top)
+    var(--settings-content-padding-inline)
+    var(--settings-content-padding-bottom);
+}
+/* The select popup is portalled out of the section, so its items name the
+   same typography contract directly. */
+.settings-section [data-slot="select-trigger"],
+.settings-section .ui-input,
+.settings-section .ui-textarea,
+.settings-section .ui-button,
+[data-slot="select-content"][data-settings-control="true"] [data-slot="select-item"] {
+  font-family: var(--settings-control-font-family);
+  font-size: var(--settings-control-font-size);
+  font-style: normal;
+  font-weight: var(--settings-control-font-weight);
+  line-height: var(--settings-control-line-height);
+  letter-spacing: normal;
+}
+.settings-section [data-slot="select-trigger"],
+.settings-section .ui-input,
+.settings-section .ui-search-field,
+.settings-section .ui-button {
+  min-height: var(--settings-control-height);
+  border-radius: calc(var(--settings-control-radius) * var(--corner-smoothing));
+  corner-shape: squircle;
+}
+.settings-section [data-slot="select-trigger"],
+.settings-section .ui-input,
+.settings-section .ui-textarea {
+  background: var(--surface-panel-raised);
+  text-align: start;
+}
+.settings-section .ui-button {
+  text-align: center;
+}
+[data-slot="select-content"][data-settings-control="true"] [data-slot="select-item"] { text-align: start; }
+.settings-section .ui-button:not(.ui-button--primary):not(.ui-button--tinted):not(.ui-button--danger) {
+  border-color: var(--border-strong);
+  background: var(--surface-panel-raised);
+  color: var(--text-primary);
+}
+.settings-section .ui-button:not(.ui-button--primary):not(.ui-button--tinted):not(.ui-button--danger):hover:not(:disabled) {
+  background: var(--settings-control-hover-surface);
+}
+.settings-section .ui-button--primary {
+  background: var(--text-primary);
+  color: var(--surface-app);
+}
+/* Slider rows keep the control column's right edge, so the track gets a fixed
+   width and the readout a tabular column of its own. */
+.settings-row-slider { width: var(--settings-row-control-min-width); display: flex; align-items: center; gap: var(--space-5); }
+.settings-row-slider input[type="range"] { min-width: 0; flex: 1; accent-color: var(--control-active); }
+.settings-row-slider output { flex: none; min-width: 34px; color: var(--text-tertiary); font-size: var(--type-caption-size); font-variant-numeric: tabular-nums; text-align: right; }
+/* Theme swatches (settings/theme-settings.tsx). Each swatch carries its own
+   data-tint or data-accent, so theme.css resolves that preset on the swatch
+   itself: the fill is the preset's real color in the current light or dark. */
+.theme-swatches { display: flex; align-items: center; gap: var(--space-1); }
+.theme-swatch { position: relative; width: var(--control-size-icon-compact); height: var(--control-size-icon-compact); flex: none; padding: 0; border-radius: var(--radius-pill); background: transparent; color: var(--text); display: grid; place-items: center; cursor: pointer; }
+.theme-swatch > * { grid-area: 1 / 1; }
+.theme-swatch-fill { width: 18px; height: 18px; border-radius: var(--radius-pill); box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--text) 16%, transparent); transition: scale var(--motion-fast); }
+.theme-swatch:hover .theme-swatch-fill { scale: 1.1; }
+.theme-swatch:active .theme-swatch-fill { scale: 0.94; }
+.theme-swatch::before { content: ""; position: absolute; inset: 1px; border-radius: inherit; corner-shape: inherit; box-shadow: 0 0 0 1.5px var(--text-tertiary); opacity: 0; scale: 0.8; transition: opacity var(--motion-fast), scale var(--motion-moderate); }
+.theme-swatch:is([aria-checked="true"], [aria-pressed="true"])::before { opacity: 1; scale: 1; }
+.theme-swatch[data-accent]::before { box-shadow: 0 0 0 1.5px var(--accent); }
+.theme-swatch-check { position: relative; pointer-events: none; animation: theme-swatch-check var(--motion-moderate); }
+@keyframes theme-swatch-check { from { opacity: 0; scale: 0.4; } }
+/* A tint's swatch is its chrome surface around the hue that names it. */
+.theme-tint-fill { background: radial-gradient(circle, var(--tint-mark) 0 38%, var(--chrome-surface) 40%); }
+.theme-accent-fill { background: var(--accent); }
+.theme-swatch[data-accent] .theme-swatch-check { color: var(--accent-contrast); }
+.theme-custom-fill { background: conic-gradient(in oklch longer hue, oklch(0.68 0.17 30), oklch(0.68 0.17 30)); }
+.theme-swatch-custom { margin-inline-start: var(--space-2); }
+.theme-swatch-custom::before { box-shadow: 0 0 0 1.5px var(--control-active); }
+.theme-swatch-custom .theme-swatch-check { color: var(--accent-contrast); }
+.theme-translucency .ui-segmented-tab { min-width: 52px; }
+/* Code theme cards (settings/code-theme-settings.tsx). Each preview carries
+   its theme's --syntax-* and --code-* properties inline, so it is drawn as a
+   source editor in that theme is. Cards drop a column rather than squeeze a
+   preview; the chosen one is ringed in the accent, apart from its ground. */
+.code-theme-cards { display: grid; grid-template-columns: repeat(auto-fill, minmax(176px, 1fr)); gap: var(--space-6) var(--space-4); }
+.code-theme-card { min-width: 0; padding: 0; border: 0; border-radius: var(--radius-control); background: transparent; color: var(--text-primary); display: flex; flex-direction: column; gap: var(--space-3); text-align: start; cursor: pointer; }
+.code-theme-preview {
+  display: block;
+  padding: var(--space-4) var(--space-5);
+  overflow: hidden;
+  border-radius: var(--radius-control);
+  background: var(--code-ground);
+  box-shadow: inset 0 0 0 1px var(--border-subtle);
+  color: var(--code-ink);
+  font-family: var(--editor-font);
+  font-size: var(--type-micro-size);
+  line-height: var(--type-micro-line-height);
+  white-space: pre;
+  transition: box-shadow var(--motion-fast);
+}
+.code-theme-preview-line { display: block; }
+.code-theme-card:hover .code-theme-preview { box-shadow: inset 0 0 0 1px var(--border-strong); }
+.code-theme-card[aria-checked="true"] .code-theme-preview { box-shadow: 0 0 0 2px var(--settings-card-surface), 0 0 0 4px var(--control-active); }
+.code-theme-card-copy { min-width: 0; display: flex; flex-direction: column; }
+.code-theme-card-copy > * { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.code-theme-card-name { font-size: var(--type-body-compact-size); line-height: var(--type-body-compact-line-height); font-weight: var(--weight-medium); }
+.code-theme-card-variants { color: var(--text-secondary); font-size: var(--type-caption-size); line-height: var(--type-caption-line-height); }
+/* The terms list grows under the field, so the row hangs from its top; the
+   label keeps the field's height so it centres on the field's line, as every
+   other row's label centres on its control. */
+.settings-project-dictionary-row { align-items: flex-start; }
+.settings-project-dictionary-row > .ui-settings-row-copy { min-height: var(--control-height-default); display: flex; flex-direction: column; justify-content: center; }
+.settings-project-dictionary { width: var(--settings-control-width); max-width: 100%; display: flex; flex-direction: column; gap: var(--space-4); }
+.settings-project-dictionary-form { width: 100%; display: grid; grid-template-columns: minmax(0, 1fr) auto; align-items: center; gap: var(--space-2); }
+.settings-project-dictionary-terms { display: flex; flex-wrap: wrap; gap: var(--space-2); }
+.settings-project-dictionary-term {
+  min-width: 0;
+  min-height: 22px;
+  border: 1px solid var(--border-subtle);
+  border-radius: var(--radius-pill);
+  padding: 1px 3px 1px var(--space-4);
+  background: var(--surface-chrome);
+  color: var(--text-secondary);
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-1);
+  font-family: var(--editor-font);
+  font-size: var(--type-micro-size);
+}
+.settings-project-dictionary-term > span { min-width: 0; overflow-wrap: anywhere; }
+.settings-project-dictionary-remove {
+  width: 16px;
+  height: 16px;
+  margin: 0;
+  padding: 0;
+  flex: none;
+  border: 0;
+  border-radius: var(--radius-pill);
+  background: transparent;
+  color: var(--text-tertiary);
+  display: inline-grid;
+  place-items: center;
+  font-family: var(--ui-font);
+  font-size: var(--type-typeset-size);
+  font-weight: 400;
+  line-height: 1;
+  cursor: pointer;
+  transition: color var(--motion-fast), background-color var(--motion-fast);
+}
+.settings-project-dictionary-remove:hover { background: var(--control-hover-surface); color: var(--text-primary); }
+.settings-project-dictionary-remove:focus-visible { outline: 2px solid var(--control-active); outline-offset: 1px; }
+.settings-section label:not(.ui-settings-row-label) { margin-top: 17px; display: flex; flex-direction: column; gap: var(--space-3); color: var(--text-secondary); font-size: var(--type-body-compact-size); line-height: var(--type-body-compact-line-height); font-weight: var(--type-body-compact-weight); }
+.settings-section code {
+  font-family: var(--editor-font);
+  font-size: var(--type-micro-size);
+  color: var(--text-primary);
+}
+.settings-section input[type="range"] { width: 100%; accent-color: var(--control-active); }
+.settings-inline { margin-top: var(--space-6); }
+.settings-api-actions { margin-top: var(--space-8); display: grid; grid-template-columns: auto 1fr auto; align-items: center; gap: var(--space-4); }
+.modal-actions { margin-top: var(--space-12); display: flex; justify-content: flex-end; gap: var(--space-4); }
+.destructive-button-icon { display: inline-flex; flex: none; align-items: center; justify-content: center; transform-origin: 50% 70%; }
+.confirm-action-modal { width: min(410px, calc(100vw - 40px)); }
+/* A message's own line breaks (a second paragraph, a list of names) show as
+   written rather than running together. */
+.confirm-action-modal > p { max-width: 340px; white-space: pre-line; }
+.confirm-action-modal .ui-button--ghost.confirm-action-danger { color: var(--status-danger); }
+.confirm-action-modal .ui-button--ghost.confirm-action-danger:hover:not(:disabled) { background: var(--status-danger-soft); color: var(--status-danger); }
+/* An import's name conflicts (import-conflict-dialog.tsx): the taken names,
+   each cut with an ellipsis rather than widening the dialog, then the three
+   answers, each a radio row with its consequence on a second line. */
+.import-conflict-modal { width: min(420px, calc(100vw - 40px)); }
+.import-conflict-names { margin-bottom: var(--space-8); color: var(--text-secondary); font-size: var(--type-body-size); line-height: var(--type-body-line-height); }
+.import-conflict-names ul { margin: 0; padding: 0; list-style: none; }
+.import-conflict-names li { overflow: hidden; color: var(--text-primary); font-family: var(--editor-font); font-size: var(--type-caption-size); line-height: var(--type-caption-line-height); text-overflow: ellipsis; white-space: nowrap; }
+.import-conflict-names li.import-conflict-more { color: var(--text-tertiary); font-family: inherit; }
+.import-conflict-modal [role="radiogroup"] { margin-inline: calc(-1 * var(--space-5)); width: auto; }
+.import-conflict-modal [data-slot="fluid-hover-highlight"] { background: var(--control-hover-surface); }
+.import-conflict-option { position: relative; }
+.import-conflict-radio { height: 50px; align-items: flex-start; padding: var(--space-4) var(--space-5); font-family: var(--ui-font); }
+.import-conflict-radio > div:first-child { align-self: center; }
+.import-conflict-description { position: absolute; top: 27px; left: calc(var(--space-5) + var(--space-8) + var(--space-4)); right: var(--space-5); overflow: hidden; pointer-events: none; color: var(--text-secondary); font-size: var(--type-micro-size); line-height: 1.3; text-overflow: ellipsis; white-space: nowrap; }
+/* The shortcut sheet (shortcut-sheet.tsx): the groups flow in two columns
+   that fold to one on a narrow window, and scroll under the filter. */
+.modal.sheet-dialog.shortcut-sheet { overflow: hidden; }
+.shortcut-sheet-scroll { min-height: 0; flex: 1; margin-inline: calc(-1 * var(--drawer-content-inset)); }
+.shortcut-sheet-groups { padding: 0 var(--drawer-content-inset) var(--space-8); columns: 2 280px; column-gap: var(--space-16); }
+.shortcut-group { padding-bottom: var(--space-10); break-inside: avoid; }
+.shortcut-group-title { margin: 0 0 var(--space-2); padding-block: var(--space-1); color: var(--text-tertiary); font-size: var(--type-micro-size); line-height: var(--type-micro-line-height); font-weight: var(--weight-semibold); }
+.shortcut-rows { margin: 0; }
+.shortcut-row { min-height: var(--control-height-compact); display: flex; align-items: center; justify-content: space-between; gap: var(--space-6); }
+.shortcut-row + .shortcut-row { border-top: 1px solid var(--border-subtle); }
+.shortcut-row > dt { min-width: 0; color: var(--text-primary); font-size: var(--type-body-size); line-height: var(--type-body-line-height); }
+.shortcut-row > dd { margin: 0; flex: none; }
+.shortcut-combos { display: inline-flex; align-items: center; gap: var(--space-2); }
+.shortcut-combo-separator { color: var(--text-tertiary); font-size: var(--type-caption-size); line-height: var(--type-caption-line-height); }
+
+/* The Theme group draws what it changes (Perplexity, hilos, ClickUp): the
+   appearances as miniature windows in the current tint and accent, each tint
+   as its light and dark halves, every option named. The art sits in theme-
+   preview scopes (theme.css), so it reads the real palettes. The accent is
+   taken where the window's own is in force, before a scope resets it. */
+.theme-tiles { --tile-accent: var(--accent); display: flex; flex-wrap: wrap; justify-content: flex-end; gap: var(--space-6); min-width: 0; }
+/* A row of pictures stands off its hairlines a step further than a row of
+   text: the selected tile's ring reaches past the art, and at the rows' own
+   inset it ran into the divider above. */
+.settings-section .ui-settings-group-body > .ui-settings-row:has(.theme-tiles) { padding-block: var(--space-6); }
+.theme-tile {
+  min-width: 0;
+  padding: 0;
+  border: 0;
+  border-radius: var(--radius-control);
+  background: transparent;
+  color: var(--text-secondary);
+  display: grid;
+  justify-items: center;
+  gap: var(--space-4);
+  cursor: pointer;
+}
+.theme-tile-art {
+  position: relative;
+  display: block;
+  border-radius: var(--radius-control);
+  box-shadow: 0 0 0 1px var(--border-subtle);
+  transition: box-shadow var(--motion-fast);
+}
+.theme-tile:hover .theme-tile-art { box-shadow: 0 0 0 1px var(--border-strong); }
+.theme-tile[aria-checked="true"] .theme-tile-art { box-shadow: 0 0 0 2px var(--surface-panel-raised), 0 0 0 3.5px var(--text-primary); }
+.theme-tile-check {
+  position: absolute;
+  right: -5px;
+  bottom: -5px;
+  width: 16px;
+  height: 16px;
+  border-radius: var(--radius-pill);
+  background: var(--text-primary);
+  box-shadow: 0 0 0 2px var(--surface-panel-raised);
+  color: var(--surface-panel-raised);
+  display: grid;
+  place-items: center;
+}
+.theme-tile-name {
+  max-width: 100%;
+  min-width: 0;
+  overflow: hidden;
+  font-size: var(--type-micro-size);
+  line-height: var(--type-micro-line-height);
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.theme-tile[aria-checked="true"] .theme-tile-name { color: var(--text-primary); font-weight: var(--weight-medium); }
+.theme-tiles-mode .theme-tile { width: 88px; }
+.theme-window, .theme-window-split { position: relative; display: block; width: 88px; aspect-ratio: 84 / 52; border-radius: var(--radius-control); overflow: hidden; }
+.theme-window-split > .theme-window { position: absolute; inset: 0; width: 100%; }
+.theme-window-second { clip-path: polygon(58% 0, 100% 0, 100% 100%, 42% 100%); }
+.theme-window-art { display: block; width: 100%; height: 100%; }
+.theme-art-chrome { fill: var(--surface-chrome); }
+.theme-art-sheet { fill: var(--surface-panel); }
+.theme-art-ink { fill: var(--text-tertiary); opacity: 0.55; }
+.theme-art-accent { fill: var(--tile-accent); }
+.theme-art-page { fill: var(--pdf-page-surface); stroke: rgb(0 0 0 / 8%); stroke-width: 0.5; }
+.theme-art-print { fill: #B4B4B9; }
+.theme-tiles-tint { gap: var(--space-5); }
+.theme-tiles-tint .theme-tile { width: 56px; }
+.theme-tint-art {
+  position: relative;
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  width: 56px;
+  aspect-ratio: 56 / 36;
+  border-radius: var(--radius-control);
+  overflow: hidden;
+  font: var(--type-micro-size)/1 var(--display-font);
+}
+.theme-tint-half { display: grid; place-items: center; background: linear-gradient(to bottom, var(--surface-chrome) 0 30%, var(--surface-panel) 30%); color: var(--text-primary); }
+.theme-tint-mark { position: absolute; left: 50%; top: 3px; width: 8px; height: 4px; border-radius: var(--radius-compact); background: var(--tint-mark); translate: -50% 0; }
+
+/* A custom accent: the color picked, and when the theme had to adjust it to
+   read as text, the color in use and why (fitAccent). */
+.theme-swatch-plus { position: relative; color: white; filter: drop-shadow(0 1px 1px rgb(0 0 0 / 40%)); pointer-events: none; }
+.theme-accent-note { display: inline-flex; align-items: center; gap: var(--space-2); min-width: 0; }
+.theme-accent-pair { display: inline-flex; align-items: center; gap: 3px; color: var(--text-tertiary); }
+.theme-accent-pair i { width: 10px; height: 10px; border-radius: var(--radius-pill); box-shadow: inset 0 0 0 1px rgb(0 0 0 / 12%); }
+.theme-accent-popover {
+  box-sizing: border-box;
+  width: min(272px, var(--radix-popover-content-available-width, 272px));
+  padding: 0;
+  border-radius: var(--radius-surface);
+  background: var(--surface-elevated);
+  box-shadow: var(--elevation-popover);
+}
+.theme-accent-popover .color-picker { inline-size: 100%; }
+.theme-accent-head { padding: var(--space-5) var(--space-5) var(--space-2); display: grid; gap: var(--space-3); min-width: 0; }
+.theme-accent-title { font-size: var(--type-body-compact-size); line-height: var(--type-caption-line-height); font-weight: var(--weight-semibold); }
+.theme-accent-chips { display: flex; flex-wrap: wrap; gap: var(--space-3); min-width: 0; }
+.theme-accent-chip {
+  max-width: 100%;
+  min-width: 0;
+  height: 24px;
+  padding: 0 var(--space-3) 0 var(--space-2);
+  border-radius: var(--radius-control);
+  background: var(--surface-input);
+  box-shadow: inset 0 0 0 1px var(--border-subtle);
+  color: var(--text-secondary);
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-2);
+  font-size: var(--type-micro-size);
+  white-space: nowrap;
+}
+.theme-accent-chip i { width: 14px; height: 14px; flex: none; border-radius: var(--radius-compact); box-shadow: inset 0 0 0 1px rgb(0 0 0 / 12%); }
+.theme-accent-chip code { color: var(--text-primary); font: var(--weight-medium) var(--type-micro-size)/1 var(--editor-font); }
+.theme-accent-why { display: grid; grid-template-columns: auto minmax(0, 1fr); align-items: start; gap: var(--space-2); color: var(--text-primary); font-size: var(--type-micro-size); line-height: var(--type-micro-line-height); }
+.theme-accent-why svg { margin-top: var(--space-1); }
+/* Says something only for an adjusted color; empty, it stays mounted as the
+   live region and gives back the head's gap above it. */
+.theme-accent-why:empty { margin-top: calc(-1 * var(--space-3)); }
+.theme-accent-presets { display: grid; gap: var(--space-2); }
+
+/* A theme with both variants shows both at once, split on a diagonal (hilos,
+   GitHub's split swatches); a dark-only theme is all dark, with a moon. Names
+   take one line and a check, so nine cards stop reading as five white
+   rectangles in the light theme. */
+.code-theme-cards { gap: var(--space-8) var(--space-4); }
+.code-theme-preview-frame { position: relative; display: block; border-radius: var(--radius-control); overflow: hidden; box-shadow: inset 0 0 0 1px var(--border-subtle); transition: box-shadow var(--motion-fast); }
+.code-theme-preview-frame .code-theme-preview { border-radius: 0; box-shadow: none; }
+.code-theme-preview-second { position: absolute; inset: 0; clip-path: polygon(62% 0, 100% 0, 100% 100%, 38% 100%); }
+.code-theme-card:hover .code-theme-preview-frame { box-shadow: inset 0 0 0 1px var(--border-strong); }
+.code-theme-card[aria-checked="true"] .code-theme-preview-frame { box-shadow: 0 0 0 2px var(--settings-card-surface), 0 0 0 3.5px var(--text-primary); }
+.code-theme-badge { position: absolute; top: 6px; right: 6px; width: 18px; height: 18px; border-radius: var(--radius-pill); background: rgb(255 255 255 / 14%); color: rgb(255 255 255 / 80%); display: grid; place-items: center; }
+.code-theme-card-name { min-width: 0; display: inline-flex; align-items: center; gap: var(--space-2); color: var(--text-secondary); font-size: var(--type-body-compact-size); line-height: var(--type-body-compact-line-height); font-weight: var(--weight-medium); }
+.code-theme-card[aria-checked="true"] .code-theme-card-name { color: var(--text-primary); }
+.code-theme-card-name > span { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+
+/* Narrow Settings. Below 560px of dialog the two columns stop sharing the
+   width: the sections are a list of rows, each with its value and a chevron,
+   and a section opens as its own page with a way back (GitHub, Craft and
+   Outlook on a phone; Linear's drill-in rows). settings-dialog.tsx holds the
+   same width for focus and Escape. */
+.settings-modal { container: settings / inline-size; }
+.settings-root-title, .settings-back, .settings-nav-chevron { display: none; }
+@container settings (max-width: 560px) {
+  .settings-modal .settings-body { grid-template-columns: minmax(0, 1fr); }
+  .settings-modal .settings-body[data-narrow-view="root"] .settings-content { display: none; }
+  .settings-modal .settings-body[data-narrow-view="page"] .settings-nav { display: none; }
+  .settings-modal .settings-nav { padding: var(--space-5) var(--space-6) var(--space-8); border-right: 0; background: var(--surface-panel); }
+  .settings-root-title {
+    display: block;
+    margin: 0 calc(var(--control-size-icon) + var(--space-4)) var(--space-5) var(--space-2);
+    font: var(--type-title-weight) var(--type-title-size)/var(--control-height-compact) var(--type-title-font);
+  }
+  .settings-modal .settings-search { margin-bottom: var(--space-8); }
+  .settings-modal .settings-nav-group + .settings-nav-group { margin-top: var(--space-8); }
+  .settings-modal .settings-nav-group-label { margin: 0 0 var(--space-3); padding-inline: var(--space-2); }
+  .settings-modal .settings-nav .settings-nav-group > button {
+    height: auto;
+    min-height: 44px;
+    padding: 0 var(--space-5) 0 var(--space-6);
+    border: 1px solid var(--border-subtle);
+    border-top-width: 0;
+    border-radius: 0;
+    background: var(--settings-card-surface);
+    color: var(--text-primary);
+    font-size: var(--type-body-size);
+    font-weight: var(--weight-regular);
+  }
+  .settings-modal .settings-nav-group > .settings-nav-group-label + button { border-top-width: 1px; border-radius: calc(var(--settings-card-radius) * var(--corner-smoothing)) calc(var(--settings-card-radius) * var(--corner-smoothing)) 0 0; corner-shape: squircle; }
+  .settings-modal .settings-nav-group > button:last-child { border-radius: 0 0 calc(var(--settings-card-radius) * var(--corner-smoothing)) calc(var(--settings-card-radius) * var(--corner-smoothing)); corner-shape: squircle; }
+  .settings-modal .settings-nav-group > .settings-nav-group-label + button:last-child { border-radius: calc(var(--settings-card-radius) * var(--corner-smoothing)); corner-shape: squircle; }
+  .settings-modal .settings-nav .settings-nav-group > button:hover { background: var(--control-hover-surface); }
+  .settings-modal .settings-nav-group > button.active { background: var(--settings-card-surface); color: var(--text-primary); font-weight: var(--weight-regular); }
+  .settings-modal .settings-nav-group > button > span[title] { flex: 1 1 auto; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .settings-nav-chevron { display: block; flex: none; color: var(--text-tertiary); }
+  .settings-back {
+    position: sticky;
+    z-index: 1;
+    top: 0;
+    width: 100%;
+    height: 44px;
+    margin: 0;
+    padding: 0 var(--space-5) 0 var(--space-4);
+    border: 0;
+    border-radius: 0;
+    background: var(--surface-panel);
+    color: var(--control-active);
+    display: inline-flex;
+    align-items: center;
+    gap: var(--space-1);
+    font: var(--weight-medium) var(--type-body-compact-size)/1 var(--ui-font);
+  }
+  .settings-modal .settings-section { padding-top: var(--space-4); }
+}
+
+/* A row that cannot hold its label and its control side by side wraps the
+   control under the label rather than squeezing the label to a character a
+   line (Notion and Craft on a phone). Selects keep their own width at the
+   right; pictured choices, sliders and segmented controls take the line;
+   switches stay where they are. */
+.settings-section { container: settings-page / inline-size; }
+@container settings-page (max-width: 520px) {
+  .settings-section .ui-settings-row { flex-wrap: wrap; row-gap: var(--space-4); }
+  .settings-section .ui-settings-row-copy { flex: 1 1 160px; }
+  .settings-section .ui-settings-row-control { flex: 0 1 auto; max-width: 100%; margin-inline-start: auto; }
+  .settings-section .ui-settings-row-control > :only-child:where([data-slot="select-trigger"], [data-slot="input"], [data-slot="button"]) { width: auto; min-width: 132px; max-width: 100%; }
+  .settings-section .ui-settings-row:has(.theme-tiles, .ui-segmented, .settings-row-slider, .theme-swatches) .ui-settings-row-control { flex: 1 1 100%; justify-content: flex-start; margin-inline-start: 0; }
+  .settings-section .settings-row-slider { width: 100%; }
+  .settings-section .ui-settings-row-control > .ui-segmented { width: 100%; }
+  .settings-section .ui-settings-row-control > .ui-segmented .ui-segmented-tab { flex: 1 1 0; }
+  .settings-section .theme-tiles { flex-wrap: nowrap; width: 100%; justify-content: flex-start; }
+  .settings-section .theme-tiles-mode { gap: var(--space-5); }
+  .settings-section .theme-tiles-tint { gap: var(--space-4); }
+  .settings-section .theme-tiles .theme-tile { flex: 1 1 0; width: auto; justify-items: stretch; }
+  .settings-section .theme-tiles .theme-tile-name { justify-self: center; }
+  .settings-section .theme-tiles :is(.theme-window, .theme-window-split, .theme-tint-art) { width: 100%; }
+}
+
+/* What's new: a dated sheet in the display face, the version stepper at its
+   right, then each highlight as a glyph and a sentence, the fixes in a quieter
+   list, and the full notes beside Done. Long notes scroll inside the sheet. */
+.modal.whats-new-modal { width: min(520px, calc(100vw - 40px)); padding: var(--space-10) var(--space-12) var(--space-8); display: grid; gap: var(--space-4); }
+.whats-new-header { min-width: 0; display: flex; align-items: center; justify-content: space-between; gap: var(--space-6); }
+.whats-new-header h2 { margin: 0; color: var(--text-primary); font-family: var(--type-display-font); font-size: var(--type-display-size); font-weight: var(--type-display-weight); line-height: var(--type-display-line-height); }
+.whats-new-version { flex: none; height: 28px; padding: 0 var(--space-1); border-radius: var(--radius-pill); box-shadow: inset 0 0 0 1px var(--border-subtle); display: inline-flex; align-items: center; gap: var(--space-1); }
+.whats-new-version button { width: 22px; height: 22px; border: 0; border-radius: var(--radius-pill); background: transparent; color: var(--text-secondary); display: grid; place-items: center; }
+.whats-new-version button:hover:not(:disabled) { background: var(--control-hover-surface); color: var(--text-primary); }
+.whats-new-version button:disabled { opacity: .35; }
+.whats-new-version span { padding: 0 var(--space-2); display: inline-flex; align-items: baseline; gap: var(--space-3); font-size: var(--type-caption-size); font-variant-numeric: tabular-nums; white-space: nowrap; }
+.whats-new-date { margin: calc(var(--space-3) * -1) 0 var(--space-2); color: var(--text-secondary); font-size: var(--type-caption-size); }
+.whats-new-body { max-height: min(56vh, 520px); overflow-y: auto; display: grid; gap: var(--space-6); }
+.whats-new-list { margin: 0; padding: 0; list-style: none; display: grid; gap: var(--space-6); }
+.whats-new-list li { display: grid; grid-template-columns: 30px minmax(0, 1fr); gap: var(--space-5); align-items: start; }
+.whats-new-icon { width: 30px; height: 30px; border-radius: calc(var(--radius-control) * var(--corner-smoothing)); corner-shape: squircle; background: color-mix(in srgb, var(--accent) 10%, var(--surface-panel-raised)); color: var(--accent); display: grid; place-items: center; }
+.whats-new-list strong { display: block; color: var(--text-primary); font-size: var(--type-body-size); font-weight: var(--weight-semibold); line-height: var(--type-body-line-height); }
+.whats-new-list p { margin: var(--space-1) 0 0; color: var(--text-secondary); font-size: var(--type-caption-size); line-height: 1.5; text-wrap: pretty; }
+.whats-new-fixes { padding-top: var(--space-6); border-top: 1px solid var(--border-subtle); }
+.whats-new-fixes h3 { margin: 0 0 var(--space-3); color: var(--text-secondary); font-size: var(--type-caption-size); font-weight: var(--weight-medium); display: flex; align-items: center; gap: var(--space-2); }
+.whats-new-fixes ul { margin: 0; padding-inline-start: 18px; color: var(--text-secondary); font-size: var(--type-caption-size); line-height: 1.5; display: grid; gap: var(--space-2); }
+.modal-actions.whats-new-actions { margin-top: var(--space-4); justify-content: space-between; align-items: center; }
+.whats-new-link { gap: var(--space-2); color: var(--text-secondary); }
+
+/* Export for arXiv (project/arxiv-export-dialog.tsx): what ships, one list of
+   checks, the two options, and the status beside the actions. Every name
+   ellipsizes and every row's text column can shrink to nothing, so long file
+   names and Chinese copy hold at a 390px window. The lists the summary and the
+   comments row disclose scroll inside their own box. */
+.modal.arxiv-export-modal { width: min(520px, calc(100vw - 40px)); max-height: calc(100vh - 40px); overflow-y: auto; display: grid; gap: var(--space-6); }
+.arxiv-export-modal > h2 { margin: 0; }
+/* The sheet spaces its parts by its grid gap, not the small dialogs' margins. */
+.modal.arxiv-export-modal > h2 + * { margin-top: 0; }
+.arxiv-export-modal .modal-actions { margin-top: var(--space-4); }
+.arxiv-export-summary { display: grid; grid-template-columns: 36px minmax(0, 1fr) auto; align-items: center; gap: var(--space-5); padding: var(--space-5); border-radius: calc(var(--radius-panel) * var(--corner-smoothing)); corner-shape: squircle; background: var(--surface-panel-raised); box-shadow: 0 0 0 1px var(--border-subtle); }
+.arxiv-export-icon { width: 36px; height: 36px; border-radius: var(--radius-icon); display: grid; place-items: center; background: var(--accent-soft); color: var(--text-secondary); }
+.arxiv-export-summary-text { min-width: 0; display: grid; }
+.arxiv-export-summary-text b { color: var(--text-primary); font-weight: var(--weight-semibold); font-size: var(--type-body-size); line-height: var(--type-body-line-height); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.arxiv-export-summary-text span { color: var(--text-secondary); font-size: var(--type-caption-size); line-height: var(--type-caption-line-height); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.arxiv-export-disclosure { border: 0; padding: var(--space-2) var(--space-3); border-radius: var(--radius-control); background: transparent; color: var(--text-secondary); display: inline-flex; align-items: center; gap: var(--space-1); font: inherit; font-size: var(--type-caption-size); white-space: nowrap; cursor: pointer; }
+.arxiv-export-disclosure:hover { background: var(--control-hover-surface); color: var(--text-primary); }
+.arxiv-export-files, .arxiv-export-comments { list-style: none; margin: 0; padding: var(--space-2) 0; max-height: 160px; overflow-y: auto; font-size: var(--type-caption-size); line-height: var(--type-caption-line-height); }
+.arxiv-export-files li { display: grid; grid-template-columns: minmax(0, 1fr) auto; gap: var(--space-4); padding: var(--space-1) var(--space-5); color: var(--text-secondary); }
+.arxiv-export-files li span:first-child { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-family: var(--editor-font); }
+.arxiv-export-files li span:last-child { color: var(--text-tertiary); font-variant-numeric: tabular-nums; }
+.modal.arxiv-export-modal > .arxiv-export-left-out { margin: calc(var(--space-2) * -1) 0 0; color: var(--text-tertiary); font-size: var(--type-micro-size); line-height: var(--type-micro-line-height); overflow-wrap: anywhere; }
+.arxiv-export-checks { list-style: none; margin: 0; padding: 0; border-radius: calc(var(--radius-panel) * var(--corner-smoothing)); corner-shape: squircle; box-shadow: 0 0 0 1px var(--border-subtle); overflow: hidden; }
+.arxiv-export-checks > li { border-bottom: 1px solid var(--border-subtle); }
+.arxiv-export-checks > li:last-child { border-bottom: 0; }
+.arxiv-check-row { display: grid; grid-template-columns: 18px minmax(0, 1fr) auto; align-items: center; gap: var(--space-4); min-height: 44px; padding: var(--space-3) var(--space-5); }
+.arxiv-check-icon { width: 18px; height: 18px; border-radius: 50%; display: grid; place-items: center; color: var(--text-tertiary); }
+.arxiv-export-checks > li[data-state="ok"] .arxiv-check-icon { background: var(--status-success-soft); color: var(--status-success); }
+.arxiv-export-checks > li[data-state="warn"] .arxiv-check-icon { color: var(--status-warning); }
+.arxiv-export-checks > li[data-state="fail"] .arxiv-check-icon { color: var(--status-danger); }
+.arxiv-export-checks > li[data-state="running"] .arxiv-check-icon { color: var(--text-secondary); }
+.arxiv-check-text { min-width: 0; display: grid; }
+.arxiv-check-text b { color: var(--text-primary); font-weight: var(--weight-medium); font-size: var(--type-caption-size); line-height: var(--type-caption-line-height); overflow-wrap: anywhere; }
+.arxiv-export-checks > li[data-state="pending"] .arxiv-check-text b { color: var(--text-tertiary); }
+/* A failure's detail is the reason, so it gets two lines; the rest one. */
+.arxiv-check-text span { color: var(--text-tertiary); font-size: var(--type-micro-size); line-height: var(--type-micro-line-height); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.arxiv-export-checks > li[data-state="fail"] .arxiv-check-text span { white-space: normal; overflow-wrap: anywhere; display: -webkit-box; -webkit-box-orient: vertical; -webkit-line-clamp: 2; line-clamp: 2; }
+.arxiv-check-row .ui-button { white-space: nowrap; }
+.arxiv-export-comments { margin: 0 var(--space-5) var(--space-3) calc(18px + var(--space-4) + var(--space-5)); padding: 0; }
+.arxiv-export-comments li { display: grid; grid-template-columns: auto minmax(0, 1fr); gap: var(--space-4); padding: var(--space-1) 0; }
+.arxiv-export-comment-where { color: var(--text-tertiary); font-family: var(--editor-font); font-variant-numeric: tabular-nums; white-space: nowrap; }
+.arxiv-export-comment-text { color: var(--text-secondary); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.arxiv-export-comments li[data-todo] .arxiv-export-comment-text { color: var(--status-warning); }
+.arxiv-export-blocked { display: grid; justify-items: start; gap: var(--space-4); }
+.arxiv-export-options { display: grid; gap: var(--space-4); }
+.arxiv-export-actions { align-items: center; flex-wrap: wrap; }
+.arxiv-export-status { margin-inline-end: auto; min-width: 0; color: var(--text-secondary); font-size: var(--type-caption-size); line-height: var(--type-caption-line-height); }

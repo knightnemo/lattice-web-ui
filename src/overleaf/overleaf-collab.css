@@ -1,0 +1,401 @@
+/* The Overleaf collaboration drawer: comment threads, tracked-change
+   suggestions and chat. Each reads as people talking about the paper: a face
+   and a name in the person's colour, quiet meta in the secondary ink, the
+   paper's own words in the reading font, and actions that stay small until
+   they are wanted. */
+
+/* A column, so whichever panel is shown scrolls inside it while the tabs and
+   header stay put. */
+.overleaf-collab-drawer {
+  container: overleaf-collab / inline-size;
+  width: min(420px, 100%);
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+}
+/* The switcher keeps a section's breathing room below it too, so whatever
+   the tab leads with (a filter, the bulk actions, the chat) never touches it. */
+.overleaf-collab-tabs { flex: none; margin-block: var(--drawer-section-gap); }
+/* The tabs share the track rather than bunching at its start; a narrow track
+   gives way in the label, never in the count. */
+.overleaf-collab-tabs .ui-segmented-tab { flex: 1 1 0; min-width: 0; padding-inline: var(--space-3); }
+.overleaf-collab-tabs .sliding-tab-label { min-width: 0; max-width: 100%; }
+.overleaf-collab-tab-label { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+/* Counts are a quiet number after the word, not a pill. */
+.overleaf-collab-tab-count {
+  flex: none;
+  margin-left: var(--space-1);
+  color: var(--text-secondary);
+  font-variant-numeric: tabular-nums;
+}
+.overleaf-collab-drawer .ui-segmented .active .overleaf-collab-tab-count { color: var(--text-primary); }
+/* One line under the tabs: the comment source on the left, what to do with
+   the list on the right. Inset like the lists below, which keep room for
+   focus rings. */
+.overleaf-collab-toolbar {
+  flex: none;
+  min-height: var(--control-height-compact);
+  margin: 0 var(--space-1) var(--space-6);
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--space-2) var(--space-4);
+}
+.overleaf-collab-toolbar > :last-child { margin-left: auto; }
+.overleaf-collab-text-button {
+  flex: none;
+  height: 24px;
+  display: inline-flex;
+  align-items: center;
+  gap: var(--gap-inline-tight);
+  padding: 0 var(--space-3);
+  border: 0;
+  border-radius: var(--radius-control);
+  background: transparent;
+  color: var(--text-secondary);
+  font-size: var(--type-caption-size);
+  white-space: nowrap;
+  transition: background-color var(--motion-fast), color var(--motion-fast);
+}
+.overleaf-collab-text-button:hover:not(:disabled) { background: var(--control-hover-surface); color: var(--text-primary); }
+.overleaf-collab-text-button:disabled { opacity: .45; }
+
+/* A group heading (a file for comments, a section of the paper for
+   suggestions) with its count. */
+.overleaf-collab-group {
+  min-width: 0;
+  margin: 0;
+  padding: var(--space-2) var(--space-1);
+  display: flex;
+  align-items: center;
+  gap: var(--space-3);
+  color: var(--text-secondary);
+  font-size: var(--type-caption-size);
+  line-height: var(--type-caption-line-height);
+  font-weight: var(--weight-medium);
+}
+.overleaf-collab-group > svg { flex: none; }
+/* Most groups are file paths, which must read exactly as written. */
+.overleaf-collab-group > span:first-of-type { min-width: 0; overflow-wrap: anywhere; }
+.overleaf-collab-group-count {
+  flex: none;
+  margin-left: auto;
+  font-weight: var(--weight-regular);
+  font-variant-numeric: tabular-nums;
+}
+
+/* Empty states: the drawing, a title in the subtitle role, one line. The
+   paper is the docked drawer's own surface (trellis.css). */
+.overleaf-collab-empty {
+  --art-paper: var(--surface-input);
+  margin-block: auto;
+  padding: var(--space-10) var(--space-6);
+}
+.overleaf-collab-empty .research-art { width: 144px; }
+.overleaf-collab-empty .ui-empty-state-description { max-width: 34ch; color: var(--text-secondary); text-wrap: pretty; }
+
+.overleaf-thread-list,
+.overleaf-change-list {
+  flex: 1;
+  min-height: 0;
+  overflow-y: auto;
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-10);
+  padding: 0 var(--space-1) var(--space-8);
+}
+.overleaf-thread-section,
+.overleaf-change-section { display: flex; flex-direction: column; gap: var(--space-3); }
+
+/* ---------------------------------------------------------------- comments */
+.overleaf-thread {
+  padding: var(--space-5) var(--space-5) var(--space-5) var(--space-6);
+  border: 1px solid var(--border-subtle);
+  border-radius: var(--radius-surface);
+  background: var(--surface-panel);
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-5);
+  transition: border-color var(--motion-fast);
+}
+.overleaf-thread:hover,
+.overleaf-thread:focus-within { border-color: var(--border-strong); }
+/* A thread started while the list is open (use-arrivals.ts): it comes in on
+   the slow tier, then a ring in the focus color holds a moment and lets go,
+   so the eye finds it among the others. */
+.overleaf-thread[data-fresh] { animation: overleaf-thread-in var(--motion-slow) both, overleaf-thread-ring var(--motion-linger); }
+@keyframes overleaf-thread-in { from { opacity: 0; transform: translateY(-6px) scale(.98); } }
+@keyframes overleaf-thread-ring {
+  0% { box-shadow: 0 0 0 0 transparent; }
+  10%, 50% { box-shadow: 0 0 0 2px color-mix(in srgb, var(--focus-ring) 55%, transparent); }
+  100% { box-shadow: 0 0 0 2px transparent; }
+}
+.overleaf-thread-head {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  align-items: start;
+  gap: var(--space-3);
+}
+/* The commented span, quoted as the paper says it: a rule in the colour of
+   whoever opened the thread, the reading font. Clicking it puts the caret there. */
+.overleaf-thread-quote {
+  display: -webkit-box;
+  min-width: 0;
+  padding: 0 0 0 var(--space-4);
+  border: 0;
+  border-left: 2px solid var(--border-strong);
+  border-radius: 0;
+  background: none;
+  color: var(--text-secondary);
+  font-family: var(--reading-font);
+  font-style: italic;
+  font-size: var(--type-body-size);
+  line-height: var(--type-body-line-height);
+  text-align: left;
+  overflow-wrap: anywhere;
+  -webkit-box-orient: vertical;
+  -webkit-line-clamp: 3;
+  overflow: hidden;
+  cursor: pointer;
+  transition: color var(--motion-fast);
+}
+.overleaf-thread-quote:hover:not(:disabled) { color: var(--text-primary); }
+.overleaf-thread-quote:disabled { cursor: default; }
+/* The quote line of a thread whose span was deleted: the fallback, in the tertiary ink. */
+.overleaf-thread-orphaned {
+  margin: 0;
+  color: var(--text-tertiary);
+  font-size: var(--type-caption-size);
+  line-height: var(--type-caption-line-height);
+  font-style: italic;
+}
+/* Resolve stays in the corner; delete joins it on hover or keyboard focus. */
+.overleaf-thread-tools {
+  flex: none;
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-1);
+  margin: calc(var(--space-2) * -1) calc(var(--space-2) * -1) 0 0;
+}
+.overleaf-thread-tools .ui-icon-button { color: var(--text-secondary); }
+.overleaf-thread-tools .overleaf-thread-resolve:hover:not(:disabled) { color: var(--status-success); }
+.overleaf-thread-danger:hover:not(:disabled) { color: var(--status-danger); }
+/* The icon button's own transition fades it in, and its hover colours ease too. */
+.overleaf-thread-danger { opacity: 0; }
+.overleaf-thread:hover .overleaf-thread-tools .overleaf-thread-danger,
+.overleaf-thread-tools:focus-within .overleaf-thread-danger,
+.overleaf-thread-message:hover .overleaf-thread-danger,
+.overleaf-thread-message-actions:focus-within .overleaf-thread-danger { opacity: 1; }
+
+.overleaf-thread-messages { margin: 0; padding: 0; list-style: none; display: flex; flex-direction: column; gap: var(--space-5); }
+.overleaf-thread-message { display: grid; grid-template-columns: 20px minmax(0, 1fr); column-gap: var(--space-4); align-items: start; }
+.overleaf-thread-message-body { min-width: 0; }
+.overleaf-thread-meta {
+  min-width: 0;
+  min-height: 20px;
+  display: flex;
+  align-items: center;
+  gap: var(--space-3);
+  color: var(--text-secondary);
+  font-size: var(--type-caption-size);
+  line-height: var(--type-caption-line-height);
+}
+/* A long name gives way before the age does. */
+.overleaf-thread-meta > span:first-child {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  color: var(--text-primary);
+  font-size: var(--type-body-compact-size);
+  font-weight: var(--weight-medium);
+}
+.overleaf-thread-meta time { flex: none; white-space: nowrap; font-variant-numeric: tabular-nums; }
+.overleaf-thread-message-actions {
+  flex: none;
+  margin: calc(var(--space-2) * -1) calc(var(--space-2) * -1) calc(var(--space-2) * -1) auto;
+  display: inline-flex;
+  opacity: 0;
+  transition: opacity var(--motion-fast);
+}
+.overleaf-thread-message:hover .overleaf-thread-message-actions,
+.overleaf-thread-message-actions:focus-within { opacity: 1; }
+.overleaf-thread-message-actions .ui-icon-button { color: var(--text-secondary); }
+.overleaf-thread-message-body p {
+  margin: var(--space-1) 0 0;
+  color: var(--text-primary);
+  font-size: var(--type-body-size);
+  line-height: var(--type-body-line-height);
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
+.overleaf-thread-empty { color: var(--text-secondary); font-size: var(--type-caption-size); }
+/* In the margin, the replies after the first message wait behind this line. */
+.overleaf-thread-more {
+  align-self: flex-start;
+  margin: calc(var(--space-2) * -1) 0 0 calc(20px + var(--space-4));
+  padding: 0;
+  border: 0;
+  background: none;
+  color: var(--text-secondary);
+  font-size: var(--type-caption-size);
+  line-height: var(--type-caption-line-height);
+  font-variant-numeric: tabular-nums;
+  transition: color var(--motion-fast);
+}
+.overleaf-thread-more:hover { color: var(--text-primary); }
+
+/* "Reply…" is a field you can see, not a button you have to find. It lines
+   up with the messages' text, past their faces. */
+.overleaf-thread-reply-field,
+.overleaf-thread-reply-slot { margin-left: calc(20px + var(--space-4)); }
+.overleaf-thread-reply-field {
+  min-width: 0;
+  height: var(--control-height-compact);
+  padding: 0 var(--space-4);
+  border: var(--field-control-border-width) solid var(--field-control-border-color);
+  border-radius: var(--field-control-radius);
+  background: var(--field-control-background);
+  color: var(--text-secondary);
+  font-size: var(--type-body-compact-size);
+  text-align: left;
+  cursor: text;
+  transition: border-color var(--motion-fast);
+}
+.overleaf-thread-reply-field:hover { border-color: var(--border-strong); }
+.overleaf-thread-reply { display: flex; flex-direction: column; gap: var(--space-3); }
+.overleaf-thread-reply textarea {
+  min-height: 56px;
+  resize: vertical;
+  font-size: var(--type-body-compact-size);
+  line-height: 1.5;
+  padding: var(--space-3) var(--space-4);
+  border-radius: var(--field-control-radius);
+  border: var(--field-control-border-width) solid var(--field-control-border-color);
+  background: var(--field-control-background);
+  color: var(--text-primary);
+}
+.overleaf-thread-reply textarea:focus { outline: none; border-color: var(--field-control-interactive-border-color); box-shadow: none; }
+.overleaf-thread-actions { display: flex; flex-wrap: wrap; justify-content: flex-end; gap: var(--space-3); }
+
+/* A resolved thread is one line: who resolved it and what about, opening on
+   click, with Reopen at its end. */
+.overleaf-thread.resolved { padding-block: var(--space-3); background: transparent; }
+.overleaf-thread-resolved { min-width: 0; display: flex; align-items: center; gap: var(--space-3); }
+.overleaf-thread-disclosure {
+  flex: 1;
+  min-width: 0;
+  min-height: var(--control-height-compact);
+  display: flex;
+  align-items: center;
+  gap: var(--space-3);
+  padding: 0;
+  border: 0;
+  background: none;
+  color: var(--text-secondary);
+  font-size: var(--type-caption-size);
+  text-align: left;
+}
+.overleaf-thread-disclosure > svg:first-child { flex: none; transition: transform var(--motion-fast); }
+.overleaf-thread-disclosure[aria-expanded="true"] > svg:first-child { transform: rotate(90deg); }
+.overleaf-thread-resolved-mark { flex: none; color: var(--status-success); }
+.overleaf-thread-resolved-who { flex: none; max-width: 60%; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.overleaf-thread-resolved-quote {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-family: var(--reading-font);
+  font-style: italic;
+  transition: color var(--motion-fast);
+}
+.overleaf-thread-disclosure:hover .overleaf-thread-resolved-quote { color: var(--text-primary); }
+.overleaf-thread.resolved .overleaf-thread-tools { margin-top: 0; }
+
+/* ---------------------------------------------------------------- suggestions */
+.overleaf-change-bulk-actions { display: inline-flex; flex-wrap: wrap; justify-content: flex-end; gap: var(--space-1); }
+.overleaf-change-rows { margin: 0; padding: 0; list-style: none; display: flex; flex-direction: column; }
+.overleaf-change {
+  padding: var(--space-5) var(--space-1);
+  border-top: 1px solid var(--border-subtle);
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-2);
+}
+.overleaf-change:first-child { padding-top: var(--space-2); border-top: 0; }
+/* Who and when on one line; the name gives way first, the verb and age never wrap. */
+.overleaf-change-meta {
+  min-width: 0;
+  min-height: var(--control-height-compact);
+  display: flex;
+  align-items: center;
+  gap: var(--space-3);
+  color: var(--text-secondary);
+  font-size: var(--type-caption-size);
+  line-height: var(--type-caption-line-height);
+}
+.overleaf-change-author {
+  flex: 0 1 auto;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  color: var(--text-primary);
+  font-size: var(--type-body-compact-size);
+  font-weight: var(--weight-medium);
+}
+.overleaf-change-kind,
+.overleaf-change-meta time { flex: none; white-space: nowrap; }
+/* A narrow drawer keeps the name readable: the verb leaves the line (still
+   read aloud), since the mark in the sentence shows it too. */
+@container overleaf-collab (width < 320px) {
+  .overleaf-change-kind {
+    position: absolute;
+    width: 1px;
+    height: 1px;
+    overflow: hidden;
+    clip-path: inset(50%);
+    white-space: nowrap;
+  }
+}
+.overleaf-change-actions { flex: none; margin-left: auto; display: inline-flex; gap: var(--space-1); }
+.overleaf-change-actions .ui-icon-button { color: var(--text-secondary); }
+.overleaf-change-actions .overleaf-change-accept:hover:not(:disabled) { background: var(--status-success-soft); color: var(--status-success); }
+.overleaf-change-actions .overleaf-change-reject:hover:not(:disabled) { background: var(--status-danger-soft); color: var(--status-danger); }
+/* The sentence as the paper reads, the change marked in its author's colour.
+   It lines up with the name, past the face. */
+.overleaf-change-text {
+  min-width: 0;
+  padding: 0 0 0 calc(18px + var(--space-3));
+  border: 0;
+  background: none;
+  color: var(--text-primary);
+  font-family: var(--reading-font);
+  font-size: var(--type-typeset-size);
+  line-height: 1.6;
+  text-align: left;
+  overflow-wrap: anywhere;
+  cursor: pointer;
+}
+.overleaf-change-context { color: var(--text-secondary); transition: color var(--motion-fast); }
+.overleaf-change-text:hover .overleaf-change-context { color: var(--text-primary); }
+.overleaf-change-text :is(ins, del) {
+  padding: 0 1px;
+  color: var(--text-primary);
+  box-decoration-break: clone;
+  -webkit-box-decoration-break: clone;
+}
+.overleaf-change-text ins { text-decoration: none; border-bottom: 2px solid; border-radius: 2px 2px 0 0; }
+.overleaf-change-text del { text-decoration-line: line-through; text-decoration-thickness: 2px; border-radius: 2px; }
+
+/* ---------------------------------------------------------------- chat */
+
+/* Error lines above the lists. Appearance is owned by `.ui-inline-message`;
+   the comments and chat line add a tinted plate. */
+.overleaf-chat-inline,
+.overleaf-change-inline { margin-bottom: var(--space-4); }
+.overleaf-chat-inline {
+  padding: 7px 9px;
+  border-radius: var(--radius-control);
+  background: color-mix(in srgb, var(--status-danger) 10%, transparent);
+}

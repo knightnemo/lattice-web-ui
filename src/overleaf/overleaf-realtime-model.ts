@@ -1,0 +1,172 @@
+/**
+ * What the live-editing channel sends and answers, and the pure rules
+ * `useOverleafRealtime` applies to it: carrying anchors across operations,
+ * proving what the disk copy shares with Overleaf, and deciding whether a
+ * failed connection is worth retrying. The hook owns every piece of state;
+ * nothing here does.
+ */
+import { msg } from "@lingui/core/macro";
+import { i18n } from "../i18n";
+import { hostErrorText } from "../platform/host-error-text";
+import { mentionsAny } from "../platform/ipc-error-phrases";
+import { transformSpan, type OtDocument, type OtOp } from "./ot";
+import { changesAfter, type Suggester } from "./overleaf-suggestions";
+
+export type DocEntry = { id: string; path: string };
+/** One entity in the project, with the id Overleaf's own endpoints take. */
+export type EntityEntry = { id: string; path: string; kind: "doc" | "file" | "folder" };
+/** What this account may do to the project, as Overleaf reports it. */
+export type OverleafPermission = "owner" | "readAndWrite" | "review" | "readOnly" | "unknown";
+export type JoinedProject = {
+  publicId: string | null; docs: DocEntry[]; entities: EntityEntry[]; permission: OverleafPermission;
+  /** Overleaf's track-changes setting for this account: whether our edits go out as suggestions. */
+  trackChanges?: boolean;
+  /** Our account, and the colour our suggestions are drawn in. */
+  userId?: string | null; ownHue?: number;
+};
+/** Where a comment thread is anchored in the open document. */
+export type CommentRange = { threadId: string; position: number; quote: string };
+export type OverleafCommentTarget = { projectRoot: string; docId: string; path: string };
+/** A suggestion in the open document: text somebody proposed adding or removing. */
+export type TrackedChange = {
+  id: string;
+  position: number;
+  text: string;
+  /** True when `text` was removed as a suggestion and is absent from the document. */
+  deletion: boolean;
+  userId: string | null;
+  timestamp: string | null;
+  /** The author's colour in Overleaf's own palette. */
+  hue: number;
+};
+/** The exact document/version pair reserved for an out-of-band OT mutation. */
+export type ReservedOperation = { docId: string; version: number };
+
+/** A replayed update: applied at `version`, and our own work comes back here as an ack. */
+export type ReplayedUpdate = { version: number; ops: OtOp[]; source: string | null };
+export type JoinedDoc = {
+  text: string;
+  version: number;
+  comments: CommentRange[];
+  changes: TrackedChange[];
+  /** Updates replayed by a join that resumed from a version we already had. */
+  caughtUp: ReplayedUpdate[];
+  /** Whether the server honoured the version we asked to resume from; if not, `text` is all there is. */
+  resumed: boolean;
+};
+
+/** `suggestedBy` is set when the update was sent as a suggestion. */
+export type DocUpdateEvent = { type: "docUpdate"; docId: string; suggestedBy?: Suggester } & ReplayedUpdate;
+export type OverleafRemoteTextContext = {
+  projectRoot: string;
+  path: string;
+  baseContent: string;
+  isCurrent: () => boolean;
+};
+
+/** The document on screen, with the spans Overleaf anchored in it. */
+export type OpenDoc = { id: string; comments: CommentRange[]; changes: TrackedChange[] };
+export type RealtimeStatus = "off" | "connecting" | "live" | "error";
+
+/**
+ * Whether an update came from the connection Overleaf named `publicId` — never
+ * before it has named one — or from an earlier connection that `submittedVia`
+ * says carried the operation still waiting for its answer.
+ */
+export const isOwnUpdate = (source: string | null, publicId: string | null, submittedVia: readonly string[] = []) =>
+  Boolean(source) && (source === publicId || submittedVia.includes(source!));
+
+/**
+ * Overleaf refused a request while the session is still valid
+ * (SESSION_STILL_VALID in overleaf_rt.rs): often brief, but a lost share
+ * persists, so it is retried only this many times before being reported.
+ */
+export const OVERLEAF_REFUSAL_RETRIES = 3;
+/* eslint-disable lingui/no-unlocalized-strings -- phrases matched in backend error text */
+export const OVERLEAF_SESSION_STILL_VALID = "session is still valid";
+/** overleaf_rt.rs's SESSION_EXPIRED and NOT_CONNECTED. */
+export const OVERLEAF_SESSION_EXPIRED = "Overleaf session expired";
+export const OVERLEAF_NOT_CONNECTED = "Not connected to Overleaf";
+/** ipc.rs's stale-project refusal, link.rs's unlinked project and the realtime channel's replacement. */
+export const PROJECT_CHANGED = "project changed";
+export const PROJECT_NOT_LINKED = "not linked";
+export const NEWER_OVERLEAF_CONNECTION = "newer Overleaf connection";
+/** overleaf_rt.rs's PROJECT_ACCESS_LOST: removed from the project, or it was deleted. */
+export const OVERLEAF_PROJECT_ACCESS_LOST = "can no longer open the project";
+/* eslint-enable lingui/no-unlocalized-strings */
+export const isOverleafProjectRefusal = (reason: string) => mentionsAny(reason, [OVERLEAF_SESSION_STILL_VALID]);
+
+/** Authentication and project-identity failures need user action, not a retry loop. */
+export function shouldRetryConnection(reason: string): boolean {
+  // The regex's words also catch what Overleaf's servers and the realtime
+  // handshake say in their own words, so no Rust source pins them.
+  // "not authorized" and "project not found" are how the realtime server
+  // turns away an account removed from the project, or a deleted project.
+  return !mentionsAny(reason, [OVERLEAF_NOT_CONNECTED, PROJECT_CHANGED, PROJECT_NOT_LINKED, NEWER_OVERLEAF_CONNECTION, OVERLEAF_PROJECT_ACCESS_LOST])
+    && !/session expired|cookie|sign.?in|authentication|unauthori[sz]ed|not authori[sz]ed|forbidden|permission|invalid project|project not found/i.test(reason);
+}
+
+/**
+ * What the channel shows while it waits `delayMs` to reconnect. The cause is
+ * usually the host's English, so it reads in the interface language too.
+ */
+export function reconnectingDetail(cause: string, delayMs: number): string {
+  const reason = hostErrorText(cause);
+  const seconds = Math.ceil(delayMs / 1_000);
+  return delayMs === 0
+    ? i18n._(msg`Overleaf live editing disconnected (${reason}). Reconnecting now…`)
+    : i18n._(msg`Overleaf live editing disconnected (${reason}). Reconnecting in ${seconds} s…`);
+}
+
+/**
+ * What a document's disk copy provably shares with Overleaf. OT's text may
+ * include a peer update the editor or disk rejected, so settled OT alone is
+ * not proof of a locally materialized common ancestor; the leave checkpoint
+ * handed back to sync is `lastShared`, promoted only when both agree.
+ */
+export type DocumentProof = {
+  receipt: string;
+  lastShared: { text: string; version: number } | null;
+  locallyAppliedText: string | null;
+  /** False once an operation was sent outside OtDocument, until a full reset. */
+  textModelValid: boolean;
+};
+
+export function promoteShared(doc: OtDocument, proof: DocumentProof | undefined) {
+  if (proof?.textModelValid && doc.settled && doc.text === proof.locallyAppliedText) {
+    proof.lastShared = { text: doc.text, version: doc.version };
+  }
+}
+
+/**
+ * Carry the open document's anchored spans across an operation.
+ *
+ * Overleaf states where comments and suggestions sit when the document is
+ * joined and never mentions them again — they are expected to ride along on
+ * the operations that move the text. Without this they drift, and a drifted
+ * suggestion is worse than a misplaced highlight: accepting or rejecting one
+ * applies to a range, so it would rewrite text nobody proposed touching.
+ * Applies to our own typing as much as to anyone else's; `by` names who sent
+ * `ops` as suggestions, when they were (see ./overleaf-suggestions).
+ */
+export function anchorsAfter(current: OpenDoc, ops: OtOp[], by: Suggester | null = null): Pick<OpenDoc, "comments" | "changes"> {
+  return {
+    comments: current.comments.map((comment) => {
+      const from = transformSpan({ from: comment.position, length: comment.quote.length }, ops).from;
+      return from === comment.position ? comment : { ...comment, position: from };
+    }),
+    changes: changesAfter(current.changes, ops, by),
+  };
+}
+
+/**
+ * The `hash` Overleaf checks an update against: SHA-1 of
+ * `blob {length}\0{text}`, a git blob hash with the length counted in UTF-16
+ * units the way JavaScript counts it and the text as UTF-8 — exactly what its
+ * document updater computes for the text the update produces.
+ */
+export async function overleafDocHash(text: string): Promise<string> {
+  // eslint-disable-next-line lingui/no-unlocalized-strings -- digest algorithm and the hashed wire format
+  const digest = await crypto.subtle.digest("SHA-1", new TextEncoder().encode(`blob ${text.length}\0${text}`));
+  return Array.from(new Uint8Array(digest), (byte) => byte.toString(16).padStart(2, "0")).join("");
+}

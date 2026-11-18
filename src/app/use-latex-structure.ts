@@ -1,0 +1,296 @@
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { invoke } from "@tauri-apps/api/core";
+import type { BodyBoundary, EditorPosition, ProjectSnapshot } from "../app-types";
+import { flattenProjectPaths } from "../build/compile-diagnostics";
+import {
+  activeOutlineNode, findBodyEnd, includedPathsIn, parseProjectOutline, sameOutline, type BodySpan,
+} from "../editor/latex/latex-outline";
+import {
+  katexMacrosFromSources, mergeReferences, parseGraphicsPaths, parseLocalLabels, parseLocalMacros,
+  type ReferenceInfo,
+} from "../editor/latex/latex-text";
+import { changesReach, onProjectFilesChanged } from "../project/project-files-changed";
+import { mergeTodosWithBuffer, type TodoHit } from "../project/todo-scavenger";
+
+/** How deep `\input`/`\include` chains are followed from the root document. */
+const MAX_INCLUDE_DEPTH = 8;
+const NO_BODY_END: BodyBoundary = { kind: "none" };
+const UNRESOLVED_BODY_END: BodyBoundary = { kind: "unresolved" };
+const UNREAD_BODY_END: BodyBoundary = { kind: "unread" };
+const NO_SOURCES: Record<string, string> = {};
+const NO_PATHS: string[] = [];
+
+/** Files the manuscript reaches, as last read from disk or left in the editor. */
+type RetainedSources = {
+  /** The project they were read from. */
+  owner: string;
+  sources: Record<string, string>;
+  /** Files whose read failed: listed empty, but not known to be. */
+  unreadable: string[];
+};
+
+export type LatexStructureDeps = {
+  project: ProjectSnapshot | null;
+  /** The text file in the editor, and its text as of the last pause in typing. */
+  activeFile: string;
+  settledSource: string;
+  /** Labels and citations the project's last scan found on disk. */
+  references: ReferenceInfo[];
+  /** TODO markers the project's last scan found on disk. */
+  diskTodos: TodoHit[];
+  editorPosition: EditorPosition | null;
+  /**
+   * Something lists the outline (its panel, Go to symbol), so the included
+   * files are read for it. A PDF on screen reads them regardless.
+   */
+  outlineWanted: boolean;
+  /**
+   * A PDF is on screen, whether the last build made it or not (a cached one,
+   * or one left up after a failed build): its pages are counted against the
+   * budget, so the manuscript's scope is read for it.
+   */
+  pdfShown: boolean;
+  /**
+   * The PDF the last successful build shows (its preview URL), or null: the
+   * last page holding the body there is where the main body ends. A new URL is
+   * a new PDF, whose pagination may differ though the source did not move.
+   */
+  compiledPdf: string | null;
+};
+
+/**
+ * What the project's LaTeX says about itself, kept live with the open
+ * buffer: the section outline across `\input`/`\include` files, labels,
+ * macros (for completion and KaTeX), `\graphicspath` roots, TODO markers, and
+ * how many PDF pages the main body (before its appendix or references) takes.
+ *
+ * Only a `.tex` buffer joins the project-wide parses, through its settled
+ * text: a Markdown buffer leaves every memo here inert while typing.
+ */
+export function useLatexStructure({
+  project, activeFile, settledSource, references, diskTodos, editorPosition, outlineWanted, pdfShown, compiledPdf,
+}: LatexStructureDeps) {
+  const projectRoot = project?.root ?? "";
+  const [retained, setRetained] = useState<RetainedSources>({ owner: projectRoot, sources: NO_SOURCES, unreadable: NO_PATHS });
+  // What another project's files said never answers for this one.
+  const ownRetained = retained.owner === projectRoot ? retained : null;
+  const includedSources = ownRetained?.sources ?? NO_SOURCES;
+  const unreadable = ownRetained?.unreadable ?? NO_PATHS;
+  const projectPaths = useMemo(
+    () => (project ? flattenProjectPaths(project.files) : []),
+    [project],
+  );
+  const rootDocumentPath = project?.manifest.rootDocuments.find((document) => document.isDefault)?.path
+    ?? project?.manifest.rootDocuments[0]?.path
+    ?? "";
+  // Deriving this nullable scalar keeps every downstream memo inert while
+  // typing Markdown — `null` is Object.is-stable across keystrokes, so the
+  // source map and the parse chains behind it stop recomputing per character.
+  const activeTexSource = activeFile.endsWith(".tex") ? settledSource : null;
+  /** Every TeX source the parses read: the included files from disk, the open one from its buffer. */
+  const liveSources = useMemo(() => ({
+    ...includedSources,
+    ...(activeTexSource != null ? { [activeFile]: activeTexSource } : {}),
+  }), [activeFile, activeTexSource, includedSources]);
+
+  // The manuscript: the root document and every file it reaches through
+  // \input/\include, in reading order, as far as their text is known. Only a
+  // complete walk — nothing missing, no read that failed — can say what the
+  // manuscript lacks; a file not yet read may hold anything.
+  const manuscript = useMemo(() => {
+    const sources: Record<string, string> = {};
+    const missing: string[] = [];
+    const seen = new Set<string>();
+    const visit = (path: string, depth: number) => {
+      if (depth > MAX_INCLUDE_DEPTH || seen.has(path)) return;
+      seen.add(path);
+      const text = liveSources[path];
+      if (text == null) {
+        missing.push(path);
+        return;
+      }
+      sources[path] = text;
+      for (const included of includedPathsIn(text, projectPaths, rootDocumentPath)) visit(included, depth + 1);
+    };
+    if (rootDocumentPath) visit(rootDocumentPath, 0);
+    const complete = !missing.length && !unreadable.some((path) => (
+      Object.hasOwn(sources, path) && !(path === activeFile && activeTexSource != null)
+    ));
+    return { sources, missing, complete };
+  }, [activeFile, activeTexSource, liveSources, projectPaths, rootDocumentPath, unreadable]);
+
+  // Read the files the manuscript reaches that no buffer holds. The outline
+  // lists them (its panel, Go to symbol): with only the open buffer it found
+  // nothing in a project whose sections live in \input/\include files, or
+  // whenever the root was not open. A PDF on screen needs them too, whatever
+  // panel is open: an \appendix or bibliography in an unread file would read
+  // as none, and the whole PDF would be held to the main body's page budget.
+  const scanWanted = outlineWanted || pdfShown;
+  useEffect(() => {
+    if (!scanWanted || !manuscript.missing.length) return;
+    let cancelled = false;
+    const owner = projectRoot;
+    void Promise.all(manuscript.missing.map((path) => invoke<string>("read_project_file", { path }).then(
+      (content) => ({ path, content, read: true }),
+      () => ({ path, content: "", read: false }),
+    ))).then((entries) => {
+      if (cancelled) return;
+      setRetained((current) => {
+        const base = current.owner === owner ? current : { owner, sources: NO_SOURCES, unreadable: NO_PATHS };
+        let { sources, unreadable: failed } = base;
+        for (const { path, content, read } of entries) {
+          // A failed read lists as empty in the outline, but is remembered as
+          // unread: it proves nothing about what the file holds.
+          if (sources[path] !== content) sources = { ...sources, [path]: content };
+          if (failed.includes(path) === read) failed = read ? failed.filter((other) => other !== path) : [...failed, path];
+        }
+        return base === current && sources === base.sources && failed === base.unreadable
+          ? current
+          : { owner, sources, unreadable: failed };
+      });
+    });
+    return () => {
+      cancelled = true;
+    };
+  }, [manuscript, projectRoot, scanWanted]);
+
+  // A file changed on disk (the agent, an Overleaf pull, a checkout) is read
+  // again: its retained copy may lack an \appendix it now has, or keep one it
+  // lost. The open buffer still shadows whatever is read for it.
+  useEffect(() => {
+    if (!projectRoot) return;
+    return onProjectFilesChanged(projectRoot, (paths) => setRetained((current) => {
+      if (current.owner !== projectRoot) return current;
+      const stale = (path: string) => changesReach(paths, path);
+      if (!Object.keys(current.sources).some(stale) && !current.unreadable.some(stale)) return current;
+      return {
+        owner: current.owner,
+        sources: Object.fromEntries(Object.entries(current.sources).filter(([path]) => !stale(path))),
+        unreadable: current.unreadable.filter((path) => !stale(path)),
+      };
+    }));
+  }, [projectRoot]);
+
+  // The open buffer shadows its retained copy, which may predate edits made
+  // in it. Leaving a file the manuscript reaches keeps what the buffer last
+  // said, so opening an unrelated file neither drops the root's \appendix
+  // nor brings back a stale line for it. (Declared before the effect that
+  // records the open buffer, so it still sees the one being left.)
+  const openBufferRef = useRef<{ owner: string; path: string; text: string } | null>(null);
+  useEffect(() => {
+    const left = openBufferRef.current;
+    if (!left || left.path === activeFile || left.owner !== projectRoot) return;
+    setRetained((current) => {
+      const base = current.owner === left.owner ? current : { owner: left.owner, sources: NO_SOURCES, unreadable: NO_PATHS };
+      if (base === current && base.sources[left.path] === left.text && !base.unreadable.includes(left.path)) return current;
+      return {
+        owner: left.owner,
+        sources: { ...base.sources, [left.path]: left.text },
+        unreadable: base.unreadable.filter((path) => path !== left.path),
+      };
+    });
+  }, [activeFile, projectRoot]);
+  useEffect(() => {
+    openBufferRef.current = activeTexSource != null && Object.hasOwn(manuscript.sources, activeFile)
+      ? { owner: projectRoot, path: activeFile, text: activeTexSource }
+      : null;
+  }, [activeFile, activeTexSource, manuscript, projectRoot]);
+
+  const parsedOutline = useMemo(() => {
+    if (!rootDocumentPath) return [];
+    return parseProjectOutline(rootDocumentPath, liveSources, projectPaths);
+  }, [liveSources, projectPaths, rootDocumentPath]);
+  // The outline is parsed again on every keystroke a short buffer takes, but
+  // what it lists changes only when a heading does (or moves to another
+  // line). Keeping the last one while it lists the same headings spares what
+  // shows it, the PDF viewer among them, a render per keystroke.
+  const [outlineNodes, setOutlineNodes] = useState(parsedOutline);
+  if (outlineNodes !== parsedOutline && !sameOutline(outlineNodes, parsedOutline)) setOutlineNodes(parsedOutline);
+  const liveReferences = useMemo(() => (
+    activeTexSource == null ? references : mergeReferences(references, activeFile, parseLocalLabels(activeFile, activeTexSource))
+  ), [activeFile, activeTexSource, references]);
+  const activeOutlineId = useMemo(() => {
+    if (!activeFile.endsWith(".tex") || !editorPosition) return null;
+    return activeOutlineNode(outlineNodes, activeFile, editorPosition.line)?.id ?? null;
+  }, [activeFile, editorPosition, outlineNodes]);
+  const macroSources = useMemo(() => Object.values(liveSources), [liveSources]);
+  const macros = useMemo(() => parseLocalMacros(macroSources), [macroSources]);
+  const graphicsRoots = useMemo(() => parseGraphicsPaths(macroSources), [macroSources]);
+  const katexMacros = useMemo(() => katexMacrosFromSources(macroSources), [macroSources]);
+  // TODOs come from .md buffers too (todo_source_path on the Rust side), so
+  // this cannot ride the .tex-only scalar above. The rescan only visits
+  // candidate lines, so it runs in the render that changes the settled text:
+  // deferring it with useDeferredValue re-rendered all of App a second time
+  // per keystroke.
+  const todoHits = useMemo(
+    () => mergeTodosWithBuffer(diskTodos, activeFile, settledSource),
+    [activeFile, diskTodos, settledSource],
+  );
+
+  // What the body is read from, up to where it ends (its appendix or
+  // references), as one string rather than the spans themselves. The source
+  // map behind it is rebuilt on every keystroke, so keying the SyncTeX count
+  // on the map spent an IPC round trip per character typed while a build was
+  // on screen. The spans only change when someone edits above the body's end.
+  // Only the manuscript's own files: an unrelated .tex open in the editor has
+  // no say in where this PDF's main body ends.
+  const bodyEnd = useMemo(
+    () => findBodyEnd(rootDocumentPath, manuscript.sources, projectPaths, MAX_INCLUDE_DEPTH),
+    [manuscript, projectPaths, rootDocumentPath],
+  );
+  const bodySpans = Array.isArray(bodyEnd) ? JSON.stringify(bodyEnd) : "";
+  // SyncTeX's last answer: the main body's page count, or null when it found
+  // none of the body in the PDF (or the count failed). A rebuild keeps the
+  // last answer until the next one arrives, so the count does not flicker.
+  // The answer belongs to one project and body, and only shows while they
+  // are current; it is dropped once the PDF goes away. Leaving a file of the
+  // manuscript hides its text for a render, until the effect below keeps it:
+  // the answer outlasts that, and is not asked again for the same PDF.
+  const placementOwner = `${project?.root ?? ""}\n${bodySpans}`;
+  const [bodyPlacement, setBodyPlacement] = useState<{
+    owner: string;
+    pdf: string;
+    mainPages: number | null;
+  } | null>(null);
+  if (bodyPlacement && !compiledPdf) setBodyPlacement(null);
+  const placementCurrent = bodyPlacement?.owner === placementOwner;
+  const placedInPdf = placementCurrent && bodyPlacement?.pdf === compiledPdf;
+  useEffect(() => {
+    if (!compiledPdf || !bodySpans || placedInPdf) return;
+    let cancelled = false;
+    void invoke<number | null>("synctex_body_pages", { spans: JSON.parse(bodySpans) as BodySpan[] })
+      .then((pages) => pages ?? null, () => null)
+      .then((mainPages) => {
+        if (cancelled) return;
+        setBodyPlacement({ owner: placementOwner, pdf: compiledPdf, mainPages });
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [bodySpans, compiledPdf, placedInPdf, placementOwner]);
+  const bodyBoundary = useMemo((): BodyBoundary => {
+    if (bodyEnd === "unread") return UNREAD_BODY_END;
+    if (!bodyEnd) return manuscript.complete ? NO_BODY_END : UNREAD_BODY_END;
+    const mainPages = compiledPdf && placementCurrent ? bodyPlacement?.mainPages : null;
+    return mainPages == null ? UNRESOLVED_BODY_END : { kind: "resolved", mainPages };
+  }, [bodyEnd, bodyPlacement, compiledPdf, manuscript.complete, placementCurrent]);
+
+  /** Included files follow a rename or move. */
+  const remapIncludedSources = useCallback((remap: (path: string) => string) => {
+    setRetained((current) => ({
+      owner: current.owner,
+      sources: Object.fromEntries(Object.entries(current.sources).map(([path, content]) => [remap(path), content])),
+      unreadable: current.unreadable.map(remap),
+    }));
+  }, []);
+  /** Forget what the included files said (a rename rewrote them on disk); the outline reads them again. */
+  const forgetIncludedSources = useCallback(
+    () => setRetained((current) => ({ owner: current.owner, sources: NO_SOURCES, unreadable: NO_PATHS })),
+    [],
+  );
+
+  return {
+    projectPaths, rootDocumentPath, outlineNodes, activeOutlineId, liveReferences, macros, graphicsRoots, katexMacros,
+    todoHits, bodyBoundary, remapIncludedSources, forgetIncludedSources,
+  };
+}

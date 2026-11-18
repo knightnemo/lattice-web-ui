@@ -1,0 +1,90 @@
+import { beforeEach, expect, it, vi } from "vitest";
+import { invoke } from "@tauri-apps/api/core";
+import { activateAppLocale } from "../i18n";
+import { loadAuditReport, saveAuditReport, type AuditReport } from "./bibliography-audit-storage";
+
+vi.mock("@tauri-apps/api/core", () => ({ invoke: vi.fn() }));
+const report: AuditReport = [["refs.bib\0paper", {
+  snapshot: "@article{paper}", applied: true,
+  result: { status: "checked", message: "Checked", before: "@article{paper}", changes: [], checkedAt: "2026-09-06T16:37:27.014Z" },
+}]];
+let disk: Map<string, AuditReport>;
+beforeEach(() => {
+  localStorage.clear(); disk = new Map();
+  vi.mocked(invoke).mockReset().mockImplementation(async (command, args) => {
+    const { projectRoot, report } = args as { projectRoot: string; report: AuditReport };
+    if (command === "bibliography_audit_report_load") return disk.get(projectRoot) ?? null;
+    if (command === "bibliography_audit_report_save") { disk.set(projectRoot, report); return; }
+    throw new Error(`Unexpected remote check: ${command}`);
+  });
+});
+
+it("restores native results after WebView storage is cleared, over stale legacy data, and isolates projects", async () => {
+  await saveAuditReport("/project", report);
+  localStorage.clear();
+  vi.mocked(invoke).mockClear();
+  expect(await loadAuditReport("/project")).toEqual(new Map(report));
+  expect(invoke).toHaveBeenCalledTimes(1);
+  expect(invoke).toHaveBeenCalledWith("bibliography_audit_report_load", { projectRoot: "/project" });
+  localStorage.setItem("lattice.bibliography-audit.v1:/project", "[]");
+  expect(await loadAuditReport("/project")).toEqual(new Map(report));
+  expect(await loadAuditReport("/other")).toEqual(new Map());
+  await saveAuditReport("/project", []);
+  localStorage.setItem("lattice.bibliography-audit.v1:/project", JSON.stringify(report));
+  expect(await loadAuditReport("/project")).toEqual(new Map());
+});
+
+// Legacy WebView reports predate independent identity checks: never restored, never rewritten.
+it.each([JSON.stringify(report), "broken JSON"])("ignores legacy browser storage %s", async legacy => {
+  localStorage.setItem("lattice.bibliography-audit.v1:/project", legacy);
+  expect(await loadAuditReport("/project")).toEqual(new Map());
+  expect(invoke).toHaveBeenCalledTimes(1);
+  expect(localStorage.getItem("lattice.bibliography-audit.v1:/project")).toBe(legacy);
+});
+
+it("rejects malformed native data without overwriting it, in the active app locale", async () => {
+  vi.mocked(invoke).mockResolvedValue({ broken: true });
+  await expect(loadAuditReport("/project")).rejects.toThrow("Invalid saved");
+  expect(invoke).toHaveBeenCalledTimes(1);
+  await activateAppLocale("zh-CN");
+  try {
+    await expect(loadAuditReport("/project")).rejects.toThrow("已保存的参考文献审查报告格式无效。");
+  } finally {
+    await activateAppLocale("en");
+  }
+});
+
+it.each([
+  { bibtex: 4, changes: [], reasons: [] },
+  { bibtex: "@article{x}", changes: {}, reasons: [] },
+  { bibtex: "@article{x}", changes: [{ field: "title", before: "Old" }], reasons: [] },
+  { bibtex: "@article{x}", changes: [], reasons: ["title", 4] },
+])("rejects a malformed candidate payload: $candidate", async candidate => {
+  vi.mocked(invoke).mockResolvedValue([["refs.bib\0paper", {
+    ...report[0][1], result: { ...report[0][1].result, candidate },
+  }]]);
+  await expect(loadAuditReport("/project")).rejects.toThrow("Invalid saved");
+});
+
+it("restores a well-formed rejected candidate", async () => {
+  const candidate = { bibtex: "@article{candidate}", changes: [{ field: "title", before: "Old", after: "New" }], reasons: ["title"] };
+  const candidateReport: AuditReport = [[report[0][0], { ...report[0][1], result: { ...report[0][1].result, candidate } }]];
+  vi.mocked(invoke).mockResolvedValue(candidateReport);
+  expect(await loadAuditReport("/project")).toEqual(new Map(candidateReport));
+});
+
+it("orders pending writes and waits for them before restoring", async () => {
+  let finish!: () => void;
+  vi.mocked(invoke).mockImplementationOnce(() => new Promise<void>(resolve => { finish = resolve; }));
+  const first = saveAuditReport("/project", report);
+  await vi.waitFor(() => expect(invoke).toHaveBeenCalledTimes(1));
+  const second = saveAuditReport("/project", []);
+  const restored = loadAuditReport("/project");
+  expect(invoke).toHaveBeenCalledTimes(1);
+  finish();
+  await Promise.all([first, second]);
+  expect(await restored).toEqual(new Map());
+  expect(vi.mocked(invoke).mock.calls.map(([command]) => command)).toEqual([
+    "bibliography_audit_report_save", "bibliography_audit_report_save", "bibliography_audit_report_load",
+  ]);
+});

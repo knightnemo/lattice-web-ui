@@ -1,0 +1,80 @@
+{
+  "scenarios": {
+    "startup": {
+      "commits": 32,
+      "renders": 2102,
+      "hooks": 13798
+    },
+    "latex-typing": {
+      "renders": 4702,
+      "hooks": 53912,
+      "mutations": 378
+    },
+    "long-tex-typing": {
+      "renders": 2957,
+      "hooks": 33980,
+      "mutations": 195
+    },
+    "markdown-source-typing": {
+      "commits": 60,
+      "renders": 4240,
+      "hooks": 51573,
+      "mutations": 318
+    },
+    "markdown-visual-typing": {
+      "commits": 39,
+      "mutations": 70
+    },
+    "file-switch": {
+      "commits": 44,
+      "renders": 2919,
+      "hooks": 26938,
+      "mutations": 6760
+    },
+    "code-highlight": {
+      "commits": 83,
+      "renders": 9566,
+      "hooks": 111298
+    },
+    "pdf-open": {
+      "commits": 15,
+      "renders": 705,
+      "hooks": 4282,
+      "mutations": 346
+    },
+    "pdf-scroll": {
+      "commits": 22,
+      "renders": 905,
+      "hooks": 11274
+    },
+    "pdf-zoom": {
+      "commits": 9,
+      "renders": 33,
+      "hooks": 464,
+      "mutations": 455
+    },
+    "source-scroll": {
+      "commits": 6,
+      "renders": 6,
+      "hooks": 14
+    },
+    "markdown-preview-scroll": {},
+    "dialog-open": {
+      "commits": 25,
+      "renders": 1671,
+      "hooks": 17856,
+      "mutations": 557
+    },
+    "compile": {
+      "commits": 16,
+      "renders": 711,
+      "hooks": 6591,
+      "mutations": 137
+    },
+    "tab-drag": {
+      "commits": 69,
+      "renders": 2171,
+      "hooks": 15422
+    }
+  }
+}

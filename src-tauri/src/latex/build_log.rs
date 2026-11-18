@@ -1,0 +1,672 @@
+//! Reading latexmk's log: diagnostics for the editor, and a trimmed copy for
+//! the Log tab.
+
+use crate::models::{Diagnostic, MessageParams};
+use regex::{Captures, Regex};
+
+/// Warnings every multi-pass build prints on its way to converging, or that
+/// are never actionable. Matched case-insensitively anywhere in the message.
+const PASS_NOISE: [&str; 8] = [
+    "rerun to get",
+    "may have changed",
+    "there were undefined citations",
+    "there were undefined references",
+    // Fresh / empty projects always trip this; not actionable until a .bib entry exists.
+    "empty `thebibliography'",
+    "empty thebibliography",
+    // Default Lattice builds use -no-shell-escape; epstopdf always complains.
+    "shell escape feature is not enabled",
+    // hyperref fires this for every \section without a label. Nothing to act
+    // on, and a normal paper produces one per heading.
+    "ignoring empty anchor",
+];
+
+/// Conference template styles by file-name prefix. They are not on CTAN —
+/// `tlmgr install` can never provide them — because their author kits ship
+/// them in the project folder.
+const CONFERENCE_STYLES: [(&str, &str); 5] = [
+    ("neurips", "NeurIPS"),
+    ("nips", "NeurIPS"),
+    ("icml", "ICML"),
+    ("iclr", "ICLR"),
+    ("cvpr", "CVPR"),
+];
+
+pub(super) fn diagnostic(
+    file: Option<String>, line: Option<u32>, level: &str, message: String,
+) -> Diagnostic {
+    let level = level.to_string();
+    let (column, end_line, end_column, code, params) =
+        (None, None, None, None, MessageParams::new());
+    Diagnostic { file, line, column, end_line, end_column, level, message, code, params }
+}
+
+/// Lattice's own explanation of a failed build: `message` in English, and
+/// `code` with `params` for the interface to translate
+/// (src/build/build-log-messages.ts).
+pub(super) fn advice(
+    level: &str, code: &'static str, params: &[(&'static str, &str)], message: String,
+) -> Diagnostic {
+    let mut advice = diagnostic(None, None, level, message);
+    advice.code = Some(code);
+    advice.params = params.iter().map(|(name, value)| (*name, value.to_string())).collect();
+    advice
+}
+
+/// latexmk's answer when the PDF is already current.
+pub(super) fn skipped_recompile(log: &str) -> bool {
+    let lower = log.to_ascii_lowercase();
+    // latexmk ends a run that did typeset with "All targets … are up-to-date"
+    // too; only a run that applied no rule skipped.
+    !lower.contains("applying rule")
+        && (lower.contains("nothing to do") || lower.contains("up-to-date"))
+}
+
+pub(super) fn is_stale_previous_invocation_log(log: &str) -> bool {
+    let lower = log.to_ascii_lowercase();
+    lower.contains("error in previous invocation")
+        || (lower.contains("nothing to do") && lower.contains("gave an error in previous"))
+}
+
+pub(crate) fn is_pass_noise_warning(message: &str) -> bool {
+    let lower = message.to_ascii_lowercase();
+    PASS_NOISE.iter().any(|phrase| lower.contains(phrase))
+}
+
+/// The conference whose template this build loaded, by its display name.
+///
+/// The log names every style it reads, so the document that was actually
+/// typeset answers this — the project manifest cannot. A project created as
+/// NeurIPS holds whatever its author later writes in it, including documents
+/// that are not submissions at all.
+pub(super) fn log_conference_template(log: &str) -> Option<&'static str> {
+    Regex::new(r"[A-Za-z0-9_\-]+\.sty")
+        .unwrap()
+        .find_iter(&unwrap_log_lines(log))
+        .find_map(|style| conference_template_venue(style.as_str()))
+}
+
+/// TeX breaks every log line at 79 characters, mid-path included, so
+/// `(./iclr2027/iclr2027_conference.sty` can reach the log as `…confe` and
+/// `rence.sty`. Rejoin each full-width line with the next.
+pub(crate) fn unwrap_log_lines(log: &str) -> String {
+    let mut joined = String::with_capacity(log.len());
+    for line in log.lines() {
+        joined.push_str(line);
+        if line.len() != 79 {
+            joined.push('\n');
+        }
+    }
+    joined
+}
+
+/// How many pages the last pass wrote: TeX ends its log with `Output written
+/// on main.pdf (4 pages, 123456 bytes).` (a `.xdv` under XeLaTeX).
+pub(super) fn pages_written(tex_log: &str) -> Option<u32> {
+    let written = Regex::new(r"Output written on .+? \((\d+) pages?\b").unwrap();
+    let log = unwrap_log_lines(tex_log);
+    written.captures_iter(&log).last().and_then(|captures| captures[1].parse().ok())
+}
+
+pub(super) fn conference_template_venue(name: &str) -> Option<&'static str> {
+    let lower = name.to_ascii_lowercase();
+    CONFERENCE_STYLES.iter().find(|(prefix, _)| lower.starts_with(prefix)).map(|(_, venue)| *venue)
+}
+
+pub(super) fn parse_diagnostics(log: &str) -> Vec<Diagnostic> {
+    // Latexmk concatenates every pass; first-pass "undefined citation/ref" noise
+    // should not inflate the warning count after a successful final run.
+    let log = last_typeset_pass(log);
+    // Any file TeX reads can be where it stopped: a `.bbl` holding an
+    // unescaped `&` from the `.bib`, a `.tikz`, a `.def`.
+    let file_line = Regex::new(&format!(r"(?m)^{LOG_FILE}:(\d+):\s*(.+)$")).unwrap();
+    let warning_on_line = Regex::new(&format!(
+        r"(?m)^{LOG_FILE}:(\d+):\s*(?:Package|LaTeX|Class) .+? Warning:\s*(.+)$"
+    ))
+    .unwrap();
+    let warning = Regex::new(r"(?m)^(?:LaTeX|Package .+?) Warning:\s*(.+)$").unwrap();
+    let missing_command =
+        Regex::new(r"(?m)^(?:sh:\s*)?([A-Za-z0-9_+.-]+): command not found$").unwrap();
+    let missing_dependency = Regex::new(
+        r"(?m)(?:!\s*)?LaTeX Error: File [`']([^`']+\.(?:sty|cls|bst|bbx|cbx))[`'] not found\.",
+    )
+    .unwrap();
+    let located = |capture: &Captures, level: &str| {
+        let file = Some(normalize_log_path(&capture[1]));
+        diagnostic(file, capture[2].parse().ok(), level, capture[3].trim().to_string())
+    };
+
+    let mut diagnostics: Vec<Diagnostic> = file_line
+        .captures_iter(log)
+        .take(40)
+        .map(|capture| {
+            let warns = capture[3].to_ascii_lowercase().contains("warning");
+            located(&capture, if warns { "warning" } else { "error" })
+        })
+        .collect();
+    for capture in warning_on_line.captures_iter(log).take(40) {
+        push_unique(&mut diagnostics, located(&capture, "warning"));
+    }
+    for error in prompt_errors(log) {
+        if !missing_dependency.is_match(&error.message) {
+            push_unique(&mut diagnostics, error);
+        }
+    }
+    let missing_tool = missing_command.captures(log).map(|capture| {
+        let tool = &capture[1];
+        let message = format!(
+            "The LaTeX tool '{tool}' was not found. Install MacTeX or TeX Live, then restart Lattice."
+        );
+        advice("error", "latex-tool-missing", &[("tool", tool)], message)
+    });
+    let missing_file =
+        missing_dependency.captures(log).map(|capture| missing_dependency_advice(&capture[1]));
+    let stale = is_stale_previous_invocation_log(log).then(|| {
+        let message = "Stale failed build. Use Clean rebuild (Shift-click Build), or delete aux files and build again.";
+        advice("error", "stale-build", &[], message.to_string())
+    });
+    for advice in [missing_tool, missing_file, rc_file_failure(log), stale].into_iter().flatten() {
+        push_unique(&mut diagnostics, advice);
+    }
+    for capture in warning.captures_iter(log).take(40) {
+        let message = capture[1].trim();
+        if !is_pass_noise_warning(message) {
+            push_unique(&mut diagnostics, diagnostic(None, None, "warning", message.to_string()));
+        }
+    }
+    // The same noise warnings also arrive with a `file:line:` prefix through
+    // the other two patterns, so filter once at the end to cover every
+    // producer. LaTeX's terminal boilerplate goes too: the preceding error is
+    // the actionable cause, while "Emergency stop" only says compilation ended.
+    diagnostics.retain(|diagnostic| {
+        let lower = diagnostic.message.trim().to_ascii_lowercase();
+        let terminal_error = lower == "emergency stop."
+            || ["fatal error occurred", "no output pdf file produced", "==> fatal error occurred"]
+                .iter()
+                .any(|boilerplate| lower.starts_with(boilerplate));
+        !terminal_error
+            && (diagnostic.level == "error" || !is_pass_noise_warning(&diagnostic.message))
+    });
+    super::cjk_text::explain_cjk_text(log, &mut diagnostics);
+    super::engine_mismatch::explain_pdftex_only_commands(log, &mut diagnostics);
+    diagnostics
+}
+
+/// A file TeX names in its log, `./main.tex` or `../shared/macros.tex`.
+const LOG_FILE: &str = r"([^\n:]+\.[A-Za-z0-9]+)";
+
+/// Errors TeX raises at its own prompt, such as an `\input` file that does not
+/// exist: `! LaTeX Error: File `intro.tex' not found.` has no location even
+/// under `-file-line-error`, so it was dropped, and with it the only error a
+/// failed build had. Nonstop mode ends the run there, with an
+/// `./main.tex:4: Emergency stop.` that names where it happened.
+fn prompt_errors(log: &str) -> Vec<Diagnostic> {
+    let prompt = Regex::new(r"(?m)^! (.+)$").unwrap();
+    let stop = Regex::new(&format!(r"(?m)^{LOG_FILE}:(\d+): Emergency stop\.$")).unwrap();
+    let errors = prompt.captures_iter(log).filter_map(|capture| {
+        let after = &log[capture.get(0)?.end()..];
+        let before_next = prompt.find(after).map_or(after.len(), |next| next.start());
+        let place = stop.captures(&after[..before_next])?;
+        let file = Some(normalize_log_path(&place[1]));
+        Some(diagnostic(file, place[2].parse().ok(), "error", capture[1].trim().to_string()))
+    });
+    errors.collect()
+}
+
+fn missing_dependency_advice(missing_file: &str) -> Diagnostic {
+    match conference_template_venue(missing_file) {
+        Some(venue) => advice(
+            "error",
+            "conference-style-missing",
+            &[("file", missing_file), ("venue", venue)],
+            format!(
+                "Missing style file `{missing_file}`. It is part of the {venue} template and belongs next to main.tex — TeX Live cannot install it. Sync or copy it back from another copy of the project."
+            ),
+        ),
+        None => advice(
+            "error",
+            "tex-dependency-missing",
+            &[("file", missing_file)],
+            format!(
+                "Missing LaTeX dependency `{missing_file}`. BasicTeX does not include every package available on Overleaf. Use Install missing package to find and install its TeX Live package."
+            ),
+        ),
+    }
+}
+
+/// latexmk runs a project's rc file before any engine pass, and a `die` there
+/// ends the build with only the rc's own output in the log: no LaTeX error,
+/// so the diagnostics list stayed empty and the raw dump was all anyone saw.
+fn rc_file_failure(log: &str) -> Option<Diagnostic> {
+    let rc_error = Regex::new(
+        r"(?m)^Latexmk: Initialization file '([^'\n]+)' gave an error:[ \t]*\n((?:[ \t]+\S[^\n]*\n?)*)",
+    )
+    .unwrap();
+    let capture = rc_error.captures(log)?;
+    Some(playwright_browser_missing(log).unwrap_or_else(|| {
+        let file = capture[1].trim_start_matches("./");
+        let reason = crate::util::collapse_whitespace(&capture[2]);
+        let reason = reason.trim_end_matches('.');
+        let message = if reason.is_empty() {
+            format!("latexmk stopped before LaTeX ran because {file} failed. The Log tab shows the output of the command it runs.")
+        } else {
+            format!("latexmk stopped before LaTeX ran because {file} failed: {reason}. The Log tab shows the output of the command it runs.")
+        };
+        advice("error", "latexmkrc-failed", &[("file", file), ("reason", reason)], message)
+    }))
+}
+
+/// Projects render figures from `.latexmkrc` with Playwright. Its browsers are
+/// a separate download per Playwright release, so an unpinned `playwright`
+/// dependency that resolves a new release fails with "Executable doesn't
+/// exist" until that release's browser is installed. Lattice runs latexmk with
+/// the user's HOME, so the lookup is the same `~/Library/Caches/ms-playwright`
+/// a Terminal build uses; the fix is the install Playwright asks for, run by
+/// the same Playwright, which the traceback's site-packages path identifies.
+fn playwright_browser_missing(log: &str) -> Option<Diagnostic> {
+    let missing = Regex::new(r"(?m)Executable doesn't exist at (.+?)\s*$").unwrap();
+    let executable = missing.captures(log)?.get(1)?.as_str();
+    let chromium_build = Regex::new(r"^chromium[a-z_]*-\d+$").unwrap();
+    // Match the browser directory only: the browsers directory can sit under a
+    // custom PLAYWRIGHT_BROWSERS_PATH whose own components look like `name-123`.
+    let needs_chromium = std::path::Path::new(executable)
+        .components()
+        .filter_map(|component| component.as_os_str().to_str())
+        .any(|component| chromium_build.is_match(component));
+    if !needs_chromium {
+        return None;
+    }
+    let python_env =
+        Regex::new(r#"File "([^"\n]+?)/lib/python[0-9.]+/site-packages/playwright/"#).unwrap();
+    let capture = python_env.captures(log)?;
+    let python = format!("{}/bin/python3", &capture[1]);
+    let command = format!("{} -m playwright install chromium", shell_word(&python));
+    let message = format!(
+        "The project's .latexmkrc runs Playwright, and the Chromium this Playwright version needs is not downloaded, so latexmk stopped before LaTeX ran. Run `{command}` in Terminal, then build again."
+    );
+    Some(advice("error", "playwright-chromium-missing", &[("command", &command)], message))
+}
+
+fn shell_word(value: &str) -> String {
+    if value.bytes().all(|byte| byte.is_ascii_alphanumeric() || b"/._+-@%=:,".contains(&byte)) {
+        value.to_string()
+    } else {
+        format!("'{}'", value.replace('\'', "'\"'\"'"))
+    }
+}
+
+/// The diagnostics of a build from the preamble format: what loading the
+/// preamble reported when the format was made, then the build's own, in the
+/// order one plain pass reports both.
+pub(super) fn parse_format_diagnostics(preamble_output: &str, log: &str) -> Vec<Diagnostic> {
+    let mut diagnostics = parse_diagnostics(preamble_output);
+    for diagnostic in parse_diagnostics(log) {
+        push_unique(&mut diagnostics, diagnostic);
+    }
+    diagnostics
+}
+
+fn last_typeset_pass(log: &str) -> &str {
+    let start = ["pdflatex", "xelatex", "lualatex", "latex"]
+        .iter()
+        .filter_map(|engine| log.rfind(&format!("Running '{engine}")))
+        .max()
+        .unwrap_or(0);
+    &log[start..]
+}
+
+fn push_unique(diagnostics: &mut Vec<Diagnostic>, candidate: Diagnostic) {
+    let duplicate = diagnostics.iter().any(|item| {
+        item.file == candidate.file
+            && item.line == candidate.line
+            && item.message == candidate.message
+    });
+    if !duplicate {
+        diagnostics.push(candidate);
+    }
+}
+
+pub(super) fn normalize_log_path(path: &str) -> String {
+    let trimmed = path.trim().trim_matches('"').replace('\\', "/");
+    let without_dot = trimmed.strip_prefix("./").unwrap_or(&trimmed);
+    match without_dot.rsplit_once("/./") {
+        Some((_, relative)) => relative.to_string(),
+        None => without_dot.to_string(),
+    }
+}
+
+pub(super) fn trim_log(log: &str) -> String {
+    const LIMIT: usize = 30_000;
+    // Drop latexmk's startup banner ("Rc files read: NONE", version, initial setup).
+    // It is not a Lattice warning and crowds the Log tab when something else is wrong.
+    let trimmed = strip_latexmk_preamble(log);
+    if trimmed.len() <= LIMIT {
+        return trimmed;
+    }
+    // Byte offsets, and a latexmk log is full of accented text and of U+FFFD
+    // from lossy decoding, so the cut has to be moved to a character boundary
+    // — landing inside one panicked after the PDF had already been read,
+    // losing a build that had in fact succeeded.
+    let start = trimmed.ceil_char_boundary(trimmed.len() - LIMIT);
+    format!("…\n{}", &trimmed[start..])
+}
+
+/// The log from the first engine banner on. A banner at the very start does
+/// not count; with none after it, the log starts at latexmk's first run.
+fn strip_latexmk_preamble(log: &str) -> String {
+    let start = ["This is pdfTeX", "This is XeTeX", "This is LuaTeX", "This is TeX", "LaTeX2e"]
+        .iter()
+        .filter_map(|marker| log.find(marker))
+        .filter(|index| *index > 0)
+        .min()
+        .or_else(|| log.find("Running '"))
+        .unwrap_or(0);
+    log[start..].trim_start().to_string()
+}
+
+/// The tail of the reported log (reproduced with a `.latexmkrc` that runs
+/// a uv script whose unpinned Playwright resolved 1.63.0, browsers absent).
+#[cfg(test)]
+pub(super) const PLAYWRIGHT_RC_FAILURE: &str = r#"Traceback (most recent call last):
+  File "/Users/me/paper/scripts/export_probe_pdfs.py", line 20, in main
+    browser = p.chromium.launch()
+  File "/Users/me/.cache/uv/environments-v2/export-probe-pdfs-d4814944139a86e2/lib/python3.13/site-packages/playwright/_impl/_connection.py", line 632, in wrap_api_call
+    raise rewrite_error(error, f"{parsed_st['apiName']}: {error}") from None
+playwright._impl._errors.Error: BrowserType.launch: Executable doesn't exist at /Users/me/Library/Caches/ms-playwright/chromium_headless_shell-1243/chrome-headless-shell-mac-arm64/chrome-headless-shell
+╔════════════════════════════════════════════════════════════╗
+║ Looks like Playwright was just installed or updated.       ║
+║ Please run the following command to download new browsers: ║
+║                                                            ║
+║     playwright install                                     ║
+╚════════════════════════════════════════════════════════════╝
+Latexmk: Initialization file './.latexmkrc' gave an error:
+     Probe SVG conversion failed
+
+Latexmk: Stopping because of problem with rc file
+"#;
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    const CONFERENCE_STYLE_FILES: [&str; 5] =
+        ["neurips.sty", "neurips_2026.sty", "icml2026.sty", "iclr2026_conference.sty", "cvpr.sty"];
+
+    /// The diagnostic that mentions `needle`, which must exist.
+    fn message_about(log: &str, needle: &str) -> String {
+        let diagnostics = parse_diagnostics(log);
+        let found = diagnostics.iter().find(|item| item.message.contains(needle));
+        found.unwrap_or_else(|| panic!("nothing about {needle} in {diagnostics:?}")).message.clone()
+    }
+
+    #[test]
+    fn explains_a_failing_latexmkrc_and_the_playwright_browser_it_needs() {
+        let diagnostics = parse_diagnostics(PLAYWRIGHT_RC_FAILURE);
+        assert_eq!(diagnostics.len(), 1, "{diagnostics:?}");
+        assert_eq!(diagnostics[0].level, "error");
+        assert!(diagnostics[0].message.contains("Chromium"), "{diagnostics:?}");
+        let environment = "/Users/me/.cache/uv/environments-v2/export-probe-pdfs-d4814944139a86e2";
+        // The same Playwright the rc ran, so the download matches build 1243;
+        // a path with spaces is quoted and a relocated browsers directory
+        // is still recognized.
+        let relocated = PLAYWRIGHT_RC_FAILURE
+            .replace("/Users/me/.cache/uv", "/Users/me/My Cache/uv")
+            .replace("/Users/me/Library/Caches", "/Volumes/build-2026");
+        for (log, python) in [
+            (PLAYWRIGHT_RC_FAILURE.to_string(), format!("{environment}/bin/python3")),
+            (relocated, format!("'{}/bin/python3'", environment.replace(".cache", "My Cache"))),
+        ] {
+            let message = &parse_diagnostics(&log)[0].message;
+            let command = format!("`{python} -m playwright install chromium`");
+            assert!(message.contains(&command), "{message}");
+        }
+
+        // Without Playwright, the rc file and its own error are named instead
+        // of leaving only the raw log.
+        let diagnostics = parse_diagnostics(
+            "Latexmk: Initialization file './.latexmkrc' gave an error:\n     \
+             Figure export failed\n\nLatexmk: Stopping because of problem with rc file\n",
+        );
+        assert_eq!(diagnostics.len(), 1, "{diagnostics:?}");
+        assert!(
+            diagnostics[0].message.contains(".latexmkrc failed: Figure export failed."),
+            "{diagnostics:?}"
+        );
+    }
+
+    #[test]
+    fn explains_missing_tools_and_dependencies() {
+        let diagnostics = parse_diagnostics("sh: pdflatex: command not found\n");
+        assert_eq!(diagnostics.len(), 1);
+        assert!(diagnostics[0].message.contains("pdflatex"));
+        // The interface translates Lattice's advice from its code and params.
+        assert_eq!(diagnostics[0].code, Some("latex-tool-missing"));
+        assert_eq!(diagnostics[0].params.get("tool").map(String::as_str), Some("pdflatex"));
+        let dependency = parse_diagnostics("! LaTeX Error: File `cvpr.sty' not found.\n");
+        assert_eq!(dependency[0].code, Some("conference-style-missing"));
+        assert_eq!(dependency[0].params.get("venue").map(String::as_str), Some("CVPR"));
+
+        // Packages, classes and bibliography styles are offered an install,
+        // named without the log's quotes.
+        for (log, missing) in [
+            ("! LaTeX Error: File `algorithm.sty' not found.\n", "algorithm.sty"),
+            ("./main.tex:3: LaTeX Error: File `acmart.cls' not found.\n", "acmart.cls"),
+            ("./main.tex:3: LaTeX Error: File `plainnat.bst' not found.\n", "plainnat.bst"),
+            ("./main.tex:3: LaTeX Error: File `authoryear.bbx' not found.\n", "authoryear.bbx"),
+            ("./main.tex:3: LaTeX Error: File `numeric.cbx' not found.\n", "numeric.cbx"),
+        ] {
+            let hint = message_about(log, "Missing LaTeX dependency");
+            assert!(hint.starts_with(&format!("Missing LaTeX dependency `{missing}`.")), "{hint}");
+            assert!(hint.contains("Install missing package"), "{hint}");
+        }
+
+        // Conference author-kit styles are not on CTAN; `tlmgr install neurips`
+        // fails and strands the user (they "installed everything" already).
+        for sty in CONFERENCE_STYLE_FILES {
+            let hint = message_about(&format!("! LaTeX Error: File `{sty}' not found.\n"), sty);
+            assert!(!hint.contains("Install missing package"), "no tlmgr for {sty}: {hint}");
+            assert!(hint.contains("next to main.tex"), "{sty} belongs in the project: {hint}");
+        }
+    }
+
+    #[test]
+    fn conference_font_expectations_only_apply_to_conference_documents() {
+        // A grant proposal that asks for Latin Modern on purpose.
+        let plain = "(./lambda_gpu_proposal.tex (/usr/local/texlive/2026basic/texmf-dist/tex/latex/lm/lmodern.sty\n\
+             (/usr/local/texlive/2026basic/texmf-dist/tex/latex/microtype/microtype.sty";
+        assert_eq!(log_conference_template(plain), None);
+        for style in CONFERENCE_STYLE_FILES {
+            let log = format!("(./main.tex (./{style}\nPackage: whatever\n");
+            assert!(log_conference_template(&log).is_some(), "{style} is a conference template");
+        }
+    }
+
+    #[test]
+    fn normalizes_file_paths_and_classifies_warnings() {
+        let diagnostics = parse_diagnostics(
+            "./chapters/intro.tex:12: Undefined control sequence.\n\
+             /Users/me/paper/./main.tex:40: Package natbib Warning: Citation undefined.\n\
+             LaTeX Warning: Reference `fig:x' on page 1 undefined.\n",
+        );
+        assert_eq!(diagnostics[0].file.as_deref(), Some("chapters/intro.tex"));
+        assert_eq!(diagnostics[0].level, "error");
+        assert_eq!(diagnostics[1].file.as_deref(), Some("main.tex"));
+        assert_eq!(diagnostics[1].level, "warning");
+        assert!(diagnostics.iter().any(|item| item.file.is_none() && item.level == "warning"));
+    }
+
+    fn located(diagnostics: &[Diagnostic]) -> Vec<(&str, Option<&str>, Option<u32>, &str)> {
+        diagnostics
+            .iter()
+            .map(|item| {
+                (item.level.as_str(), item.file.as_deref(), item.line, item.message.as_str())
+            })
+            .collect()
+    }
+
+    /// pdfLaTeX's terminal (TeX Live 2026, the build's own flags) for
+    /// `\input{nosuchfile}` on line 4 of main.tex.
+    const MISSING_INPUT: &str = "(./main.tex
+LaTeX2e <2025-11-01>
+(/usr/local/texlive/2026basic/texmf-dist/tex/latex/base/size10.clo)) (./main.aux)
+! LaTeX Error: File `nosuchfile.tex' not found.
+
+Type X to quit or <RETURN> to proceed,
+or enter new name. (Default extension: tex)
+
+Enter file name: 
+./main.tex:4: Emergency stop.
+<read *> 
+         
+l.4 \\input{nosuchfile}
+                      ^^M
+./main.tex:4:  ==> Fatal error occurred, no output PDF file produced!
+Transcript written on main.log.
+Latexmk: Missing input file 'nosuchfile.tex' message in .log file:
+  ! LaTeX Error: File `nosuchfile.tex' not found.
+";
+
+    #[test]
+    fn a_missing_input_file_is_an_error_where_it_was_input() {
+        // The build failed with nothing in the problem list.
+        assert_eq!(
+            located(&parse_diagnostics(&pass(MISSING_INPUT))),
+            [("error", Some("main.tex"), Some(4), "LaTeX Error: File `nosuchfile.tex' not found.")]
+        );
+        // A missing package keeps its install advice, and is not reported twice.
+        let package = MISSING_INPUT.replace("nosuchfile.tex", "algorithm.sty");
+        let diagnostics = parse_diagnostics(&pass(&package));
+        assert_eq!(diagnostics.len(), 1, "{diagnostics:?}");
+        assert_eq!(diagnostics[0].code, Some("tex-dependency-missing"));
+    }
+
+    #[test]
+    fn an_error_in_any_file_tex_reads_is_reported_where_it_is() {
+        // `title={Cats & Dogs}` in the .bib reaches TeX through the .bbl, and
+        // was reported only as "Citation undefined".
+        let log = pass(
+            "LaTeX Warning: Citation `cats' on page 1 undefined on input line 3.\n\
+             (./main.bbl\n\
+             ./main.bbl:5: Misplaced alignment tab character &.\n\
+             l.5 \\newblock Cats &\n\
+             ./main.bbl:5:  ==> Fatal error occurred, no output PDF file produced!\n\
+             ./figures/plot.tikz:12: Package pgf Error: No shape named `a' is known.\n",
+        );
+        let diagnostics = parse_diagnostics(&log);
+        let errors: Vec<_> =
+            located(&diagnostics).into_iter().filter(|item| item.0 == "error").collect();
+        assert_eq!(
+            errors,
+            [
+                ("error", Some("main.bbl"), Some(5), "Misplaced alignment tab character &."),
+                (
+                    "error",
+                    Some("figures/plot.tikz"),
+                    Some(12),
+                    "Package pgf Error: No shape named `a' is known."
+                ),
+            ]
+        );
+    }
+
+    /// A latexmk pdfLaTeX pass that printed `body`.
+    fn pass(body: &str) -> String {
+        format!("------------\nRunning 'pdflatex  -interaction=nonstopmode \"main.tex\"'\n------------\n{body}")
+    }
+
+    /// How a pass that typeset the PDF ends.
+    const TYPESET: &str =
+        "Output written on main.pdf (1 page, 54890 bytes).\nLatexmk: All targets (main.pdf) are up-to-date\n";
+
+    /// latexmk's startup banner, before its first pass.
+    const BANNER: &str = "Rc files read:\n  NONE\nLatexmk: This is Latexmk, John Collins, 31 Jan. 2024. Version 4.83.\n";
+
+    /// Logs whose every message is noise or terminal boilerplate.
+    #[test]
+    fn reports_nothing_for_noise_only_logs() {
+        let cases = [
+            (
+                "LaTeX's terminal boilerplate after the real error",
+                "./main.tex:8: Emergency stop.\n\
+                 ./main.tex:8:  ==> Fatal error occurred, no output PDF file produced!\n"
+                    .to_string(),
+            ),
+            (
+                "first-pass noise before a clean final run",
+                pass(
+                    "Package natbib Warning: Citation `lei2025scalability' on page 1 undefined on input line 22.\n\
+                     LaTeX Warning: Reference `fig:native-umm' on page 1 undefined on input line 24.\n\
+                     LaTeX Warning: There were undefined references.\n\
+                     Package rerunfilecheck Warning: File `main.out' has changed.\n\
+                     (rerunfilecheck)                Rerun to get outlines right\n",
+                ) + &pass(TYPESET),
+            ),
+            (
+                "a fresh BasicTeX NeurIPS template",
+                pass(&format!(
+                    "Package epstopdf Warning: Shell escape feature is not enabled.\n\
+                     Package natbib Warning: Empty `thebibliography' environment on input line 8.\n{TYPESET}"
+                )),
+            ),
+            (
+                "an empty bibliography after latexmk's banner",
+                BANNER.to_string() + &pass(&format!(
+                    "This is pdfTeX, Version 3.141592653-2.6-1.40.26\n\
+                     Package natbib Warning: Empty `thebibliography' environment on input line 8.\n{TYPESET}"
+                )),
+            ),
+            // hyperref reports this once per unlabelled heading, bare and
+            // prefixed with `file:line:`; the prefixed shape is parsed by a
+            // different pattern, which used to bypass the noise filter.
+            (
+                "hyperref empty anchors in both log shapes",
+                pass(&format!(
+                    "Package hyperref Warning: Ignoring empty anchor on input line 42.\n\
+                     ./main.tex:57: Package hyperref Warning: Ignoring empty anchor on input line 57.\n{TYPESET}"
+                )),
+            ),
+        ];
+        for (case, log) in cases {
+            let diagnostics = parse_diagnostics(&log);
+            assert!(diagnostics.is_empty(), "{case}: {diagnostics:?}");
+        }
+
+        // A real error that happens to mention a noise phrase still counts.
+        let log = pass(
+            "./main.tex:12: Undefined control sequence while ignoring empty anchor handling.\n",
+        );
+        let diagnostics = parse_diagnostics(&log);
+        assert_eq!(diagnostics.len(), 1, "got: {diagnostics:?}");
+        assert_eq!(diagnostics[0].level, "error");
+    }
+
+    #[test]
+    fn trims_latexmks_banner_and_keeps_the_tail_of_long_logs() {
+        let log = BANNER.to_string() + &pass("This is pdfTeX, Version 3.141592653-2.6-1.40.26\n");
+        assert!(trim_log(&log).starts_with("This is pdfTeX"));
+        // The cut lands inside a two-byte character and must move past it.
+        let long = trim_log(&format!("x{}z", "é".repeat(20_000)));
+        assert!(long.starts_with("…\né") && long.len() == "…\n".len() + 29_999, "{}", long.len());
+    }
+
+    #[test]
+    fn classifies_latexmk_run_summaries() {
+        // A PDF someone else built leaves latexmk with nothing to do; a run
+        // that actually typeset must not be repeated for SyncTeX.
+        let stale_log = "Latexmk: Nothing to do for 'main.tex'.\n\
+                         pdflatex: gave an error in previous invocation of latexmk.\n";
+        for (log, skipped, stale) in [
+            ("Latexmk: Nothing to do for 'main.tex'.", true, false),
+            ("Latexmk: All targets (main.pdf) are up-to-date\n", true, false),
+            (
+                "Latexmk: applying rule 'pdflatex'...\nLatexmk: All targets (main.pdf) are up-to-date\n",
+                false,
+                false,
+            ),
+            (stale_log, true, true),
+        ] {
+            let summary = (skipped_recompile(log), is_stale_previous_invocation_log(log));
+            assert_eq!(summary, (skipped, stale), "{log}");
+        }
+    }
+}

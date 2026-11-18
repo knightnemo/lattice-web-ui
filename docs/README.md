@@ -1,0 +1,70 @@
+# Lattice documentation
+
+Lattice is a local-first LaTeX and Markdown writing environment for macOS:
+a Tauri 2 (Rust) shell around a React 19 / TypeScript / Vite 8 frontend, with a
+bundled AI-agent sidecar (Synara) and Overleaf sync.
+
+## Start here
+
+Read in this order if you are new:
+
+1. [`../README.md`](../README.md) — what the product is, how to install and run it.
+2. [`../CONTRIBUTING.md`](../CONTRIBUTING.md) — how to set up a dev environment and get a change merged.
+3. **[`architecture.md`](architecture.md)** — the processes and windows (Rust host, WKWebView workspace window, Node sidecar) and what crosses each boundary; the Rust command surface; the on-disk `.research/` layout; the bundle and startup constraints; the design-system contract.
+4. **[`codebase-map.md`](codebase-map.md)** — "if you want to change X, start at Y"; how `src/` is split into domain directories and what stays at its root; one line per Rust module; the files that matter; the known rough edges.
+5. Then whichever subsystem doc below matches what you are touching.
+
+`../CLAUDE.md` is the always-loaded steering for AI coding agents: a few
+non-obvious gotchas plus pointers into these documents, starting with
+[`agent-validation.md`](agent-validation.md). Where it disagrees with
+`architecture.md`, the longer document usually has the fuller story — but do not treat a `path:line` citation as a tiebreaker on its
+own. Line numbers in `architecture.md` and `codebase-map.md` are spot-checked
+pointers, not guarantees, and they drift with every commit; the durable anchors
+are file names, function names and constant names. When it matters, grep.
+
+## Index
+
+| Document | What it covers | Status |
+| --- | --- | --- |
+| [`architecture.md`](architecture.md) | Process boundaries, the Rust backend, the on-disk data model, performance/bundle constraints, the design-system contract, the `pnpm check` gate. | Current |
+| [`codebase-map.md`](codebase-map.md) | Where to start for each feature area; directory inventory; domain decomposition of `src/`; the `src-tauri/src/` modules; the files that matter; known rough edges. | Current |
+| [`design-system.md`](design-system.md) | Typography, density, palette and spacing decisions — the reasoning behind the tokens that `src/styles/tokens.test.ts` enforces. | Current |
+| [`synara-runtime.md`](synara-runtime.md) | The bundled agent sidecar: how to work without building it, the runtime boundary, the tool catalog the model actually sees, staging and pruning, and the upstream-sync procedure for a pin change. | Current. Its tool-count figures are dated measurements — re-run the commands it gives rather than quoting them. |
+| [`synara-fork-ledger.md`](synara-fork-ledger.md) | What each Synara pin brought into the fork, the fork's size against upstream, and how the embedded panels behave against the current pin. | Current. Each pin change updates it; its fork-size figures are dated measurements. |
+| [`project-history-architecture.md`](project-history-architecture.md) | ADR 0001: why Project History is a merged semantic timeline over two stores (Lattice transactions in `.research/history` + agent turn checkpoints) rather than a third recovery format. | Accepted, and matches the code (history schema v2, forward-only restores linked by `undoOf`). |
+| [`markdown-structured-crdt-evaluation.md`](markdown-structured-crdt-evaluation.md) | ADR 0002: evaluation of a native structured-Markdown CRDT (`Y.XmlFragment`) as a replacement for canonical `Y.Text("content")`. Decision: **NO-GO**. | Historical. The prototype it evaluated (`src/editor/markdown/markdown-structured-crdt-prototype.ts`) was imported by nothing except its own test and has been deleted; the `Y.Text` model it compared against was removed with Lattice Shares. |
+| [`performance.md`](performance.md) | How to measure (the `pnpm perf:bench` interaction benchmark CI gates on, the `lattice-perf` dev-app probe, the real-window lab), the React Compiler status and open directions. | Current |
+| [`performance-history.md`](performance-history.md) | Every dated performance investigation, oldest first: what was slow, what changed, and the before/after tables `pnpm perf:evidence` recomputes. | Historical log. Its numbers are dated measurements; re-measure before quoting. |
+| [`agent-validation.md`](agent-validation.md) | For coding agents: proving a change, reading a failed check, the checkpoint/resume recipe, reading report evidence, and the review trigger. | Current |
+| [`driving-the-app.md`](driving-the-app.md) | Seeing the app run: the mock-backend page for UI work and screenshots, the website's demo, the browser-hosted real app, and the real-window measurement lab (`scripts/perf-lab.mjs`), with the `latticetest` isolation rules. | Current |
+| [`logging.md`](logging.md) | Where `lattice.log` lives, the one-line-per-operation wide events and their fields, reading them for a bug report, `LATTICE_LOG` for more detail, adding an event. | Current |
+| [`overleaf-protocol.md`](overleaf-protocol.md) | The Overleaf bridge: provenance ledger with pinned upstream commits, the license boundary, why the transport is Socket.IO **0.9**, the protocol and data invariants, the opt-in cloud tests, and what a wire-level change has to come with. | Current. Read it before touching `src/overleaf/` or `src-tauri/src/overleaf*.rs`. |
+| [`visual-editor-spec.md`](visual-editor-spec.md) | The clean-room behavioral specification of the visual Markdown editor, each requirement citing the Lattice test or format it came from, plus the design and status of Lattice's own engine (`src/editor/markdown/engine/`), which replaced the vendored Open Knowledge editor. | Frozen. Kept as the clean-room record behind the Apache-2.0 relicense and no longer edited to track the code; its `Derived from:` citations resolve at commit `c44f285a`, and retired requirements are marked obsolete in place. |
+| [`clean-room-provenance.md`](clean-room-provenance.md) | The record of the similarity (Dolos, copydetect) and provenance (ScanCode) scans run before the Apache-2.0 relicense: tools, settings, reference commit, scope, scores and the clean-room rules the rebuild followed. | Current. Historical record of the scans that cleared the relicense. |
+| [`adr/`](adr/README.md) | Architecture decision records — dated reasoning, including decisions that have expired. | Index at [`adr/README.md`](adr/README.md); [`adr/0003`](adr/0003-overleaf-stage-baseline.md) archives the Overleaf stage baseline and its lapsed contribution freeze. |
+| [`release-process.md`](release-process.md) | How a release is cut: `scripts/bump-version.mjs`, the tag push, what `.github/workflows/release.yml` builds, signs and publishes, and why GitHub Releases is the changelog. macOS Apple Silicon only. | Current |
+
+`overleaf-integration-baseline.md` was split. Its durable half — provenance,
+license boundary, protocol invariants, the upstream-reference procedure — is now
+[`overleaf-protocol.md`](overleaf-protocol.md). Its dated half — the Stage -1
+framing, the `f7515eca` baseline, the test and lint snapshots, and a
+protected-file freeze that lapsed without ever being announced — is archived as
+[`adr/0003-overleaf-stage-baseline.md`](adr/0003-overleaf-stage-baseline.md).
+
+`tldraw-integration-plan.md` was removed: it was a pre-implementation plan for
+work that has since shipped (the whiteboard is `src/editor/board/board-editor.tsx` +
+`src/editor/board/board-store.ts`), and its central file reference,
+`src/tldraw-yjs-bridge.ts`, never existed. tldraw's licensing — the one part of
+it that was still live — is covered by
+[`../THIRD_PARTY_NOTICES.md`](../THIRD_PARTY_NOTICES.md), which is more current
+than the plan was (the plan described SDK 4.x; the repo pins `tldraw@5.2.5`).
+
+## Related documents outside `docs/`
+
+| Path | Contents |
+| --- | --- |
+| [`../CODING_STANDARDS.md`](../CODING_STANDARDS.md) | Reviewer judgement no check enforces: transition ownership and performance-evidence comparability. |
+| [`../THIRD_PARTY_NOTICES.md`](../THIRD_PARTY_NOTICES.md) | Attribution and license notes for vendored and bundled third-party code. |
+| [`../LICENSE`](../LICENSE), [`../NOTICE`](../NOTICE) | Apache-2.0, with the tldraw SDK carved out under its own license. |
+| [`../literature-worker/README.md`](../literature-worker/README.md) | Checking the public literature proxy Worker; its operation is in [`public-literature-service.md`](public-literature-service.md). |
+| [GitHub Releases](https://github.com/leo1oel/lattice/releases) | **The changelog.** There is no `CHANGELOG.md`; each tag's release notes are generated from the commit range. See [`release-process.md`](release-process.md#where-the-changelog-lives). |

@@ -1,0 +1,10 @@
+# One pinned release for every machine and every CI job: CI installs exactly
+# this file (`rustup toolchain install`), so a local clippy sees the lints CI
+# fails on, and a new stable's lints can't turn every lane red overnight
+# (b67eb0ee). Bump the version in a PR of its own, with the clippy fixes it
+# needs; the release cache rebuilds when this file changes.
+[toolchain]
+channel = "1.99.1"
+profile = "minimal"
+components = ["clippy", "rustfmt"]
+targets = ["aarch64-apple-darwin"]

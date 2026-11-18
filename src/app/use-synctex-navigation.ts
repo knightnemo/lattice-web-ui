@@ -1,0 +1,191 @@
+import { useCallback, useEffect, useRef, useState, type RefObject } from "react";
+import { useLingui } from "@lingui/react/macro";
+import { invoke } from "@tauri-apps/api/core";
+import type { EditorPosition, PdfSyncResponse, SyncTexTarget, SyncTexWord } from "../app-types";
+import { toMessage } from "../app-utils";
+import type { PdfSyncTarget } from "../pdf/pdf-viewer";
+import type { TrellisController } from "../trellis/trellis-controller";
+import { useLatestRef } from "../hooks/use-latest-ref";
+import { showError, showWarning, showingErrors } from "./notify";
+import type { useBuildPipeline } from "./use-build-pipeline";
+import type { OpenDocuments } from "./use-open-documents";
+
+export type SyncTexNavigationDeps = {
+  documents: Pick<OpenDocuments,
+    "file" | "asset" | "text" | "savedText" | "live" | "openFile" | "save" | "scope" | "reveal">;
+  captureProjectScope: () => () => boolean;
+  /** Where the editor's caret is (the ref is current between renders). */
+  editorPosition: EditorPosition | null;
+  editorPositionRef: RefObject<EditorPosition | null>;
+  build: Pick<ReturnType<typeof useBuildPipeline>, "pdfUrl" | "ensureCompiled">;
+  trellis: TrellisController;
+};
+
+/**
+ * Jumping between the LaTeX source and the PDF through SyncTeX: from the
+ * editor's caret (or an outline entry) to its place in the PDF, and from a
+ * double-click in the PDF to its source line. A jump is dropped when the
+ * writer moves the caret, opens something else or switches projects before
+ * it lands; the PDF panel comes back on screen for a forward jump.
+ */
+export function useSyncTexNavigation(deps: SyncTexNavigationDeps) {
+  const { t } = useLingui();
+  const { documents, captureProjectScope, editorPosition, editorPositionRef, trellis } = deps;
+  const { file: activeFile, asset: activeAsset } = documents;
+  const { openFile, save, scope, reveal } = documents;
+  const { file: activeFileRef } = documents.live;
+  const { pdfUrl, ensureCompiled } = deps.build;
+  const forwardSyncGenerationRef = useRef(0);
+  const outlineSyncGenerationRef = useRef(0);
+  const inverseSyncGenerationRef = useRef(0);
+  const pdfUrlRef = useLatestRef(pdfUrl);
+  const [pdfSyncTarget, setPdfSyncTarget] = useState<PdfSyncTarget | null>(null);
+  const [locatingPdf, setLocatingPdf] = useState(false);
+
+  // Forward SyncTeX starts from a .tex caret in the editor, not a preview or an
+  // asset. The document's view mode does not matter: the PDF is a panel of its
+  // own, which the jump brings on screen (see the effect below). Gating on
+  // Split or PDF disabled the jump for good once the shared mode was Edit, as
+  // the guided tutorial leaves it and choosing Edit for a Markdown file or a
+  // Paper does, and a LaTeX file has no view switch to set it back.
+  const forwardSyncPosition = editorPosition && pdfUrl && editorPosition.path.toLocaleLowerCase().endsWith(".tex")
+    && !activeAsset && editorPosition.path === activeFile
+    ? editorPosition : null;
+  // Read when the jump starts rather than closed over: the caret moves with
+  // every keystroke, and a callback that changed with it re-rendered the PDF
+  // viewer it is handed to on every keystroke too.
+  const forwardSyncPositionRef = useLatestRef(forwardSyncPosition);
+
+  /**
+   * From the caret to its place in the PDF, saving first, and building when
+   * the PDF was compiled before the latest change to the project: SyncTeX
+   * answers in the lines the PDF was compiled from, so an older map sends
+   * the jump to whatever passage used to stand on the caret's line.
+   */
+  const revealSourceInPdf = useCallback(async () => {
+    const position = forwardSyncPositionRef.current;
+    if (!position || locatingPdf) return;
+    const requestGeneration = forwardSyncGenerationRef.current + 1;
+    forwardSyncGenerationRef.current = requestGeneration;
+    const ownsDocuments = scope();
+    const isCurrentRequest = () => (
+      forwardSyncGenerationRef.current === requestGeneration
+      && ownsDocuments()
+      && editorPositionRef.current?.path === position.path
+      && editorPositionRef.current?.line === position.line
+      && editorPositionRef.current?.column === position.column
+    );
+    setLocatingPdf(true);
+    const locate = async () => {
+      if (!(await save())) return;
+      if (!isCurrentRequest()) return;
+      const compiled = await ensureCompiled();
+      if (!isCurrentRequest()) return;
+      if (!compiled) {
+        showWarning(t`The PDF is not compiled from this source yet, so Lattice cannot find the line in it. Fix the build, then try again.`);
+        return;
+      }
+      const target = await invoke<PdfSyncResponse | null>("synctex_view", {
+        path: position.path,
+        line: position.line,
+        column: position.column,
+      });
+      if (!isCurrentRequest()) return;
+      // A jump SyncTeX cannot make is a warning.
+      if (!target) {
+        showWarning(t`This source line has no matching position in the PDF.`);
+        return;
+      }
+      setPdfSyncTarget({ ...target, id: crypto.randomUUID() });
+      reveal("pdf");
+    };
+    await locate().catch((reason: unknown) => {
+      if (!isCurrentRequest()) return;
+      const message = toMessage(reason);
+      if (message === "This bibliography entry is not included in the compiled PDF.") showWarning(message);
+      else showError(message);
+    }).finally(() => {
+      if (forwardSyncGenerationRef.current === requestGeneration) setLocatingPdf(false);
+    });
+  }, [
+    editorPositionRef, ensureCompiled, forwardSyncPositionRef, locatingPdf, reveal, save, scope, t,
+  ]);
+
+  /**
+   * Open an outline entry's line, then show the same place in the PDF when
+   * SyncTeX knows it, through a PDF compiled from the current source as for
+   * a jump from the caret.
+   */
+  const navigateOutline = useCallback(async (path: string, line: number) => {
+    const requestGeneration = outlineSyncGenerationRef.current + 1;
+    outlineSyncGenerationRef.current = requestGeneration;
+    const ownsProject = captureProjectScope();
+    const isCurrentRequest = (checkPosition = true) => (
+      outlineSyncGenerationRef.current === requestGeneration
+      && ownsProject()
+      && activeFileRef.current === path
+      && (!checkPosition || (
+        editorPositionRef.current?.path === path
+        && editorPositionRef.current?.line === line
+      ))
+    );
+    await openFile(path, { line });
+    if (!isCurrentRequest(false)) return;
+    // The editor's jump stands alone when no build can bring the PDF up to date.
+    // The caret is checked only once SyncTeX answers: with the PDF already
+    // current this resolves before the editor has applied the requested line.
+    if (!(await save()) || !isCurrentRequest(false) || !(await ensureCompiled()) || !isCurrentRequest(false)) return;
+    const target = await invoke<PdfSyncResponse | null>("synctex_view", { path, line, column: 0 })
+      // The source jump is still useful when this PDF has no SyncTeX map.
+      .catch(() => undefined);
+    if (target === undefined || !isCurrentRequest()) return;
+    if (target) setPdfSyncTarget({ ...target, id: crypto.randomUUID() });
+    reveal("pdf");
+  }, [activeFileRef, captureProjectScope, editorPositionRef, ensureCompiled, openFile, reveal, save]);
+
+  /**
+   * From a double-click in the PDF to its source line, and to the clicked
+   * word on it when that word is known and found there. The answer is a
+   * project-relative path, which a project opened meanwhile may have too, so
+   * it lands only while the click is the newest, its PDF is still the one on
+   * screen and nothing else was opened or chosen since.
+   */
+  const revealPdfSource = useCallback(async (page: number, x: number, y: number, word: SyncTexWord | null) => {
+    const requestGeneration = inverseSyncGenerationRef.current + 1;
+    inverseSyncGenerationRef.current = requestGeneration;
+    const ownsDocuments = scope();
+    const ownsProject = captureProjectScope();
+    const pdf = pdfUrlRef.current;
+    const isCurrentRequest = () => (
+      inverseSyncGenerationRef.current === requestGeneration && ownsDocuments() && pdfUrlRef.current === pdf
+    );
+    const target = await invoke<SyncTexTarget>("synctex_edit", { page, x, y }).catch((reason: unknown) => {
+      if (isCurrentRequest()) showError(toMessage(reason));
+      return null;
+    });
+    if (!target || !isCurrentRequest()) return;
+    // A citation resolves into the bibliography, a macro into a .sty. Those
+    // files own the whole editor area when opened deliberately, but a jump
+    // out of the PDF must keep the preview it was made from on screen.
+    // The word clicked lands the caret on it within that line, when the line
+    // can tell it apart (src/editor/latex/synctex-word.ts).
+    await showingErrors(() => openFile(target.path, { line: target.line, word, revealSource: false }));
+    // Opening is itself a newer choice, so only the project, the click and
+    // the file it opened decide whether the editor comes forward.
+    if (inverseSyncGenerationRef.current !== requestGeneration || !ownsProject() || activeFileRef.current !== target.path) return;
+    reveal("editor");
+  }, [activeFileRef, captureProjectScope, openFile, pdfUrlRef, reveal, scope]);
+
+  // A forward search needs the PDF panel on screen: reopen or reveal it.
+  useEffect(() => {
+    const ws = trellis.ws;
+    if (!ws || !pdfSyncTarget) return;
+    const pdf = ws.view("pdf");
+    if (!pdf || !pdf.visible) trellis.showPanel("pdf", { focus: false });
+  }, [pdfSyncTarget, trellis]);
+
+  return {
+    pdfSyncTarget, locatingPdf, canForwardSync: Boolean(forwardSyncPosition),
+    revealSourceInPdf, navigateOutline, revealPdfSource,
+  };
+}

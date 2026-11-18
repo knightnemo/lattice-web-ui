@@ -1,0 +1,369 @@
+name: Release
+
+# Push a version tag (e.g. v0.1.38) to build, sign, and publish a GitHub
+# Release for Apple Silicon macOS. tauri-action also generates latest.json,
+# which the in-app updater reads to offer updates to installed copies.
+on:
+  push:
+    tags:
+      - "v*"
+
+# tauri-action needs write access to create the Release and upload assets.
+permissions:
+  contents: write
+
+jobs:
+  release:
+    # macos-latest is Apple Silicon (arm64), which is all we target.
+    runs-on: macos-latest
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          # Release notes compare this tag with its nearest released ancestor.
+          fetch-depth: 0
+
+      - name: Prepare version-specific release notes
+        id: release-notes
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+
+          notes_path="$RUNNER_TEMP/release-notes.md"
+          previous_tag=""
+          while IFS= read -r candidate; do
+            if git rev-parse --verify --quiet "$candidate^{commit}" >/dev/null && \
+               git merge-base --is-ancestor "$candidate" "${GITHUB_REF_NAME}^"; then
+              previous_tag="$candidate"
+              break
+            fi
+          done < <(
+            gh api --paginate "repos/$GITHUB_REPOSITORY/releases?per_page=100" \
+              --jq '.[] | select(.draft == false and .prerelease == false) | .tag_name'
+          )
+          if [[ -n "$previous_tag" ]]; then
+            range="$previous_tag..$GITHUB_REF_NAME"
+          else
+            range="$GITHUB_REF_NAME"
+          fi
+
+          # A release that needs more than its commit subjects (a minor
+          # version's highlights, a migration, a warning) carries a
+          # hand-written lead in .github/release-notes/<tag>.md, reviewed in
+          # the version-bump pull request like any other change.
+          : > "$notes_path"
+          highlights_path=".github/release-notes/${GITHUB_REF_NAME}.md"
+          if [[ -f "$highlights_path" ]]; then
+            cat "$highlights_path" >> "$notes_path"
+            printf '\n' >> "$notes_path"
+          fi
+
+          printf '## Changes in %s\n\n' "$GITHUB_REF_NAME" >> "$notes_path"
+          change_count=0
+          while IFS=$'\t' read -r hash subject; do
+            # The version-only commit adds no useful information for users.
+            [[ "$subject" == "Release v"* ]] && continue
+            printf -- '- %s (`%s`)\n' "$subject" "$hash" >> "$notes_path"
+            ((change_count += 1))
+          done < <(
+            git log --reverse --no-merges --format=$'%h\t%s' "$range"
+          )
+          if ((change_count == 0)); then
+            printf -- '- Maintenance release.\n' >> "$notes_path"
+          fi
+
+          cat >> "$notes_path" <<'EOF'
+
+          ## Install (Apple Silicon Mac)
+
+          Download the **.dmg** below, open it, and drag Lattice to Applications.
+
+          Lattice is signed with an Apple Developer ID and notarized by Apple.
+
+          Already running Lattice? It updates itself automatically — no need to
+          re-download.
+          EOF
+
+          if [[ -n "$previous_tag" ]]; then
+            printf '\n**Full Changelog**: https://github.com/%s/compare/%s...%s\n' \
+              "$GITHUB_REPOSITORY" "$previous_tag" "$GITHUB_REF_NAME" \
+              >> "$notes_path"
+          fi
+
+          delimiter="LATTICE_RELEASE_NOTES_${GITHUB_RUN_ID}"
+          {
+            printf 'body<<%s\n' "$delimiter"
+            cat "$notes_path"
+            printf '%s\n' "$delimiter"
+          } >> "$GITHUB_OUTPUT"
+
+      - uses: pnpm/action-setup@v6
+        with:
+          version: 10
+
+      - uses: actions/setup-node@v7
+        with:
+          node-version: 22
+          cache: pnpm
+
+      - name: Read the minimum macOS version
+        id: macos-version
+        run: |
+          echo "value=$(node -p "require('./src-tauri/tauri.conf.json').bundle.macOS.minimumSystemVersion")" \
+            >> "$GITHUB_OUTPUT"
+
+      - uses: oven-sh/setup-bun@v2
+        with:
+          bun-version: 1.4.4
+
+      # Installs the Rust release rust-toolchain.toml pins, with its components and target.
+      - run: rustup toolchain install
+
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: src-tauri
+          # Restores the warm dependency build from release-cache.yml. The key
+          # includes the deployment target because Tauri sets it for the real
+          # Cargo build and artifacts compiled without it are not reusable.
+          shared-key: aarch64-apple-darwin-release-macos${{ steps.macos-version.outputs.value }}
+          # Anything saved here lands in this tag's scope, which no later
+          # release can read. Skip the upload; release-cache.yml owns writing.
+          save-if: false
+
+      - run: pnpm install --frozen-lockfile
+
+      - name: Prepare pinned Synara source
+        run: |
+          synara_repository="$(
+            node -p "require('./scripts/synara-runtime.json').repository"
+          )"
+          synara_revision="$(
+            node -p "require('./scripts/synara-runtime.json').revision"
+          )"
+          synara_source="$RUNNER_TEMP/lattice-synara"
+
+          git init "$synara_source"
+          git -C "$synara_source" remote add origin "$synara_repository"
+          git -C "$synara_source" fetch --depth=1 origin "$synara_revision"
+          git -C "$synara_source" checkout --detach FETCH_HEAD
+          test "$(git -C "$synara_source" rev-parse HEAD)" = "$synara_revision"
+
+          echo "BUN_BIN=$(command -v bun)" >> "$GITHUB_ENV"
+          echo "SYNARA_SOURCE_DIR=$synara_source" >> "$GITHUB_ENV"
+
+      # The interface fonts (Timeless, docs/design-system.md "Private interface
+      # fonts") may be embedded in the app but never published on their own, so
+      # they live in a private repository that this job alone reads, through a
+      # read-only deploy key. They land in the runner's temp directory, outside
+      # the workspace, and the build embeds them in the app's web assets. With
+      # no key (a fork) the release keeps the open-licensed fonts; with one, a
+      # failed fetch or an incomplete copy fails the release instead.
+      - name: Fetch the licensed interface fonts
+        env:
+          LATTICE_FONTS_DEPLOY_KEY: ${{ secrets.LATTICE_FONTS_DEPLOY_KEY }}
+        run: |
+          set -euo pipefail
+
+          if [[ -z "$LATTICE_FONTS_DEPLOY_KEY" ]]; then
+            echo "No fonts deploy key: building with the open-licensed interface fonts."
+            echo "LATTICE_PRIVATE_FONTS_DIR=" >> "$GITHUB_ENV"
+            exit 0
+          fi
+
+          ssh_dir="$(mktemp -d "$RUNNER_TEMP/lattice-fonts-ssh.XXXXXX")"
+          trap 'rm -rf "$ssh_dir"' EXIT
+          (umask 077 && printf '%s\n' "$LATTICE_FONTS_DEPLOY_KEY" > "$ssh_dir/deploy-key")
+          # GitHub's published ed25519 host key, so the clone cannot be
+          # redirected to another host.
+          echo "github.com ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIOMqqnkVzrm0SdG6UOoqKLsabgH5C9okWi0dh2l9GKJl" \
+            > "$ssh_dir/known_hosts"
+
+          fonts_checkout="$RUNNER_TEMP/lattice-fonts"
+          GIT_SSH_COMMAND="ssh -i $ssh_dir/deploy-key -o IdentitiesOnly=yes -o HostKeyAlgorithms=ssh-ed25519 -o UserKnownHostsFile=$ssh_dir/known_hosts -o StrictHostKeyChecking=yes" \
+            git clone --quiet --depth=1 git@github.com:leo1oel/lattice-fonts.git "$fonts_checkout"
+
+          echo "LATTICE_PRIVATE_FONTS_DIR=$fonts_checkout/Timeless-Type-Family-1.094" >> "$GITHUB_ENV"
+          # scripts/private-fonts.ts fails the build rather than falling back.
+          echo "LATTICE_PRIVATE_FONTS_REQUIRED=1" >> "$GITHUB_ENV"
+
+      - name: Import Apple Developer ID certificate
+        env:
+          APPLE_CERTIFICATE: ${{ secrets.APPLE_CERTIFICATE }}
+          APPLE_CERTIFICATE_PASSWORD: ${{ secrets.APPLE_CERTIFICATE_PASSWORD }}
+          KEYCHAIN_PASSWORD: ${{ secrets.KEYCHAIN_PASSWORD }}
+        run: |
+          certificate_path="$RUNNER_TEMP/apple-developer-certificate.p12"
+          keychain_path="$RUNNER_TEMP/lattice-signing.keychain-db"
+
+          printf '%s' "$APPLE_CERTIFICATE" | base64 --decode > "$certificate_path"
+          security create-keychain -p "$KEYCHAIN_PASSWORD" "$keychain_path"
+          security set-keychain-settings -lut 21600 "$keychain_path"
+          security unlock-keychain -p "$KEYCHAIN_PASSWORD" "$keychain_path"
+          security import "$certificate_path" \
+            -k "$keychain_path" \
+            -P "$APPLE_CERTIFICATE_PASSWORD" \
+            -T /usr/bin/codesign
+          security set-key-partition-list \
+            -S apple-tool:,apple:,codesign: \
+            -s \
+            -k "$KEYCHAIN_PASSWORD" \
+            "$keychain_path"
+          security list-keychains -d user -s "$keychain_path"
+
+          signing_identity="$(
+            security find-identity -v -p codesigning "$keychain_path" |
+              awk -F '"' '/Developer ID Application/ { print $2; exit }'
+          )"
+          test -n "$signing_identity"
+          echo "APPLE_SIGNING_IDENTITY=$signing_identity" >> "$GITHUB_ENV"
+
+      # Tag-scoped caches cannot be reused by later tags, so this is restore
+      # only. release-cache.yml builds and saves the unsigned runtime on main;
+      # prepare-synara-sidecar.mjs applies the current certificate after restore.
+      - name: Restore prepared Synara runtime
+        id: synara-runtime-cache
+        uses: actions/cache/restore@v5
+        with:
+          path: src-tauri/synara-runtime
+          key: synara-runtime-${{ runner.os }}-${{ runner.arch }}-${{ hashFiles('scripts/synara-runtime.json', 'scripts/synara-runtime-inputs.mjs', 'scripts/prepare-synara-sidecar.mjs', 'scripts/synara-codex-host.mjs', 'scripts/lib/*.mjs') }}
+
+      - name: Install pinned Synara dependencies after a cache miss
+        if: steps.synara-runtime-cache.outputs.cache-hit != 'true'
+        run: bun install --cwd "$SYNARA_SOURCE_DIR" --frozen-lockfile
+
+      - name: Prepare App Store Connect API key
+        env:
+          APPLE_API_KEY: ${{ secrets.APPLE_API_KEY }}
+          APPLE_API_PRIVATE_KEY: ${{ secrets.APPLE_API_PRIVATE_KEY }}
+        run: |
+          api_key_path="$RUNNER_TEMP/AuthKey_${APPLE_API_KEY}.p8"
+          printf '%s' "$APPLE_API_PRIVATE_KEY" > "$api_key_path"
+          chmod 600 "$api_key_path"
+          echo "APPLE_API_KEY_PATH=$api_key_path" >> "$GITHUB_ENV"
+
+      - name: Build, sign, and publish the release
+        uses: tauri-apps/tauri-action@v1
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          NODE_OPTIONS: --max-old-space-size=4096
+          APPLE_API_ISSUER: ${{ secrets.APPLE_API_ISSUER }}
+          APPLE_API_KEY: ${{ secrets.APPLE_API_KEY }}
+          # The updater signing key, stored as a repo secret (see setup guide).
+          TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
+          TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
+          # Shared Firecrawl key for webpage imports, baked into the binary at
+          # compile time (option_env! in firecrawl.rs). Extractable from the
+          # shipped app — acceptable for small-scale use, rotate on abuse.
+          LATTICE_FIRECRAWL_KEY: ${{ secrets.LATTICE_FIRECRAWL_KEY }}
+          # tldraw's license requires its key for production use; Vite inlines
+          # it into the board editor bundle. Without the secret the shipped
+          # whiteboard runs in tldraw's unlicensed, watermarked mode.
+          VITE_TLDRAW_LICENSE_KEY: ${{ secrets.VITE_TLDRAW_LICENSE_KEY }}
+        with:
+          tagName: ${{ github.ref_name }}
+          releaseName: "Lattice ${{ github.ref_name }}"
+          # Generated from the actual commit range so direct commits are listed
+          # too; GitHub's automatic notes only describe merged pull requests.
+          releaseBody: ${{ steps.release-notes.outputs.body }}
+          # Keep the release private until the signed artifacts pass Gatekeeper
+          # and notarization-ticket verification below.
+          releaseDraft: true
+          prerelease: false
+          # Generate and upload latest.json so the in-app updater can find updates.
+          uploadUpdaterJson: true
+          # Apple Silicon only. This makes the updater platform key darwin-aarch64.
+          args: --target aarch64-apple-darwin
+
+      # The fonts may only reach users inside the app's web assets, which the
+      # binary embeds. Check the built app before it is packaged any further: no
+      # file named for Timeless or a byte copy of one of its fonts, and no font
+      # at all outside the bundled open-licensed runtimes. Failing here leaves
+      # the release a draft.
+      - name: Check the built app for loose font files
+        run: node scripts/check-font-leaks.mjs app src-tauri/target/aarch64-apple-darwin/release/bundle/macos/Lattice.app
+
+      # Prints the signed app's installed size folder by folder and fails above
+      # the ceiling in scripts/app-size-report.mjs, so a runtime that grows
+      # leaves the release a draft instead of reaching users unnoticed.
+      - name: Check the installed app size
+        run: node scripts/app-size-report.mjs --app src-tauri/target/aarch64-apple-darwin/release/bundle/macos/Lattice.app
+
+      - name: Notarize the distributable disk image
+        env:
+          APPLE_API_ISSUER: ${{ secrets.APPLE_API_ISSUER }}
+          APPLE_API_KEY: ${{ secrets.APPLE_API_KEY }}
+        run: |
+          dmg_path="$(
+            find src-tauri/target/aarch64-apple-darwin/release/bundle/dmg \
+              -maxdepth 1 -name '*.dmg' -print -quit
+          )"
+
+          test -n "$dmg_path"
+          xcrun notarytool submit "$dmg_path" \
+            --key "$APPLE_API_KEY_PATH" \
+            --key-id "$APPLE_API_KEY" \
+            --issuer "$APPLE_API_ISSUER" \
+            --wait
+          xcrun stapler staple "$dmg_path"
+          echo "DMG_PATH=$dmg_path" >> "$GITHUB_ENV"
+
+      - name: Verify signed and notarized artifacts
+        run: |
+          codesign --verify --strict --verbose=2 "$DMG_PATH"
+          spctl --assess \
+            --type open \
+            --context context:primary-signature \
+            --verbose=4 \
+            "$DMG_PATH"
+          xcrun stapler validate "$DMG_PATH"
+
+          mount_path="$(mktemp -d "$RUNNER_TEMP/lattice-dmg.XXXXXX")"
+          hdiutil attach "$DMG_PATH" \
+            -nobrowse \
+            -readonly \
+            -mountpoint "$mount_path"
+          trap 'hdiutil detach "$mount_path"' EXIT
+
+          app_path="$(find "$mount_path" -maxdepth 1 -name '*.app' -print -quit)"
+          test -n "$app_path"
+          codesign --verify --deep --strict --verbose=2 "$app_path"
+
+          spctl --assess --type execute --verbose=4 "$app_path"
+          xcrun stapler validate "$app_path"
+
+      - name: Upload the stapled disk image
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: gh release upload "$GITHUB_REF_NAME" "$DMG_PATH" --clobber
+
+      - name: Use public download URLs in the updater manifest
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          # tauri-action can emit REST asset URLs, which consume the user's
+          # anonymous API quota and return 403 when their IP is rate-limited.
+          manifest_dir="$(mktemp -d "$RUNNER_TEMP/lattice-updater.XXXXXX")"
+          gh release download "$GITHUB_REF_NAME" --pattern latest.json --dir "$manifest_dir"
+          # The REST tag lookup returns 404 for drafts; resolve the release ID
+          # through gh, which supports drafts, before fetching asset metadata.
+          release_id="$(gh release view "$GITHUB_REF_NAME" --json databaseId --jq .databaseId)"
+          gh api "repos/$GITHUB_REPOSITORY/releases/$release_id" > "$manifest_dir/release.json"
+          node scripts/normalize-updater-manifest.mjs "$manifest_dir/latest.json" "$manifest_dir/release.json"
+          gh release upload "$GITHUB_REF_NAME" "$manifest_dir/latest.json" --clobber
+
+      # Check what the release actually offers for download: only the signed
+      # artifacts, none of them a font. Failing here leaves the release a draft.
+      - name: Check the release assets for font files
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          set -euo pipefail
+          assets_dir="$(mktemp -d "$RUNNER_TEMP/lattice-release-assets.XXXXXX")"
+          gh release download "$GITHUB_REF_NAME" --dir "$assets_dir"
+          node scripts/check-font-leaks.mjs assets "$assets_dir"
+
+      - name: Publish verified release
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: gh release edit "$GITHUB_REF_NAME" --draft=false

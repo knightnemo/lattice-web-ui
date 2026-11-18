@@ -1,0 +1,760 @@
+/*
+ * Interactive state model.
+ *
+ * One state, one selector shape, everywhere. Add a state to a component by
+ * matching this table, not by inventing a parallel hook.
+ *
+ *   hover      `:hover:not(:disabled)`            pointer is over the control
+ *   pressed    `:active:not(:disabled)`           pointer is held down
+ *   focus      `:focus-visible`                   keyboard focus; ring is global
+ *   open       `[data-state="open"]`              this control owns an open menu,
+ *                                                 popover, or select
+ *   active     `.active`                          the view or tab this control
+ *                                                 leads to is the current one
+ *   selected   `[aria-selected="true"]`, `.selected`
+ *                                                 one of several list rows the
+ *                                                 user has picked
+ *   checked    `[aria-checked="true"]`, `:checked`, `[data-state="checked"]`
+ *                                                 a toggle is on
+ *   disabled   `:disabled`, `[data-disabled]`     not operable
+ *
+ * Surface strength runs in one direction, so two states are never confusable:
+ * hover < pressed, and hover < selected < active. A hover is 5% of the text
+ * colour and a press 8%; a selected row is 8% and turns medium.
+ */
+:root, [data-theme-preview] {
+  /* Typography: six roles.
+   *
+   *   display    30/36  400  serif  the one title on a page that has only one
+   *   title      18/24  400  serif  dialog, sheet and settings-page titles
+   *   subtitle   13/18  600         panel, drawer and group headings
+   *   body       13/20  400         menus, copy, popovers; its compact step
+   *                                 (12/16, 500) is the text inside a control:
+   *                                 buttons, fields, tabs, compact lists
+   *   caption    12/16  400         metadata, paths, descriptions
+   *   micro      11/14  500         badges, counters, compact status; one line only
+   *
+   * Each role is a size and its own leading; take both. Display and Title are
+   * Lattice's one serif voice and also carry their family (`--type-*-font`);
+   * the rest stay in the interface font. Nothing in the interface is set below
+   * 11px. A region that is read rather than scanned (Settings, below) runs
+   * every role one step up. The embedded Synara runtime mirrors title,
+   * subtitle, body-compact and caption at both steps (its embedMode.ts), so it
+   * keeps its own copy of those values until the pinned runtime moves.
+   *
+   * `typeset` is prose: the visual Markdown surface, the source editor's
+   * default size and long-form notes. The roles under it are thin aliases for
+   * surfaces that name their own contract.
+   */
+  --type-display-font: var(--display-font);
+  --type-display-size: 30px;
+  --type-display-line-height: 36px;
+  --type-display-weight: 400;
+  --type-title-font: var(--display-font);
+  --type-title-size: 18px;
+  --type-title-line-height: 24px;
+  --type-title-weight: 400;
+  --type-subtitle-size: 13px;
+  --type-subtitle-line-height: 18px;
+  --type-subtitle-weight: 600;
+  --type-body-size: 13px;
+  --type-body-line-height: 20px;
+  --type-body-weight: 400;
+  --type-body-compact-size: 12px;
+  --type-body-compact-line-height: 16px;
+  --type-body-compact-weight: 500;
+  --type-caption-size: 12px;
+  --type-caption-line-height: 16px;
+  --type-caption-weight: 400;
+  --type-micro-size: 11px;
+  --type-micro-line-height: 14px;
+  --type-micro-weight: 500;
+  --type-typeset-size: 14px;
+  /* Touch editors keep focused inputs legible without iOS automatic zoom. */
+  --type-touch-input-size: 16px;
+  --type-typeset-line-height: 22px;
+  --insert-glyph-size: 22px; /* A character sample, sized by its tile (the visual editor's emoji picker). */
+
+  /* Thin aliases. Papers metadata and Agent thread titles are captions;
+     project filenames are body text on a control's leading; diffs set code in
+     the editor font at caption size with room between lines. */
+  --type-tree-size: var(--type-caption-size);
+  --type-tree-line-height: var(--type-caption-line-height);
+  --type-project-tree-size: var(--type-body-size);
+  --type-project-tree-line-height: var(--type-body-compact-line-height);
+  --type-diff-code-size: var(--type-caption-size);
+  --type-diff-code-line-height: 18px;
+  --type-diff-meta-size: var(--type-micro-size);
+  --type-diff-meta-line-height: var(--type-micro-line-height);
+
+  /* The pre-React fallback screens (main.tsx, browser-runtime.ts) inline this. */
+  --font-ui-body: var(--type-body-size);
+
+  /* Weight roles keep arbitrary 450/650 values out of feature styles. */
+  --weight-regular: 400;
+  --weight-medium: 500;
+  --weight-semibold: 600;
+  --weight-bold: 700;
+
+  /* A compact 2px spacing grid. Layout lands on its 4px steps; 2px and 6px
+     are for distances inside a control. */
+  --space-1: 2px;
+  --space-2: 4px;
+  --space-3: 6px;
+  --space-4: 8px;
+  --space-5: 10px;
+  --space-6: 12px;
+  --space-8: 16px;
+  --space-10: 20px;
+  --space-12: 24px;
+  --space-16: 32px;
+
+  /*
+   * Spacing that sits between grid steps, because a 2px grid cannot express
+   * distances inside a control. These are roles, not scale steps: the name says
+   * what the distance is for, so the same intent gets the same value everywhere
+   * and one edit changes all of them.
+   */
+  --gap-hairline: 1px; /* Seam between adjacent segments in one track. */
+  --gap-tight: 2px; /* Stacked lines that read as a single block. */
+  --gap-inline-tight: 4px; /* Icon to its label inside a compact control. */
+  --gap-inline: 8px; /* Members of one inline group. */
+  --pad-inline-control: 10px; /* Chrome control side padding. */
+  --pad-inline-control-tight: 8px; /* The same, on a shorter control. */
+  --drawer-content-inset: 14px; /* Shared edge for drawer headers and first-level content. */
+  --tab-inset-inline: 14px; /* A panel tab's side padding: past the strip's 6px inset, its icon lands on the panel's 20px icon gutter. */
+  --drawer-section-gap: var(--space-5); /* Vertical rhythm between first-level drawer sections. */
+
+  /*
+   * Motion: one system, three spring tiers (Fluid Functionalism's, the same
+   * ones `components/ui/motion-values.ts` hands to motion/react). The bigger
+   * the thing that moves, the slower the tier:
+   *
+   *   fast       80ms, no bounce   hover, focus, fades, tooltips, selection marks
+   *   moderate  160ms, no bounce   travel and small expansion: menus, selects,
+   *                                popovers, tab indicators, switches, rows
+   *   slow      240ms, bounce .12  large surfaces: dialogs, drawers, panels,
+   *                                whole-window changes such as a theme switch
+   *   pop       220ms, bounce .2   a popup springing from what opened it:
+   *                                menus, selects, popovers, the editor's
+   *                                toolbars, cards and completions
+   *
+   * Each tier's curve is the spring itself, sampled into `linear()` from
+   * motion's own spring solver (tokens.test.ts recomputes it, so CSS and JS
+   * cannot drift). A spring curve only means its spring at its own duration,
+   * so feature CSS takes a tier whole, duration and curve together:
+   * `transition: opacity var(--motion-fast)`. The bare `--duration-*` values
+   * are for longhands and arithmetic (`transition-duration`, a staggered delay).
+   *
+   * Exits are one tier quicker and are plain tweens, so a dismissal reads as
+   * final rather than replaying the entrance backwards (`--motion-*-exit`,
+   * motion-values' `springExit`).
+   *
+   * Three moments sit outside the tiers because they are not interface
+   * motion: a line drawing itself, a one-time flourish, and a mark that
+   * lingers on what just changed (an edit that landed, a new thread) and
+   * fades so the eye finds it. Things that arrive one after another
+   * (a suggestion's edits) wait `--duration-stagger` each. Ambient loops
+   * (loaders, skeleton sheens, the welcome screen) time themselves and are
+   * not on any scale.
+   */
+  --duration-fast: 80ms;
+  --duration-moderate: 160ms;
+  --duration-slow: 240ms;
+  --duration-fast-exit: 60ms;
+  --duration-moderate-exit: 120ms;
+  --duration-slow-exit: 160ms;
+  --duration-pop: 220ms;
+  --duration-pop-exit: 120ms;
+  --duration-stagger: 40ms; /* Between things that arrive one after another, never a tier's duration. */
+  --duration-draw: 560ms; /* A stroke drawing itself (the Lattice mark, a finished build's check) or an icon turning once. */
+  --duration-flourish: 720ms; /* A ripple or burst marking a moment, never a loop. */
+  --duration-linger: 1600ms; /* A mark held on what just changed, then faded. */
+  /* WebKit before Safari 17.2 (macOS 14.0 and 14.1) has no linear(); it gets
+     the nearest cubic curves until the block below replaces them. */
+  --ease-fast: cubic-bezier(0.25, 0.85, 0.35, 1);
+  --ease-moderate: cubic-bezier(0.25, 0.85, 0.35, 1);
+  --ease-slow: cubic-bezier(0.3, 0.8, 0.3, 1.02);
+  --ease-pop: cubic-bezier(0.3, 0.85, 0.3, 1.04);
+  --ease-exit: ease-out; /* motion's default tween, which `springExit` runs on */
+  --motion-fast: var(--duration-fast) var(--ease-fast);
+  --motion-moderate: var(--duration-moderate) var(--ease-moderate);
+  --motion-slow: var(--duration-slow) var(--ease-slow);
+  --motion-pop: var(--duration-pop) var(--ease-pop);
+  --motion-fast-exit: var(--duration-fast-exit) var(--ease-exit);
+  --motion-moderate-exit: var(--duration-moderate-exit) var(--ease-exit);
+  --motion-slow-exit: var(--duration-slow-exit) var(--ease-exit);
+  --motion-pop-exit: var(--duration-pop-exit) var(--ease-exit);
+  /* Critically damped, so a drawn stroke or a ripple lands without overshoot. */
+  --motion-draw: var(--duration-draw) var(--ease-moderate);
+  --motion-flourish: var(--duration-flourish) var(--ease-moderate);
+  /* Held, then let go: the keyframes hold the mark, and the tween fades it. */
+  --motion-linger: var(--duration-linger) var(--ease-exit);
+
+  /* Radius: four steps and the pill. 4 for a chip, 6 for anything a pointer
+     lands on (a control, a row, a tab, an icon button), 10 for a surface (a
+     panel, popover, menu or toast) and 14 for a dialog. The role names say
+     what holds the corner; the steps they share are the system. Special
+     asymmetric message bubbles remain component-owned. */
+  --radius-compact: 4px;
+  --radius-icon: 6px;
+  --radius-chrome: var(--radius-icon);
+  --radius-control: var(--radius-icon);
+  --radius-panel: 10px;
+  --radius-surface: var(--radius-panel);
+  --radius-dialog: 14px;
+  --radius-pill: 999px;
+  /* Continuous corners. The steps above are the corner as designed; a surface
+     that draws it as a squircle (`corner-shape: squircle`) multiplies its
+     radius by this factor, since the same radius on a squircle cuts far less
+     off the corner and reads sharper. 1 wherever `corner-shape` is unknown,
+     so the declaration falls away and the corner stays exactly as it was. */
+  --corner-smoothing: 1;
+
+  /* Controls: a two-step ladder. Every control a pointer lands on, whether
+   a button, field, select, segmented track, toolbar or panel action, is
+   compact or default, so a button next to a select next to a tab lands on
+   one height.
+
+     compact  28px  caption text, 13px icons   dense chrome: panel headers,
+                                                toolbars, filters, titlebar
+     default  32px  compact-body text, 16px    forms, dialogs, Settings
+                    icons
+
+   32px, not Fluid Functionalism's 36: the chrome is drawn denser than a web
+   page, and a 4px step from compact is one the eye can see. The embedded
+   Synara Settings pages pin their own controls to 30px until the pinned
+   runtime moves. Square icon controls use the same two heights; the 24px
+   inline size is an action inside a row or a field (a toast's dismiss, a
+   search's clear), and counts as part of that row. */
+  --control-height-compact: 28px;
+  --control-height-default: 32px;
+  --control-size-icon-compact: 24px;
+  --control-size-icon: var(--control-height-compact);
+  --control-size-icon-large: var(--control-height-default);
+
+  /* Text-entry controls share one visual contract even when their behavior
+     differs (forms, search, comments, inline edits, or compact toolbar values). */
+  --field-control-border-width: 1px;
+  --field-control-background: var(--surface-input);
+  --field-control-border-color: color-mix(
+    in srgb,
+    var(--text-primary) 12%,
+    var(--field-control-background)
+  );
+  --field-control-interactive-border-color: color-mix(
+    in srgb,
+    var(--text-primary) 24%,
+    var(--field-control-background)
+  );
+  --field-control-radius: var(--radius-control);
+  --field-control-padding-inline: var(--space-5);
+  --form-control-border-width: var(--field-control-border-width);
+  --form-control-border-color: var(--field-control-border-color);
+  --form-control-background: var(--field-control-background);
+  --form-control-radius: var(--field-control-radius);
+  --search-control-height: var(--control-height-default);
+  --search-control-height-compact: var(--control-height-compact);
+  --search-control-border-width: var(--field-control-border-width);
+  --search-control-background: var(--field-control-background);
+  --search-control-border-color: var(--field-control-border-color);
+  --search-control-radius: var(--field-control-radius);
+  --search-control-padding-inline: var(--field-control-padding-inline);
+  --search-control-gap: var(--space-3);
+  --search-control-icon-size: 14px;
+  --search-control-interactive-border-color: var(--field-control-interactive-border-color);
+  --form-control-select-radius: var(--radius-control);
+  --form-control-textarea-min-height: 88px;
+  --form-control-disabled-opacity: 0.45;
+  --control-hover-surface: color-mix(in srgb, var(--text-primary) 5%, transparent);
+  --control-pressed-surface: color-mix(in srgb, var(--text-primary) 8%, transparent);
+  /* A disabled Button, whatever its variant: the shape stays as a faint
+     outlined slab and the ink steps back, so a disabled primary never reads
+     as a grey button that still works. Icon-only controls, switches and
+     checkboxes have no slab to keep and fade by the opacity instead. */
+  --control-disabled-surface: color-mix(in srgb, var(--text-primary) 4%, transparent);
+  --control-disabled-border: color-mix(in srgb, var(--border-subtle) 80%, transparent);
+  --control-disabled-ink: color-mix(in srgb, var(--text-secondary) 62%, transparent);
+  --control-disabled-opacity: 0.42;
+  --control-off-surface: var(--border-strong);
+  --control-on-surface: var(--control-active);
+  --control-thumb-surface: var(--surface-panel-raised);
+  --control-hover-border: color-mix(in srgb, var(--control-active) 44%, var(--border-strong));
+  --control-invalid-border: var(--status-danger);
+  /* Borders for cards and rows that answer to pointer or selection. Two steps:
+     the default emphasis, and a stronger one for a committed choice. */
+  --control-active-border: color-mix(in srgb, var(--control-active) 35%, var(--border-subtle));
+  --control-active-border-strong: color-mix(in srgb, var(--control-active) 45%, var(--border-strong));
+  /* The tinted Button: the accent's wash under neutral text, the same steps as
+     the danger tint. The accent itself as text drops below 4.5:1 on its own
+     wash, so the label stays --text-primary (9:1 or more in every preset). */
+  --control-tinted-surface: color-mix(in srgb, var(--control-active) 12%, transparent);
+  --control-tinted-hover-surface: color-mix(in srgb, var(--control-active) 18%, transparent);
+  --control-tinted-pressed-surface: color-mix(in srgb, var(--control-active) 24%, transparent);
+  --search-clear-width: 20px;
+  --search-clear-height: 22px;
+  --segmented-surface: var(--border-subtle);
+  --segmented-selected-surface: var(--editor-bg);
+  --segmented-selected-shadow: var(--elevation-raised-shadow);
+  --segmented-tab-padding-inline: var(--space-5);
+  --toolbar-height: 40px;
+  --toolbar-icon-width: 24px;
+  --toolbar-icon-height: var(--control-height-compact);
+  --toolbar-icon-radius: var(--radius-icon);
+  --toolbar-hover-surface: var(--border-subtle);
+  --toolbar-active-surface: color-mix(in srgb, var(--control-active) 14%, transparent);
+  /* The floor for a pointer target, independent of how small the control is
+     painted. See the `data-hit-area` note in styles/surfaces.css. */
+  --hit-area-min: 24px;
+  --control-size-checkbox: 14px;
+  --control-width-switch: 28px;
+  --control-height-switch: 16px;
+  --control-size-switch-thumb: 12px;
+
+  /* Host navigation contract. These semantic values preserve the current
+     sidebar geometry while keeping its states independent from component
+     selectors and third-party tree implementation details. */
+  --navigation-action-size: var(--control-height-compact);
+  --navigation-search-height: var(--search-control-height);
+  --navigation-search-font-size: var(--type-body-compact-size);
+  --navigation-search-line-height: var(--type-project-tree-line-height);
+  --navigation-search-font-weight: var(--type-body-weight);
+  --navigation-action-hover-surface: var(--chrome-hover-surface);
+  --navigation-tree-hover-surface: color-mix(in srgb, var(--text-primary) 5%, transparent);
+  --navigation-tree-selected-surface: color-mix(in srgb, var(--text-primary) 8%, transparent);
+  --navigation-focus-ring: var(--focus-ring);
+  /* The navigator's strongest text (the selected row, typed filters) sits a
+     step below the document's, so the open file outranks its listing. */
+  --navigation-text-strong: color-mix(in srgb, var(--text-primary) 86%, var(--surface-sidebar));
+
+  /* Focus mode's text column in the source editor, its gutter included:
+     about eighty characters of source at any editor font size. */
+  --focus-mode-measure: 88ch;
+
+  /* Window chrome contract. The titlebar carries the traffic lights, the
+     project switcher, and the tab strip in one row, so its geometry is shared
+     rather than restated per element. */
+  --titlebar-height: 40px;
+  /* No sidebar column under the titlebar any more: the traffic lights, then
+     the project switcher at its own width, then the panel controls. */
+  --titlebar-sidebar-width: auto;
+  --titlebar-navigator-width: auto;
+  --titlebar-navigator-width-browser: auto;
+  /* Fallback until AppKit reports the green button's right edge at runtime:
+     72px in a native compact-toolbar titlebar. */
+  --titlebar-traffic-space-width: 72px;
+  /* The project switcher sits centered between the green button and the
+     Panels control: what you see on each side of it (the green light's edge
+     to the name, the chevron to the Panels icon) is this far, so it stays
+     centered whatever the name's length and at every interface zoom (all CSS
+     px, and the traffic space is converted from points). The two derived gaps
+     take off the paddings between the ink and the boxes; lucide's chevron and
+     panel glyphs add about 3px of side bearing between them. */
+  --titlebar-switcher-gap: 31px;
+  --titlebar-glyph-bearing: 3px;
+  --titlebar-leading-gap: calc(var(--titlebar-switcher-gap) - var(--space-4));
+  /* Project button's right padding, the panel controls' inline padding and
+     the Panels button's left padding sit between the chevron and the icon. */
+  --titlebar-trailing-gap: calc(var(--titlebar-switcher-gap) - var(--space-4) - var(--space-3) - var(--space-4) - var(--titlebar-glyph-bearing));
+  --titlebar-action-size: var(--control-size-icon-large);
+  --titlebar-project-title-max-width: 260px;
+  /* A narrow window gives that room to the panel controls instead. */
+  --titlebar-project-title-max-width-compact: 200px;
+
+  /* Every panel's tab strip (trellis.css); its tabs stand on the compact
+     control height, which leaves them 6px off the strip's top and sides. At
+     34px that was 3px, and the first tab crowded the panel's corner. */
+  --tab-strip-height: 40px;
+  --tab-dirty-dot-size: 5px;
+
+  --badge-height: 20px;
+  --badge-height-compact: 16px;
+  --row-height-compact: 32px;
+  --row-height-default: 40px;
+  --row-height-comfortable: 44px;
+  --row-height-tree: var(--control-height-compact);
+
+  /* The one size of the large centered dialogs: Settings, Open from Overleaf,
+     Check references, the table generator and project find / replace. Small
+     confirmations and alerts keep .modal's own compact width. A window smaller
+     than the dialog keeps a margin around it. */
+  --dialog-large-width: min(860px, calc(100vw - 40px));
+  --dialog-large-height: min(640px, calc(100dvh - 40px));
+  /* Add papers and the bibliography entry editor are two modes of one sheet
+     ("Enter manually" swaps one for the other), so they share a narrower
+     width at the large height: the switch must not move the frame. */
+  --dialog-sheet-width: min(720px, calc(100vw - 40px));
+  /* The widest a menu or tooltip grows for a long name (a workspace, project
+     or file) before wrapping or truncating it (menu-surface.ts, tooltip.tsx). */
+  --menu-max-width: 22rem;
+  /* Settings layout contract. A settings page is a column on the sheet: page
+     heading, then groups, each a heading over one card of rows, every row copy
+     on the left and one control on the right. The card lifts off the sheet the
+     way the Settings dialog lifts off the window.
+
+     The embedded Synara runtime mirrors these roles from its own copy of the
+     values, so changing a number here only lands in Providers/MCP/Skills once
+     the pinned runtime revision is rebuilt. */
+  --settings-content-max-width: 720px;
+  --settings-content-padding-top: var(--space-16);
+  --settings-content-padding-inline: 40px;
+  --settings-content-padding-bottom: 48px;
+  --settings-content-padding-top-compact: 24px;
+  --settings-content-padding-inline-compact: 20px;
+  --settings-content-padding-bottom-compact: 32px;
+  --settings-nav-width: 200px;
+  --settings-nav-width-compact: 132px;
+  --settings-nav-padding-block: var(--space-8);
+  --settings-nav-padding-inline: 9px;
+  --settings-nav-group-gap: 14px;
+  --settings-embed-min-height: 470px;
+  --settings-group-gap: 28px;
+  --settings-card-surface: var(--surface-panel-raised);
+  --settings-card-radius: var(--radius-panel);
+  --settings-card-padding-inline: var(--space-8);
+  --settings-row-min-height: 52px;
+  --settings-control-width: 170px;
+  --settings-control-height: var(--control-height-default);
+  --settings-control-radius: var(--radius-control);
+  --settings-control-font-family: var(--ui-font);
+  --settings-control-font-size: var(--type-body-compact-size);
+  --settings-control-line-height: var(--type-body-compact-line-height);
+  --settings-control-font-weight: var(--type-body-weight);
+  --settings-row-control-min-width: 170px;
+  --settings-frame-border-width: 1px;
+  --settings-control-border-color: var(--line-strong);
+  --settings-frame-radius: var(--radius-control);
+  --settings-control-hover-surface: color-mix(
+    in srgb,
+    var(--text-primary) 5%,
+    var(--surface-panel-raised)
+  );
+
+  /* The overlay stacking ladder, in ascending order.
+   *
+   * Every value here is the one the surface already used; naming them is the
+   * point, not renumbering them. Read top to bottom to see what covers what.
+   *
+   * Two things this makes visible that were not before. Radix popovers, menus,
+   * and selects sit at 50 (`z-50`, hard-coded in `components/ui/menu-surface.ts`
+   * and not settable from CSS) — above every modal, below every banner and
+   * toast. And the app updater and the toast stack sit one apart at the top of
+   * a four-digit cliff.
+   *
+   * Dialogs do not block pointer events on `body` (components/ui/modal-dialog.tsx),
+   * so the backdrop only covers what sits below it. An interactive app-layer
+   * surface above --z-modal-backdrop must hide itself while one is present:
+   * `body:has(.modal-backdrop, .drawer-backdrop) .its-class { display: none; }`.
+   * Toasts, the app update among them, deliberately stay clickable.
+   *
+   * Surfaces that only compete with their own siblings inside a local stacking
+   * context are deliberately absent: the PDF viewer's internal layers, the
+   * scroll-area thumb, resizers, and the collab caret label. Those numbers are
+   * local and mean nothing on this ladder. */
+  --z-chrome: 5;
+  --z-menu-inline-raised: 6;
+  --z-editor-overlay: 6;
+  --z-editor-popover: 7;
+  --z-editor-scrollbar: 8;
+  --z-diagnostics: 9;
+  /* Above the workspace, below every dialog, drawer and menu a tour stop asks the writer to open. */
+  --z-guided-tour: 9;
+  --z-modal-backdrop: 10;
+  --z-modal: 11;
+  --z-drawer-backdrop: 20;
+  --z-nested-modal-backdrop: 30;
+  --z-nested-modal: 31;
+  /* Under a modal popup (a select, a context menu): takes every press beside it (surfaces.css). */
+  --z-popup-shield: 49;
+  --z-radix-popper: 50;
+  --z-selection-toolbar: 80;
+  /* A menu a selection toolbar opens floats over the toolbar, its shadow on top. */
+  --z-selection-toolbar-menu: 81;
+  --z-tooltip: 82;
+  /* Local to the spreadsheet's isolated stack, but on the ladder anyway: it has
+     to clear Univer's own right-sidebar layer at 100, and a three-digit number
+     left in a component stylesheet reads like an app-level claim. */
+  --z-spreadsheet-scrollbar: 101;
+  /* Local to the Trellis workspace's stack: a tab drag's shield has to clear
+     the lifted panel (3100) and the drop preview (3000) Trellis sets inline. */
+  --z-trellis-drag-shield: 4000;
+  --z-drag-ghost: 120;
+  --z-toast: 10000;
+
+  /* Semantic color aliases preserve the neutral accent and follow both themes.
+     Raw theme values remain owned by styles/theme.css; components consume these
+     roles instead of reaching into the palette directly. */
+  --surface-app: var(--bg);
+  /* Window material (theme.css): what paints behind everything, the titlebar
+     and panel gutters, the Project and Papers panels, and a page that
+     fills the window. Each is the opaque surface it replaces until the window is
+     translucent. */
+  --surface-window: var(--window);
+  --surface-shell: color-mix(in srgb, var(--sidebar) var(--glass-shell), transparent);
+  --surface-navigator: color-mix(in srgb, var(--sidebar) var(--glass-panel), transparent);
+  /* A frosted panel's header and body, laid over its --surface-navigator
+     sheet (trellis.css): a white veil, transparent until the window is
+     translucent. */
+  --surface-navigator-lift: color-mix(in srgb, #fff var(--glass-lift), transparent);
+  /* The titlebar: the shell lifted by theme.css's white veil, closed by
+     --titlebar-rule, so it never melts into the gutters below it. */
+  --surface-titlebar: color-mix(in srgb, #fff var(--titlebar-veil), var(--surface-shell));
+  --titlebar-rule: var(--border-subtle);
+  /* A whole-window page with no project open, such as the welcome screen. */
+  --surface-backdrop: color-mix(in srgb, var(--bg) var(--glass-page), transparent);
+  --surface-panel: var(--panel);
+  --surface-panel-raised: var(--panel-strong);
+  /*
+   * Elevation: one ladder for every surface that sits above another.
+   *
+   *   page      --surface-app, the window  nothing        the window, the welcome page
+   *   panel     --surface-panel            a hairline     docked panels, cards in the flow
+   *   raised    --surface-elevated         ring, contact  a plate lifted inside a surface:
+   *                                                       the chosen segment, a control
+   *                                                       floating on content
+   *   popover   --surface-elevated         ring, shadow   menus, selects, popovers,
+   *                                                       tooltips, hover cards
+   *   floating  --surface-elevated         ring, deeper   floating panels, drawers,
+   *                                                       toasts, banners, a dragged item
+   *   dialog    --surface-elevated         ring, deepest  modal dialogs and Settings
+   *
+   * A level's shadow does not change with nesting, so a popover inside a
+   * dialog still reads as a popover. The ring is the edge instead of a border;
+   * a surface that colours its edge (a toast by severity) composes the same
+   * two parts: `0 0 0 1px <edge>, var(--elevation-floating-shadow)`. Radii nest
+   * by the rule in surfaces.css: a level's surface declares --surface-radius
+   * and --surface-inset, and what sits flush inside takes --nested-radius.
+   */
+  --surface-elevated: var(--surface-panel-raised);
+  --elevation-ring: var(--shadow-ring);
+  /* Short of a full hairline: the surfaces already part panels from the
+     workspace, and a full outline on every one competed with the document
+     inside. */
+  --elevation-panel: 0 0 0 1px color-mix(in srgb, var(--border-subtle) 70%, transparent);
+  --elevation-raised-shadow: var(--shadow-raised);
+  --elevation-popover-shadow: var(--shadow-popover);
+  --elevation-floating-shadow: var(--shadow-floating);
+  --elevation-dialog-shadow: var(--shadow-dialog);
+  --elevation-raised: 0 0 0 1px var(--elevation-ring), var(--elevation-raised-shadow);
+  --elevation-popover: 0 0 0 1px var(--elevation-ring), var(--elevation-popover-shadow);
+  --elevation-floating: 0 0 0 1px var(--elevation-ring), var(--elevation-floating-shadow);
+  --elevation-dialog: 0 0 0 1px var(--elevation-ring), var(--elevation-dialog-shadow);
+  --surface-chrome: var(--chrome-surface);
+  --surface-sidebar: var(--sidebar);
+  --surface-input: var(--side-surface);
+  --border-subtle: var(--line);
+  --border-strong: var(--line-strong);
+  /* Two inks. Tertiary and chrome text were two more greys the eye could not
+     tell from secondary; they remain as names for existing call sites and
+     resolve to it. New code takes primary or secondary. */
+  --text-primary: var(--text);
+  --text-secondary: var(--muted);
+  --text-tertiary: var(--text-secondary);
+  --text-chrome: var(--text-secondary);
+  --control-active: var(--accent);
+  --control-active-soft: var(--accent-soft);
+  /* The editor's current line stays neutral under any accent: the syntax
+     tokens are tuned to read on it (theme.css). */
+  --editor-active-line-surface: var(--editor-line);
+  --control-active-contrast: var(--accent-contrast);
+  /* One hover wash for chrome affordances that sit directly on a chrome or
+     sidebar surface: titlebar buttons, navigation actions, toolbar icons. A
+     step above a control's hover, since the ground under it is darker. */
+  --chrome-hover-surface: color-mix(in srgb, var(--text-primary) 6%, transparent);
+  /* Keyboard focus is one ring, declared once and drawn by the global
+     `:focus-visible` rule in styles/app-shell.css. Components size it through
+     these roles instead of hand-rolling a per-component shadow. The 2px gap
+     keeps the ring off a filled control's own edge. */
+  --focus-ring: var(--focus);
+  --focus-ring-width: 2px;
+  --focus-ring-offset: 2px;
+  /* How far a focus ring reaches past its control: the room a scroller keeps
+     at an edge so the ring of a control flush with it is not cut off. */
+  --focus-ring-reach: calc(var(--focus-ring-width) + var(--focus-ring-offset));
+  /* Where a dragged tab or panel will land (Trellis's drop slot): the focus
+     ring's colour as a faint wash over a veil of the panel, so the drop
+     label reads over a page, and the same colour as its edge. */
+  --drop-target-edge: var(--focus);
+  --drop-target-surface: color-mix(in srgb, var(--drop-target-edge) 8%, color-mix(in srgb, var(--surface-panel) 80%, transparent));
+  /* Local annotations (editor/comments/annotations.css): the amber of an open
+     note, the blue of the agent's proposal, the violet of its question and the
+     green of an accepted one. Every pin's figure takes `--annotation-pin-text`. */
+  --annotation-ink: var(--annotation);
+  --annotation-proposed-ink: var(--glyph-tex);
+  --annotation-asked-ink: var(--glyph-style);
+  --annotation-accepted-ink: var(--success);
+  --annotation-pin-text: var(--annotation-contrast);
+  --annotation-highlight: color-mix(in srgb, var(--annotation) 14%, transparent);
+  --annotation-highlight-edge: color-mix(in srgb, var(--annotation) 70%, transparent);
+  --status-success: var(--success);
+  --status-success-soft: color-mix(in srgb, var(--success) 12%, transparent);
+  --status-warning: var(--warning);
+  --status-warning-soft: color-mix(in srgb, var(--warning) 12%, transparent);
+  /* Search hits are marked on document content, not on chrome, so they keep
+     one warm highlight in both themes: found, and the current one. */
+  --highlight-match-surface: rgba(255, 208, 0, 0.34);
+  --highlight-match-current-surface: rgba(255, 142, 0, 0.48);
+  --highlight-match-current-border: rgba(202, 94, 0, 0.72);
+  --scrim-surface: rgba(0, 0, 0, 0.18);
+  --scrim-dialog-surface: var(--dialog-scrim);
+
+  /* A rendered page stays paper-colored in both themes. */
+  /* Text selection in the editor reads as a system selection rather than as
+     app chrome, so it keeps its own blue in both themes, at the strength each
+     theme's syntax tokens still read on (theme.css). */
+  --editor-selection-tint: #3d7af2;
+  --editor-selection-surface: color-mix(in srgb, var(--editor-selection-tint) var(--selection-mix), transparent);
+  --editor-selection-surface-active: color-mix(in srgb, var(--editor-selection-tint) var(--selection-mix-focused), transparent);
+
+  /* The source editors' code theme. Weft & Warp, Lattice's own, draws on the
+     window's surfaces and inks below; another theme (settings/code-themes.ts)
+     replaces --syntax-* and --code-* on the root with its own ground and
+     colors, and a preview in Settings sets them on itself. */
+  --lattice-code-ground: var(--editor-bg);
+  --lattice-code-ink: var(--text-primary);
+  --lattice-code-line-number: color-mix(in srgb, var(--text-tertiary) 72%, var(--editor-gutter));
+  --lattice-code-line-number-contrast: var(--text-tertiary);
+  --lattice-code-caret: var(--control-active);
+  --lattice-code-line: var(--editor-active-line-surface);
+  --lattice-code-selection: var(--editor-selection-surface);
+  --lattice-code-selection-focused: var(--editor-selection-surface-active);
+  --code-ground: var(--lattice-code-ground);
+  --code-ink: var(--lattice-code-ink);
+  --code-line-number: var(--lattice-code-line-number);
+  --code-line-number-contrast: var(--lattice-code-line-number-contrast);
+  --code-caret: var(--lattice-code-caret);
+  --code-line: var(--lattice-code-line);
+  --code-selection: var(--lattice-code-selection);
+  --code-selection-focused: var(--lattice-code-selection-focused);
+  --syntax-keyword: var(--lattice-syntax-keyword);
+  --syntax-operator: var(--lattice-syntax-operator);
+  --syntax-function: var(--lattice-syntax-function);
+  --syntax-type: var(--lattice-syntax-type);
+  --syntax-variable: var(--lattice-syntax-variable);
+  --syntax-variable-special: var(--lattice-syntax-variable-special);
+  --syntax-property: var(--lattice-syntax-property);
+  --syntax-attribute: var(--lattice-syntax-attribute);
+  --syntax-string: var(--lattice-syntax-string);
+  --syntax-comment: var(--lattice-syntax-comment);
+  --syntax-comment-doc: var(--lattice-syntax-comment-doc);
+  --syntax-number: var(--lattice-syntax-number);
+  --syntax-constant: var(--lattice-syntax-constant);
+  --syntax-bracket: var(--lattice-syntax-bracket);
+  --syntax-citation: var(--lattice-syntax-citation);
+  --syntax-reference: var(--lattice-syntax-reference);
+  --pdf-page-surface: #f9f9fa;
+  --pdf-page-shadow: var(--shadow-pdf-page);
+  --status-info: var(--info);
+  /* The two threads of the app icon's weave. Identity, not interaction: they
+     color the Lattice mark and the accent strokes of illustrations, never a
+     control, so the interaction accent stays neutral. */
+  --mark-weft: var(--brand-weft);
+  --mark-warp: var(--brand-warp);
+  --mark-glint: var(--brand-glint);
+  /* The file glyphs (components/ui/file-glyphs.ts): one hue per kind of file
+     in the tree, the tabs and the pickers, its body tinted with the same hue. */
+  --file-glyph-tex: var(--glyph-tex);
+  --file-glyph-style: var(--glyph-style);
+  --file-glyph-bib: var(--glyph-bib);
+  --file-glyph-markdown: var(--glyph-markdown);
+  --file-glyph-pdf: var(--glyph-pdf);
+  --file-glyph-image: var(--glyph-image);
+  --file-glyph-board: var(--glyph-board);
+  --file-glyph-sheet: var(--glyph-sheet);
+  --file-glyph-slides: var(--glyph-slides);
+  --file-glyph-code: var(--glyph-code);
+  --file-glyph-config: var(--glyph-config);
+  --file-glyph-text: var(--glyph-config);
+  --file-glyph-folder: var(--glyph-folder);
+  --file-glyph-tint: var(--glyph-tint);
+  --status-danger: var(--danger);
+  --status-danger-soft: color-mix(in srgb, var(--danger) 12%, transparent);
+  --status-danger-soft-hover: color-mix(in srgb, var(--danger) 18%, transparent);
+  --status-danger-soft-pressed: color-mix(in srgb, var(--danger) 24%, transparent);
+
+  /* Tone-relative surfaces.
+   *
+   * Status surfaces (diagnostics, banners, notices) set one `color` for their
+   * severity and derive every border and interactive wash from it, so these
+   * roles are expressed in `currentColor` and resolve against whatever tone the
+   * host element carries. Use them instead of repeating a `color-mix` per
+   * severity variant. */
+  --tone-surface: color-mix(in srgb, currentColor 10%, transparent);
+  --tone-hover-surface: color-mix(in srgb, currentColor 8%, transparent);
+  --tone-border: color-mix(in srgb, currentColor 14%, transparent);
+}
+/* The spring tiers as sampled curves. Generated values: tokens.test.ts says
+   what they must be when a tier in motion-values.ts changes. */
+@supports (transition-timing-function: linear(0, 1)) {
+  :root {
+    --ease-fast: linear(0, 0.321, 0.671, 0.86, 0.944, 0.979, 0.992, 0.997, 1);
+    --ease-moderate: linear(0, 0.114, 0.321, 0.516, 0.671, 0.783, 0.86, 0.911, 0.944, 0.966, 0.979, 0.987, 0.992, 0.995, 0.997, 0.998, 1);
+    --ease-pop: linear(0, 0.067, 0.215, 0.387, 0.55, 0.69, 0.8, 0.881, 0.938, 0.975, 0.997, 1.009, 1.014, 1.015, 1.014, 1.011, 1.009, 1.006, 1.004, 1.003, 1.002, 1.001, 1);
+    --ease-slow: linear(0, 0.052, 0.168, 0.307, 0.446, 0.572, 0.68, 0.767, 0.835, 0.887, 0.925, 0.953, 0.972, 0.985, 0.993, 0.998, 1.001, 1.002, 1.003, 1.003, 1.003, 1.002, 1.002, 1.001, 1);
+  }
+}
+/* The factor matches a squircle's corner to the round one it replaces where
+   the curve crosses the diagonal: (1 - 2^-1/2) / (1 - 2^-1/4), the depth a
+   round corner cuts there over the depth a squircle of the same radius does.
+   A nested corner stays parallel too: the factor scales the outer corner and
+   the derived inner one alike (`outer - inset` before the factor, never after),
+   so the inset holds along the diagonal. */
+@supports (corner-shape: squircle) {
+  :root, [data-theme-preview] {
+    --corner-smoothing: 1.8408964152537137;
+  }
+}
+@media (prefers-contrast: more) {
+  :root {
+    --navigation-text-strong: var(--text-primary);
+  }
+}
+
+/* Settings is read, not scanned: the dialog is a page of prose and controls, so
+   it runs every role one step up the scale the surrounding chrome uses
+   (Fluid Functionalism's default step, where the chrome runs its compact one).
+   The roles carry literal values because a chain of `var()` inside one
+   block would collapse onto whichever role is redeclared last; every alias that
+   :root derives from a role is restated here, since a declaration in
+   :root resolves against :root's own values and would otherwise inherit the
+   chrome size unchanged.
+
+   The Providers/MCP/Skills pages live in the Synara iframe and set the same
+   step from their own copy of these values (see the note on the roles). The
+   select popup is portalled out of the dialog, so it carries the same scope or
+   its items would fall back to the chrome size its trigger no longer uses; a
+   theme preview inside the dialog restates the base roles (theme.css), so it
+   takes the step again. */
+.settings-modal,
+.settings-modal [data-theme-preview],
+[data-slot="select-content"][data-settings-control="true"] {
+  /* Display is already the one title on its page; it does not step up. */
+  --type-display-size: 30px;
+  --type-display-line-height: 36px;
+  --type-title-size: 24px;
+  --type-title-line-height: 30px;
+  --type-subtitle-size: 14px;
+  --type-subtitle-line-height: 20px;
+  --type-body-size: 14px;
+  --type-body-line-height: 22px;
+  --type-body-compact-size: 13px;
+  --type-body-compact-line-height: 18px;
+  --type-caption-size: 12px;
+  --type-caption-line-height: 18px;
+  --type-micro-size: 12px;
+  --type-micro-line-height: 16px;
+  --type-typeset-size: 15px;
+  --type-typeset-line-height: 24px;
+
+  --type-tree-size: var(--type-caption-size);
+  --type-tree-line-height: var(--type-caption-line-height);
+  --type-project-tree-size: var(--type-body-size);
+  --type-project-tree-line-height: var(--type-body-compact-line-height);
+  --type-diff-code-size: var(--type-caption-size);
+  --type-diff-code-line-height: 20px;
+  --type-diff-meta-size: var(--type-micro-size);
+  --type-diff-meta-line-height: var(--type-micro-line-height);
+
+  --settings-control-font-size: var(--type-body-compact-size);
+  --settings-control-line-height: var(--type-body-compact-line-height);
+}

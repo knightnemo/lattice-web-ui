@@ -1,0 +1,716 @@
+/* Local annotations: the pin that follows one note across the gutter, the PDF,
+   the panel and the agent's card; the composer; the Annotations panel; the
+   review card under a passage; and the Revision rounds sheet. Colours come from
+   the annotation roles in foundations.css: amber open, blue proposed, violet
+   asked, green accepted. */
+
+/* The pin: a number in its status colour, wide enough for any count. */
+.annotation-pin {
+  --annotation-pin-ink: var(--annotation-ink);
+  flex: none;
+  display: inline-grid;
+  place-items: center;
+  box-sizing: border-box;
+  min-width: 18px;
+  height: 18px;
+  padding-inline: var(--gap-inline-tight);
+  border: 0;
+  border-radius: var(--radius-pill);
+  background: var(--annotation-pin-ink);
+  color: var(--annotation-pin-text);
+  font: var(--type-micro-weight) var(--type-micro-size)/var(--type-micro-line-height) var(--ui-font);
+  font-variant-numeric: tabular-nums;
+}
+:is(.annotation-pin, .annotation-status, .annotation-card, .cm-annotation-pin)[data-annotation-status="proposed"] { --annotation-pin-ink: var(--annotation-proposed-ink); }
+:is(.annotation-pin, .annotation-status, .annotation-card, .cm-annotation-pin)[data-annotation-status="asked"] { --annotation-pin-ink: var(--annotation-asked-ink); }
+:is(.annotation-pin, .annotation-status, .annotation-card, .cm-annotation-pin)[data-annotation-status="accepted"] { --annotation-pin-ink: var(--annotation-accepted-ink); }
+:is(.annotation-pin, .annotation-status, .annotation-card, .cm-annotation-pin)[data-annotation-status="resolved"] { --annotation-pin-ink: var(--text-secondary); }
+
+/* --- The composer (source and PDF) ------------------------------------ */
+.annotation-composer { padding: var(--space-5); }
+.annotation-form { display: grid; gap: var(--space-4); min-width: 0; }
+.annotation-quote {
+  display: flex;
+  align-items: baseline;
+  gap: var(--space-4);
+  min-width: 0;
+  margin: 0;
+  padding: var(--space-3) var(--space-4);
+  border-radius: var(--radius-control);
+  background: var(--annotation-highlight);
+  box-shadow: inset 2px 0 0 var(--annotation-ink);
+}
+.annotation-quote-text {
+  min-width: 0;
+  flex: 1 1 auto;
+  display: -webkit-box;
+  -webkit-box-orient: vertical;
+  -webkit-line-clamp: 2;
+  overflow: hidden;
+  color: var(--text-primary);
+  font: italic var(--type-body-size)/var(--type-body-compact-line-height) var(--reading-font);
+  overflow-wrap: anywhere;
+}
+.annotation-quote-location {
+  flex: 0 0 auto;
+  max-width: 55%;
+  min-width: 0;
+  overflow: hidden;
+  color: var(--text-secondary);
+  font: var(--type-caption-weight) var(--type-caption-size)/var(--type-caption-line-height) var(--ui-font);
+  font-variant-numeric: tabular-nums;
+  text-align: end;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.annotation-note-field { min-height: 56px; resize: vertical; }
+.annotation-intents { display: flex; flex-wrap: wrap; gap: var(--gap-inline-tight); min-width: 0; }
+.annotation-intent {
+  max-width: 100%;
+  height: 24px;
+  padding: 0 var(--space-4);
+  overflow: hidden;
+  border: 0;
+  border-radius: var(--radius-pill);
+  background: transparent;
+  box-shadow: inset 0 0 0 1px var(--border-subtle);
+  color: var(--text-secondary);
+  font: var(--type-caption-weight) var(--type-caption-size)/var(--type-caption-line-height) var(--ui-font);
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  cursor: pointer;
+  transition: background-color var(--motion-fast), color var(--motion-fast), box-shadow var(--motion-fast);
+}
+.annotation-intent:hover:not(:disabled) { background: var(--control-hover-surface); color: var(--text-primary); }
+.annotation-intent[aria-pressed="true"] {
+  background: var(--annotation-highlight);
+  box-shadow: inset 0 0 0 1px var(--annotation-highlight-edge);
+  color: var(--text-primary);
+}
+.annotation-form-error {
+  margin: 0;
+  color: var(--status-danger);
+  font: var(--type-caption-weight) var(--type-caption-size)/var(--type-caption-line-height) var(--ui-font);
+}
+.annotation-form-actions {
+  container-type: inline-size;
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--space-2);
+  min-width: 0;
+}
+.annotation-form-actions kbd,
+.annotation-review-actions kbd,
+.annotations-go kbd { margin-inline-start: var(--gap-inline-tight); color: var(--text-secondary); font: inherit; }
+@container (max-width: 320px) {
+  .annotation-form-actions kbd { display: none; }
+}
+@container (max-width: 240px) {
+  .annotation-form-actions > [data-slot="button"] { flex: 1 1 auto; min-width: 0; }
+}
+
+/* --- The Annotations panel -------------------------------------------- */
+/* The panel fills its drawer: the list scrolls between a fixed header and footer. */
+.editor-comments-drawer:has(> .annotations-panel) { display: flex; flex-direction: column; overflow: hidden; }
+.annotations-panel {
+  container: annotations / inline-size;
+  display: flex;
+  flex-direction: column;
+  flex: 1 1 auto;
+  min-height: 0;
+  min-width: 0;
+}
+.annotations-head {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  grid-template-areas: "title actions" "tabs tabs" "filter filter" "search search";
+  align-items: center;
+  gap: var(--space-4) var(--space-2);
+  padding: var(--space-2) 0 var(--space-4);
+  border-bottom: 1px solid var(--border-subtle);
+}
+.annotations-title-row { grid-area: title; display: flex; align-items: baseline; gap: var(--space-4); min-width: 0; }
+.annotations-filter { grid-area: filter; }
+.annotations-search { grid-area: search; }
+.annotations-title {
+  min-width: 0;
+  margin: 0;
+  overflow: hidden;
+  font: var(--type-title-weight) var(--type-title-size)/var(--type-title-line-height) var(--type-title-font);
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.annotations-head-actions { grid-area: actions; display: flex; align-items: center; gap: var(--gap-tight); }
+.annotations-filter { justify-self: start; max-width: 100%; min-width: 0; }
+.annotations-filter .ui-segmented-tab { display: inline-flex; align-items: center; gap: var(--gap-inline-tight); min-width: 0; }
+.annotations-filter-label { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.annotations-filter-count { color: var(--text-secondary); font-variant-numeric: tabular-nums; }
+.annotation-highlight {
+  display: grid;
+  gap: var(--space-2);
+  width: 100%;
+  min-width: 0;
+  padding: var(--space-3) var(--space-4);
+  border: 0;
+  border-radius: var(--radius-control);
+  background: transparent;
+  color: inherit;
+  text-align: start;
+  cursor: pointer;
+  transition: background-color var(--motion-fast);
+}
+.annotation-highlight:hover { background: var(--control-hover-surface); }
+.annotation-highlight .annotation-card-meta { grid-column: auto; }
+.annotation-highlight-text {
+  min-width: 0;
+  display: -webkit-box;
+  -webkit-box-orient: vertical;
+  -webkit-line-clamp: 3;
+  overflow: hidden;
+  font: var(--type-body-size)/var(--type-subtitle-line-height) var(--reading-font);
+  overflow-wrap: anywhere;
+}
+/* The passage as it prints: black text on its tint, whatever the theme. */
+.annotation-highlight-text mark {
+  padding: 0 var(--gap-tight);
+  border-radius: var(--gap-tight);
+  color: #242426;
+  box-decoration-break: clone;
+  -webkit-box-decoration-break: clone;
+}
+/* A colour by name, or soul's \hl: its colour is the document's to say. */
+.annotation-highlight-text mark.annotation-highlight-unknown { background: var(--control-pressed-surface); color: var(--text-primary); }
+.annotations-scroll { flex: 1 1 auto; min-height: 0; }
+.annotations-list { display: grid; align-content: start; gap: var(--gap-tight); padding: var(--space-3) 0 var(--space-6); }
+.annotations-section {
+  margin: var(--space-5) 0 var(--space-2);
+  padding-inline: var(--space-4);
+  overflow: hidden;
+  color: var(--text-secondary);
+  font: var(--type-caption-weight) var(--type-caption-size)/var(--type-caption-line-height) var(--ui-font);
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.annotations-list > .annotations-section:first-child,
+.annotations-round + .annotations-section { margin-top: var(--space-2); }
+
+/* The round in progress: what the agent is doing, and how far it is. */
+.annotations-round {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--space-2) var(--space-4);
+  margin-bottom: var(--space-2);
+  padding: var(--space-4) var(--space-5);
+  border-radius: var(--radius-control);
+  background: color-mix(in srgb, var(--annotation-proposed-ink) 7%, transparent);
+  color: var(--text-primary);
+  font: var(--type-caption-weight) var(--type-caption-size)/var(--type-caption-line-height) var(--ui-font);
+}
+.annotations-round-text { min-width: 0; flex: 1 1 auto; font-variant-numeric: tabular-nums; }
+.annotations-round-bar {
+  flex: 0 1 88px;
+  min-width: 40px;
+  height: 4px;
+  overflow: hidden;
+  border-radius: var(--radius-pill);
+  background: var(--control-pressed-surface);
+}
+.annotations-round-bar i { display: block; height: 100%; background: var(--annotation-proposed-ink); transition: width var(--motion-moderate); }
+
+/* One note: its pin, the passage in the reading serif, the note, where and when. */
+.annotation-card {
+  --annotation-pin-ink: var(--annotation-ink);
+  position: relative;
+  display: grid;
+  gap: var(--space-2);
+  padding: var(--space-2);
+  border-radius: var(--radius-control);
+  transition: background-color var(--motion-fast), box-shadow var(--motion-fast);
+}
+.annotation-card:hover,
+.annotation-card:focus-within { background: var(--control-hover-surface); }
+.annotation-card[data-focused] { background: var(--surface-panel-raised); box-shadow: 0 0 0 1px var(--border-subtle); }
+.annotation-card[data-status="resolved"],
+.annotation-card[data-status="accepted"] { opacity: 0.84; }
+/* What the writer just did, answered on the card (editor-comments-panel.tsx):
+   a card resolved, reopened, edited or replied to tints for a moment and
+   eases back as the tint lifts; one resolved out of its filter, or deleted,
+   leaves on the moderate exit before the list closes over it. */
+.annotation-card[data-outcome] { background: color-mix(in srgb, var(--status-success) 9%, transparent); }
+.annotation-card[data-outcome="reopened"] { background: color-mix(in srgb, var(--annotation-ink) 10%, transparent); }
+.annotation-card[data-leaving] { pointer-events: none; animation: annotation-card-leave var(--motion-moderate-exit) both; }
+.annotation-card-outcome {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--gap-inline-tight);
+  color: var(--status-success);
+  font-weight: var(--type-micro-weight);
+  animation: annotation-card-outcome-in var(--motion-moderate) both;
+}
+.annotation-card[data-outcome="reopened"] .annotation-card-outcome { color: var(--annotation-ink); }
+/* Pressed and answered: the check holds a green plate while the card leaves, as on the document's card. */
+.annotation-card .annotation-card-resolve:hover:not(:disabled) { color: var(--status-success); }
+.annotation-card .annotation-card-resolve[data-done] {
+  background: color-mix(in srgb, var(--status-success) 14%, transparent);
+  color: var(--status-success);
+  opacity: 1;
+}
+.annotation-card[data-leaving] .annotation-card-actions { opacity: 1; }
+/* A reply sent from the panel arrives into the thread. */
+.annotation-replies > .editor-comment-reply[data-new] { animation: annotation-card-outcome-in var(--motion-moderate) both; }
+.annotation-card-body {
+  display: grid;
+  grid-template-columns: minmax(18px, auto) minmax(0, 1fr);
+  gap: var(--space-2) var(--space-5);
+  width: 100%;
+  min-width: 0;
+  padding: var(--space-2);
+  border: 0;
+  border-radius: var(--radius-compact);
+  background: transparent;
+  color: inherit;
+  text-align: start;
+  cursor: pointer;
+}
+.annotation-card-body > .annotation-pin { margin-top: var(--gap-tight); }
+.annotation-card-author-dot { width: 8px; height: 8px; margin: var(--space-2) auto 0; border-radius: var(--radius-pill); background: var(--text-secondary); }
+.annotation-card-quote {
+  min-width: 0;
+  display: -webkit-box;
+  -webkit-box-orient: vertical;
+  -webkit-line-clamp: 2;
+  overflow: hidden;
+  color: var(--text-secondary);
+  font: italic var(--type-body-size)/var(--type-subtitle-line-height) var(--reading-font);
+  overflow-wrap: anywhere;
+}
+.annotation-card-note {
+  grid-column: 2;
+  min-width: 0;
+  color: var(--text-primary);
+  font: var(--type-body-weight) var(--type-body-size)/var(--type-body-line-height) var(--ui-font);
+  overflow-wrap: anywhere;
+  white-space: pre-wrap;
+}
+.annotation-card-meta {
+  grid-column: 2;
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--gap-tight) var(--space-4);
+  min-width: 0;
+  color: var(--text-secondary);
+  font: var(--type-caption-weight) var(--type-caption-size)/var(--type-caption-line-height) var(--ui-font);
+  font-variant-numeric: tabular-nums;
+}
+.annotation-card-where { min-width: 0; overflow-wrap: anywhere; }
+.annotation-status {
+  --annotation-pin-ink: var(--text-primary);
+  display: inline-flex;
+  align-items: center;
+  gap: var(--gap-inline-tight);
+  padding: 0 var(--space-3);
+  border-radius: var(--radius-compact);
+  background: color-mix(in srgb, var(--annotation-pin-ink) 12%, transparent);
+  color: var(--annotation-pin-ink);
+  font-weight: var(--type-micro-weight);
+}
+.annotation-status[data-annotation-status="rejected"],
+.annotation-status[data-annotation-status="running"] { --annotation-pin-ink: var(--text-secondary); }
+.annotation-status[data-annotation-status="failed"] { --annotation-pin-ink: var(--status-danger); }
+
+/* Hover and keyboard actions, out of the way until wanted. */
+.annotation-card-actions {
+  position: absolute;
+  top: var(--space-2);
+  right: var(--space-2);
+  display: flex;
+  gap: var(--gap-tight);
+  padding: var(--gap-tight);
+  border-radius: var(--radius-control);
+  background: var(--surface-elevated);
+  box-shadow: var(--elevation-raised);
+  opacity: 0;
+  pointer-events: none;
+  transition: opacity var(--motion-fast);
+}
+.annotation-card:hover .annotation-card-actions,
+.annotation-card:focus-within .annotation-card-actions { opacity: 1; pointer-events: auto; }
+@media (hover: none) {
+  .annotation-card-actions { position: static; justify-self: end; opacity: 1; pointer-events: auto; box-shadow: none; background: transparent; }
+}
+.annotation-card-edit { display: grid; gap: var(--space-3); margin-inline-start: 30px; }
+.annotation-card-edit-actions { display: flex; flex-wrap: wrap; gap: var(--space-2); }
+.annotation-replies { margin-inline-start: 30px; }
+
+/* The agent's question, answered on the card. */
+.annotation-ask {
+  display: grid;
+  gap: var(--space-3);
+  margin-inline-start: 30px;
+  padding: var(--space-4) var(--space-5);
+  border-radius: var(--radius-control);
+  background: color-mix(in srgb, var(--annotation-asked-ink) 7%, transparent);
+}
+.annotation-ask-label { color: var(--text-secondary); font: var(--type-caption-weight) var(--type-caption-size)/var(--type-caption-line-height) var(--ui-font); }
+.annotation-ask p { margin: 0; color: var(--text-primary); font: var(--type-body-weight) var(--type-body-size)/var(--type-body-line-height) var(--ui-font); overflow-wrap: anywhere; }
+.annotation-ask > [data-slot="button"] { justify-self: start; max-width: 100%; }
+.annotation-ask .ui-textarea { min-height: 0; resize: vertical; }
+.annotation-failed { display: flex; flex-wrap: wrap; align-items: center; gap: var(--space-2) var(--space-4); margin-inline-start: 30px; }
+.annotation-failed p { flex: 1 1 160px; min-width: 0; margin: 0; color: var(--status-danger); font: var(--type-caption-weight) var(--type-caption-size)/var(--type-caption-line-height) var(--ui-font); overflow-wrap: anywhere; }
+
+/* The round's way in. */
+.annotations-foot { display: grid; gap: var(--space-3); padding: var(--space-5) 0 var(--space-2); border-top: 1px solid var(--border-subtle); }
+.annotations-go { width: 100%; min-width: 0; justify-content: center; }
+.annotations-go-label { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+/* Narrow: the filter's counts go. */
+@container annotations (max-width: 240px) {
+  .annotations-filter-count { display: none; }
+}
+@container annotations (max-width: 260px) {
+  .annotations-go kbd { display: none; }
+  .annotation-card-body { gap: var(--space-2) var(--space-4); }
+  .annotation-ask, .annotation-failed, .annotation-card-edit, .annotation-replies { margin-inline-start: 0; }
+}
+
+/* --- The proposal, reviewed under its passage --------------------------- */
+.annotation-review-card {
+  container-type: inline-size;
+  max-width: 760px;
+  display: grid;
+  gap: var(--space-3);
+  padding: var(--space-4) var(--space-5) var(--space-3);
+  font: var(--type-body-compact-weight) var(--type-body-compact-size)/var(--type-body-compact-line-height) var(--ui-font);
+  white-space: normal;
+  user-select: text;
+  outline: none;
+  animation: annotation-review-in var(--motion-moderate);
+}
+@keyframes annotation-review-in { from { opacity: 0; translate: 0 -4px; } }
+@keyframes annotation-card-leave { to { opacity: 0; translate: 0 -2px; } }
+@keyframes annotation-card-outcome-in { from { opacity: 0; translate: 0 4px; } }
+.annotation-review-head { display: flex; align-items: flex-start; gap: var(--space-4); min-width: 0; }
+.annotation-review-head > .annotation-pin { margin-top: -1px; }
+.annotation-review-note {
+  min-width: 0;
+  flex: 1 1 auto;
+  color: var(--text-primary);
+  font: var(--type-body-weight) var(--type-body-size)/var(--type-subtitle-line-height) var(--ui-font);
+  overflow-wrap: anywhere;
+}
+.annotation-review-text { padding-inline: var(--gap-tight); }
+.annotation-review-reason,
+.annotation-review-status {
+  display: flex;
+  align-items: center;
+  gap: var(--gap-inline-tight);
+  margin: 0;
+  color: var(--text-secondary);
+  font: var(--type-caption-weight) var(--type-caption-size)/var(--type-caption-line-height) var(--ui-font);
+  overflow-wrap: anywhere;
+}
+.annotation-review-error { margin: 0; }
+.annotation-review-retry { display: grid; gap: var(--space-3); }
+.annotation-review-actions {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--space-2);
+  padding-top: var(--space-3);
+  border-top: 1px solid var(--border-subtle);
+}
+.annotation-review-retry .annotation-review-actions { padding-top: 0; border-top: 0; }
+.annotation-review-next { margin-inline-start: auto; font-variant-numeric: tabular-nums; }
+@container (max-width: 420px) {
+  .annotation-review-next-label { display: none; }
+}
+@container (max-width: 300px) {
+  .annotation-review-actions kbd { display: none; }
+  .annotation-review-next { margin-inline-start: 0; }
+}
+
+/* --- Revision rounds ---------------------------------------------------- */
+.modal.sheet-dialog.annotation-rounds { overflow: hidden; }
+.annotation-rounds-body {
+  container: rounds / inline-size;
+  flex: 1 1 auto;
+  min-height: 0;
+  display: grid;
+  grid-template-columns: minmax(180px, 240px) minmax(0, 1fr);
+  gap: var(--space-8);
+}
+/* The rail and the compare column scroll, so they clip: each reaches past its
+   edge into the room beside it by as much as it pads back in, which keeps the
+   rings and focus rings of the rows and cards at their edges whole, and the
+   column's overlay scrollbar in the dialog's inset instead of over the cards. */
+.annotation-rounds-rail { display: grid; align-content: start; gap: var(--gap-tight); min-height: 0; overflow-y: auto; margin-inline-start: calc(-1 * var(--focus-ring-reach)); padding-inline: var(--focus-ring-reach) var(--space-4); border-inline-end: 1px solid var(--border-subtle); }
+.annotation-version {
+  display: grid;
+  gap: var(--gap-tight);
+  width: 100%;
+  min-width: 0;
+  padding: var(--space-4) var(--space-5);
+  border: 0;
+  border-radius: var(--radius-control);
+  background: transparent;
+  color: var(--text-secondary);
+  text-align: start;
+  cursor: pointer;
+  transition: background-color var(--motion-fast);
+}
+.annotation-version:hover { background: var(--control-hover-surface); }
+.annotation-version[aria-current] { background: var(--surface-panel-raised); box-shadow: 0 0 0 1px var(--border-subtle); }
+.annotation-version[data-base] { box-shadow: inset 2px 0 0 var(--annotation-proposed-ink); }
+.annotation-version-name { display: flex; align-items: center; gap: var(--space-3); min-width: 0; color: var(--text-primary); font: var(--type-subtitle-weight) var(--type-body-size)/var(--type-subtitle-line-height) var(--ui-font); }
+.annotation-version-edited { flex: none; width: var(--tab-dirty-dot-size); height: var(--tab-dirty-dot-size); border-radius: var(--radius-pill); background: var(--text-tertiary); }
+.annotation-version-detail,
+.annotation-version-tag { min-width: 0; overflow: hidden; font: var(--type-caption-weight) var(--type-caption-size)/var(--type-caption-line-height) var(--ui-font); text-overflow: ellipsis; white-space: nowrap; font-variant-numeric: tabular-nums; }
+.annotation-version-tag { justify-self: start; max-width: 100%; margin-top: var(--gap-tight); padding: 0 var(--space-3); border-radius: var(--radius-compact); background: var(--control-hover-surface); color: var(--text-primary); }
+.annotation-version-tag:empty { display: none; }
+.annotation-compare { display: flex; flex-direction: column; gap: var(--space-5); min-width: 0; min-height: 0; }
+.annotation-compare-bar {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--space-3) var(--space-6);
+  min-width: 0;
+  color: var(--text-secondary);
+  font: var(--type-caption-weight) var(--type-caption-size)/var(--type-caption-line-height) var(--ui-font);
+}
+.annotation-compare-title { min-width: 0; color: var(--text-primary); font-weight: var(--type-body-compact-weight); overflow-wrap: anywhere; }
+.annotation-compare-count { display: inline-flex; align-items: center; gap: var(--gap-tight); font-variant-numeric: tabular-nums; }
+.annotation-compare-actions { display: flex; flex-wrap: wrap; gap: var(--space-2); margin-inline-start: auto; }
+.annotation-compare-loading { display: flex; align-items: center; color: var(--text-secondary); }
+.annotation-compare-columns { flex: 1 1 auto; min-height: 0; overflow-y: auto; display: grid; align-content: start; gap: var(--space-6); margin-inline: calc(-1 * var(--focus-ring-reach)) calc(-1 * var(--drawer-content-inset)); padding-inline: var(--focus-ring-reach) var(--drawer-content-inset); padding-bottom: var(--focus-ring-reach); }
+.annotation-compare-head,
+.annotation-compare-row { display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 1fr); gap: var(--space-6); }
+.annotation-compare-head { position: sticky; top: 0; z-index: 1; margin-inline: calc(-1 * var(--focus-ring-reach)) calc(-1 * var(--drawer-content-inset)); padding: 0 var(--drawer-content-inset) var(--space-2) var(--focus-ring-reach); background: var(--surface-panel-raised); color: var(--text-secondary); font: var(--type-caption-weight) var(--type-caption-size)/var(--type-caption-line-height) var(--ui-font); }
+.annotation-compare-file { margin: var(--space-4) 0 0; color: var(--text-secondary); font: var(--type-caption-weight) var(--type-caption-size)/var(--type-caption-line-height) var(--editor-font); overflow-wrap: anywhere; }
+.annotation-compare-row { scroll-margin-top: var(--space-12); }
+.annotation-compare-text {
+  min-width: 0;
+  margin: 0;
+  padding: var(--space-5) var(--space-6);
+  border-radius: var(--radius-panel);
+  background: var(--surface-panel);
+  box-shadow: 0 0 0 1px var(--border-subtle);
+  color: var(--text-primary);
+  font: var(--type-body-weight) var(--type-typeset-size)/var(--type-typeset-line-height) var(--reading-font);
+  overflow-wrap: anywhere;
+  white-space: pre-wrap;
+}
+.annotation-compare-row[data-current] .annotation-compare-text { box-shadow: 0 0 0 1px var(--border-strong); }
+.annotation-compare-text del { color: var(--text-secondary); background: color-mix(in srgb, var(--status-danger) 10%, transparent); text-decoration-color: var(--status-danger); }
+.annotation-compare-text ins { background: var(--status-success-soft); color: var(--text-primary); text-decoration: none; }
+.annotation-compare-text em { color: var(--text-secondary); }
+.annotation-compare-marker {
+  display: inline-grid;
+  place-items: center;
+  min-width: 16px;
+  height: 16px;
+  margin-inline-end: var(--gap-inline-tight);
+  padding-inline: var(--gap-tight);
+  vertical-align: 1px;
+  border-radius: var(--radius-pill);
+  background: var(--annotation-accepted-ink);
+  color: var(--annotation-pin-text);
+  font: var(--type-micro-weight) var(--type-micro-size)/var(--type-micro-line-height) var(--ui-font);
+  font-style: normal;
+}
+.annotation-compare-base { display: flex; flex-wrap: wrap; align-items: center; gap: var(--gap-inline-tight); color: var(--text-secondary); font: var(--type-caption-weight) var(--type-caption-size)/var(--type-caption-line-height) var(--ui-font); }
+.annotation-compare-base-option {
+  height: 24px;
+  max-width: 100%;
+  padding: 0 var(--space-4);
+  overflow: hidden;
+  border: 0;
+  border-radius: var(--radius-pill);
+  background: transparent;
+  box-shadow: inset 0 0 0 1px var(--border-subtle);
+  color: var(--text-secondary);
+  font: inherit;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  cursor: pointer;
+}
+.annotation-compare-base-option[aria-pressed="true"] { box-shadow: inset 0 0 0 1px var(--annotation-proposed-ink); color: var(--text-primary); }
+@container rounds (max-width: 640px) {
+  .annotation-rounds-body { grid-template-columns: minmax(0, 1fr); grid-template-rows: auto minmax(0, 1fr); gap: var(--space-5); }
+  .annotation-rounds-rail { grid-auto-flow: column; grid-auto-columns: minmax(150px, 1fr); overflow-x: auto; overflow-y: hidden; padding: 0 0 var(--space-4); border-inline-end: 0; border-bottom: 1px solid var(--border-subtle); }
+  .annotation-compare-head, .annotation-compare-row { grid-template-columns: minmax(0, 1fr); gap: var(--space-3); }
+  .annotation-compare-head { display: none; }
+}
+
+/* --- On the PDF --------------------------------------------------------- */
+.pdf-annotation-mark { position: absolute; inset: 0; z-index: 3; pointer-events: none; }
+.pdf-annotation-highlight {
+  position: absolute;
+  border-radius: var(--radius-compact);
+  background: var(--annotation-highlight);
+  box-shadow: inset 0 -2px 0 var(--annotation-highlight-edge);
+  transition: background-color var(--motion-fast);
+}
+/* The passage under the pointer deepens, and the text over it takes a pointer: a click opens its card. */
+.pdf-annotation-mark[data-hovered] .pdf-annotation-highlight { background: color-mix(in srgb, var(--annotation-highlight-edge) 45%, var(--annotation-highlight)); }
+[data-annotation-hover] .textLayer,
+[data-annotation-hover] .textLayer * { cursor: pointer; }
+/* Resolved from its card: the highlight and pin fade with the card before they are taken away. */
+.pdf-annotation-mark[data-resolving] { opacity: 0; transition: opacity var(--motion-moderate-exit); }
+/* An annotation's card and its preview, above the passage on its page (pdf-annotations.tsx). */
+.pdf-comment-popup { position: absolute; z-index: 7; display: flex; flex-direction: column; }
+.pdf-comment-popup > .comment-card { width: 100%; max-width: none; min-height: 0; flex: 0 1 auto; }
+.pdf-comment-popup[data-side="top"] > .popup-motion { --popup-motion-from: translateY(6px); --popup-motion-origin: bottom center; }
+/* The preview never stands in the pointer's way, and fades in on the fast tier. */
+.pdf-comment-preview { pointer-events: none; animation: pdf-comment-preview-in var(--motion-fast) both; }
+@keyframes pdf-comment-preview-in {
+  from { opacity: 0; }
+  to { opacity: 1; }
+}
+.pdf-annotation-pin {
+  position: absolute;
+  translate: calc(-100% - 4px) -50%;
+  pointer-events: auto;
+  cursor: pointer;
+  box-shadow: 0 0 0 2px var(--surface-panel);
+}
+.pdf-annotate-offer {
+  position: absolute;
+  z-index: 6;
+  display: inline-flex;
+  align-items: center;
+  gap: var(--gap-inline-tight);
+  height: var(--control-height-compact);
+  margin: var(--space-2) 0 0;
+  padding: 0 var(--pad-inline-control);
+  translate: -100% 0;
+  border: 0;
+  border-radius: var(--radius-pill);
+  background: var(--surface-elevated);
+  box-shadow: var(--elevation-popover);
+  color: var(--text-primary);
+  font: var(--type-body-compact-weight) var(--type-body-compact-size)/var(--type-body-compact-line-height) var(--ui-font);
+  white-space: nowrap;
+  cursor: pointer;
+  animation: annotation-review-in var(--motion-fast);
+}
+.pdf-annotate-offer:hover { background: color-mix(in srgb, var(--surface-elevated) 92%, var(--text-primary)); }
+.pdf-annotation-composer { position: absolute; z-index: 7; }
+
+/* Notes and Highlights as peers (Fable, Notion), and one color filter whose
+   menu lists each meaning with its count (Linear), in place of a wall of
+   pills that wrapped unevenly with long meanings. */
+.annotations-tabs {
+  grid-area: tabs;
+  min-width: 0;
+  display: flex;
+  gap: var(--space-6);
+  border-bottom: 1px solid var(--border-subtle);
+}
+.annotations-tab {
+  position: relative;
+  min-width: 0;
+  height: 30px;
+  padding: 0;
+  border: 0;
+  background: transparent;
+  color: var(--text-secondary);
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-2);
+  font: var(--weight-medium) var(--type-body-compact-size)/1 var(--ui-font);
+  white-space: nowrap;
+}
+.annotations-tab:hover { color: var(--text-primary); }
+.annotations-tab[aria-pressed="true"] { color: var(--text-primary); }
+.annotations-tab[aria-pressed="true"]::after {
+  content: "";
+  position: absolute;
+  inset-inline: 0;
+  bottom: -1px;
+  height: 2px;
+  border-radius: 2px 2px 0 0;
+  background: var(--text-primary);
+}
+.annotations-tab-count { color: var(--text-tertiary); font-weight: var(--weight-regular); font-variant-numeric: tabular-nums; }
+.annotations-kind-filter {
+  grid-area: filter;
+  justify-self: start;
+  max-width: 100%;
+  min-width: 0;
+  display: inline-flex;
+  border-radius: var(--radius-control);
+  box-shadow: inset 0 0 0 1px var(--border-subtle);
+}
+.annotations-kind-filter[data-active] { background: var(--control-active-soft); box-shadow: inset 0 0 0 1px var(--border-strong); }
+.annotations-kind-trigger, .annotations-kind-clear {
+  height: 28px;
+  border: 0;
+  background: transparent;
+  color: var(--text-primary);
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-3);
+  font: var(--type-caption-weight) var(--type-caption-size)/1 var(--ui-font);
+}
+.annotations-kind-trigger { min-width: 0; padding: 0 var(--space-4) 0 var(--space-3); border-radius: var(--radius-control); }
+.annotations-kind-trigger svg { flex: none; color: var(--text-secondary); }
+.annotations-kind-trigger:hover { background: var(--control-hover-surface); }
+.annotations-kind-clear { padding: 0 var(--space-3); border-inline-start: 1px solid var(--border-subtle); border-radius: 0 var(--radius-control) var(--radius-control) 0; color: var(--text-secondary); }
+.annotations-kind-clear:hover { color: var(--text-primary); background: var(--control-hover-surface); }
+.annotations-kind-label { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.annotations-kind-stack { flex: none; display: inline-flex; }
+.annotations-kind-stack i {
+  width: 12px;
+  height: 12px;
+  border-radius: var(--radius-pill);
+  box-shadow: 0 0 0 1.5px var(--surface-panel), inset 0 0 0 1px color-mix(in srgb, #242426 16%, transparent);
+}
+.annotations-kind-stack i + i { margin-inline-start: -4px; }
+.annotations-kind-chip {
+  flex: none;
+  width: 24px;
+  height: 18px;
+  border-radius: var(--radius-compact);
+  box-shadow: inset 0 0 0 1px color-mix(in srgb, #242426 12%, transparent);
+  color: #242426;
+  display: grid;
+  place-items: center;
+  font: var(--type-micro-size)/1 var(--reading-font);
+}
+.annotations-kind-chip[data-kind="other"], .annotations-kind-stack i[data-kind="other"] { background: conic-gradient(#FFF1A6 0 33%, #D3E4FF 0 66%, #FFD6E4 0); }
+.annotations-kind-menu {
+  box-sizing: border-box;
+  width: min(280px, var(--radix-popover-content-available-width, 280px));
+  padding: var(--space-2);
+  border-radius: var(--radius-surface);
+  background: var(--surface-elevated);
+  box-shadow: var(--elevation-popover);
+  display: grid;
+  gap: 1px;
+}
+.annotations-kind-row {
+  min-width: 0;
+  min-height: 30px;
+  padding: 0 var(--space-3);
+  border: 0;
+  border-radius: var(--radius-control);
+  background: transparent;
+  color: var(--text-primary);
+  display: grid;
+  grid-template-columns: 24px minmax(0, 1fr) auto 14px;
+  align-items: center;
+  column-gap: var(--space-4);
+  font: var(--type-caption-weight) var(--type-caption-size)/var(--type-caption-line-height) var(--ui-font);
+  text-align: start;
+}
+.annotations-kind-row:hover { background: var(--control-active-soft); }
+.annotations-kind-row:first-child { margin-bottom: var(--space-1); }
+.annotations-kind-row:first-child::after { content: none; }
+.annotations-kind-row-label { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.annotations-kind-row-count { color: var(--text-secondary); font-variant-numeric: tabular-nums; }
+.annotation-highlight-meta { display: flex; flex-wrap: nowrap; gap: var(--space-3); min-width: 0; white-space: nowrap; }
+.annotation-highlight-meta > .annotation-card-where { flex: none; }
+.annotation-highlight-kind-label { min-width: 0; overflow: hidden; color: var(--text-tertiary); text-overflow: ellipsis; white-space: nowrap; }
+.annotation-highlight-kind-label::before { content: "·"; margin-inline-end: var(--space-3); }
