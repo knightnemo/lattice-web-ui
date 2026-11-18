@@ -1,10 +1,10 @@
 schema = 1
 id = "io.github.knightnemo.lattice-remote"
 name = "Remote Workspace"
-version = "0.3.0"
+version = "0.4.0"
 api = 1
 license = "MIT"
-description = "Open your Lattice workspace through Tailscale or HTTPS account sign-in."
+description = "Open your Lattice workspace through Tailscale, device pairing, or account sign-in."
 runtime = "node"
 main = "main.mjs"
 

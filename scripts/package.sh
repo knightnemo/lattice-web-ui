@@ -3,8 +3,8 @@ set -euo pipefail
 
 root="$(cd "$(dirname "$0")/.." && pwd)"
 source_checkout="${1:-$root/../lattice-integrated}"
-revision=6f09e22969b77cef139eed4732d992e73aee93bb
-version=0.3.0
+revision=9133b64b2b59d6bd1bf5a4c425c084f610150f20
+version=0.4.0
 out="$root/dist"
 
 if ! git -C "$source_checkout" cat-file -e "$revision^{commit}"; then
@@ -21,6 +21,7 @@ git -C "$source_checkout" archive --prefix=source/ "$revision" | tar -xf - -C "$
 cp "$root/scripts/build-linux.sh" "$kit/build-linux.sh"
 cp "$root/README.md" "$kit/README.md"
 cp -R "$root/account-gateway" "$kit/account-gateway"
+cp -R "$root/device-pairing" "$kit/device-pairing"
 mkdir -p "$kit/test"
 cp "$root/test/account-gateway.test.mjs" "$kit/test/"
 printf '%s\n' "$revision" > "$kit/source-revision.txt"

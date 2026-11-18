@@ -2,25 +2,35 @@
 
 A Lattice plugin that opens a Linux-hosted workspace. Open the same HTTPS
 address from the Mac plugin or a phone browser. The Linux companion supports
-private Tailscale access and an HTTPS account gateway with an email allowlist.
+private Tailscale access, QR pairing for trusted devices, and an HTTPS account
+gateway with an email allowlist.
 
 ## Install the Mac plugin
 
 Use a macOS Lattice build with **Settings → Plugins** (Plugin API 1).
 Choose **Install from folder…** and select this repository's `plugin/` directory.
 Enable **Remote Workspace**, then run **Remote Workspace: Set workspace address…**
-from the command palette. Enter the HTTPS workspace origin shown by Tailscale
-Serve or configured for the account gateway.
+from the command palette. Enter the HTTPS workspace origin supplied by your
+deployment.
 
 **Remote Workspace: Open remote workspace** opens the saved address in your
 default browser. Sign in with your allowed account for the account gateway.
 For Tailscale access, enter the workspace access token on the login page.
+For QR pairing, the owner signs in first and authorizes each device.
 The plugin remembers the HTTPS origin in its own data folder and has no
 network, project or secret grants. The browser keeps the authentication cookie.
 On a phone, open the same address directly.
 
-`dist/remote-workspace-0.3.0.zip` is the corresponding package for **Install from
+`dist/remote-workspace-0.4.0.zip` is the corresponding package for **Install from
 URL…** when hosted at an HTTPS URL. Its checksum is in `dist/SHA256SUMS`.
+
+## Pair a phone or another computer
+
+From the owner's workspace, open **Devices → Pair a device** and scan the QR
+code. The invite works once and expires in two minutes. Later, the owner can
+separately revoke that device from the same menu. The QR deployment uses an
+ordinary HTTPS origin. See [trusted-device pairing](device-pairing/README.md)
+to prepare the companion and ingress.
 
 ## Sign in from any device
 
@@ -54,8 +64,8 @@ On the Linux host, install Node 22, pnpm 10.13.1, Rust (see
 Extract the source kit and build it:
 
 ```bash
-tar -xzf lattice-remote-source-0.3.0.tar.gz
-cd lattice-remote-source-0.3.0
+tar -xzf lattice-remote-source-0.4.0.tar.gz
+cd lattice-remote-source-0.4.0
 ./build-linux.sh
 tar -xzf "lattice-remote-host-$(uname -m).tar.gz"
 cd lattice-remote-host

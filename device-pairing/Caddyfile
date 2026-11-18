@@ -1,0 +1,10 @@
+{$LATTICE_PAIRING_ORIGIN} {
+	header {
+		Cache-Control "private, no-store"
+		Referrer-Policy "no-referrer"
+	}
+	reverse_proxy 127.0.0.1:{$LATTICE_PAIRING_PORT:18493} {
+		header_up -Authorization
+		header_up -X-Lattice-Account-Proxy
+	}
+}
