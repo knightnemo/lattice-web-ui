@@ -24,6 +24,8 @@ from urllib.parse import urlsplit
 
 MAX_RESPONSE_BYTES = 128 * 1024
 SESSION_COOKIE = re.compile(r"lattice_session=([a-f0-9]{32});")
+DEVICE_COOKIE_NAME = "__Host-lattice_device"
+DEVICE_CREDENTIAL = re.compile(r"[a-fA-F0-9]{64}")
 # Preserve the ID returned by the companion. Current builds use compact UUIDs.
 DEVICE_ID_PATTERN = r"(?:[a-f0-9]{32}|[a-f0-9]{8}(?:-[a-f0-9]{4}){3}-[a-f0-9]{12})"
 DEVICE_ID = re.compile(DEVICE_ID_PATTERN)
@@ -89,6 +91,18 @@ def safe_device(device):
     return {"id": device_id, "label": label, "expiresAt": expires}
 
 
+def device_cookie(headers):
+    values = []
+    for header in headers:
+        for entry in header.split(";"):
+            name, _, value = entry.strip().partition("=")
+            if name == DEVICE_COOKIE_NAME:
+                values.append(value)
+    if len(values) == 1 and DEVICE_CREDENTIAL.fullmatch(values[0]):
+        return f"{DEVICE_COOKIE_NAME}={values[0]}"
+    return None
+
+
 class LatticePairing:
     def __init__(self, port, public_origin, token_file):
         self.port = port
@@ -98,7 +112,7 @@ class LatticePairing:
         self.cookie = None
         self.lock = threading.Lock()
 
-    def request(self, method, path, body=None):
+    def request(self, method, path, body=None, *, cookie=None):
         headers = {
             "Host": self.public_authority,
             "Origin": self.public_origin,
@@ -106,8 +120,8 @@ class LatticePairing:
         }
         if body is not None:
             headers["Content-Type"] = "application/json"
-        if self.cookie is not None:
-            headers["Cookie"] = self.cookie
+        if cookie is not None:
+            headers["Cookie"] = cookie
         connection = http.client.HTTPConnection("127.0.0.1", self.port, timeout=5)
         try:
             connection.request(method, path, body, headers)
@@ -146,11 +160,11 @@ class LatticePairing:
         with self.lock:
             if self.cookie is None:
                 self.login()
-            status, _, data = self.request(method, path)
+            status, _, data = self.request(method, path, cookie=self.cookie)
             if status in (401, 403):
                 self.cookie = None
                 self.login()
-                status, _, data = self.request(method, path)
+                status, _, data = self.request(method, path, cookie=self.cookie)
         if status != 200:
             raise UpstreamError(429 if status == 429 else 502)
         if path == "/api/devices":
@@ -163,6 +177,24 @@ class LatticePairing:
         if data.get("revoked") is not True:
             raise UpstreamError()
         return {"revoked": True}
+
+    def open_workspace(self, browser_cookie):
+        if browser_cookie:
+            status, _, data = self.request(
+                "POST", "/api/devices/resume", "{}", cookie=browser_cookie
+            )
+            if status == 200:
+                if (
+                    data.get("authenticated") is True
+                    and data.get("devicePairing") is True
+                    and data.get("canManageDevices") is False
+                ):
+                    return {"url": f"{self.public_origin}/"}
+                raise UpstreamError()
+            if status not in (401, 403):
+                raise UpstreamError(429 if status == 429 else 502)
+        invite = self.operation("POST", "/api/devices/invites")
+        return {"url": invite["url"]}
 
     def invite(self, data):
         url = data.get("url")
@@ -254,16 +286,23 @@ class OwnerHandler(BaseHTTPRequestHandler):
         if not (
             (self.command == "GET" and self.path == "/api/devices")
             or (self.command == "POST" and (
-                self.path == "/api/devices/invites" or REVOKE_PATH.fullmatch(self.path)
+                self.path in ("/api/devices/invites", "/api/workspace/open")
+                or REVOKE_PATH.fullmatch(self.path)
             ))
         ):
             self.send_json(404, {"error": "Unknown device management route."})
             return
         try:
-            data = self.server.pairing.operation(self.command, self.path)
+            if self.path == "/api/workspace/open":
+                browser_cookie = None
+                if self.server.share_device_cookie:
+                    browser_cookie = device_cookie(self.headers.get_all("Cookie", []))
+                data = self.server.pairing.open_workspace(browser_cookie)
+            else:
+                data = self.server.pairing.operation(self.command, self.path)
         except UpstreamError as error:
             self.send_json(error.status, {"error": (
-                "Too many active invitations." if error.status == 429
+                "Too many requests. Try again shortly." if error.status == 429
                 else "The workspace is temporarily unavailable. Try again."
             )})
         except (OSError, ValueError, http.client.HTTPException):
@@ -283,12 +322,17 @@ class OwnerServer(socketserver.ThreadingMixIn, socketserver.UnixStreamServer):
         self.ingress_uid = args.ingress_uid
         self.private_origin = args.private_origin
         self.private_authority = urlsplit(args.private_origin).netloc
+        self.share_device_cookie = (
+            urlsplit(args.private_origin).hostname == urlsplit(args.public_origin).hostname
+        )
         self.pairing = LatticePairing(args.upstream_port, args.public_origin, args.token_file)
         directory = Path(__file__).resolve().parent
         page = (directory / "index.html").read_text(encoding="utf-8")
+        page = page.replace("{{PUBLIC_ORIGIN}}", html.escape(args.public_origin))
+        page = page.replace("{{DIRECT_LINK_HIDDEN}}", " hidden" if self.share_device_cookie else "")
         self.assets = {
             "/": (
-                page.replace("{{PUBLIC_ORIGIN}}", html.escape(args.public_origin)).encode(),
+                page.encode(),
                 "text/html; charset=utf-8",
             ),
             "/owner.js": ((directory / "owner.js").read_bytes(), "text/javascript; charset=utf-8"),

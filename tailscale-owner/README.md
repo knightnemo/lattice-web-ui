@@ -3,8 +3,10 @@
 Open the private owner address from a computer connected to Tailscale.
 The configured owner can list, pair and revoke devices. A phone can scan
 the QR code and open the existing public editor without joining Tailscale.
-For another browser on your computer, open the pairing link once in that
-browser. The editor remembers the resulting device credential.
+Select **Open workspace** and, on a new browser, confirm the one-time pairing.
+The editor remembers the resulting device credential. When the owner page and
+editor use different hostnames, a browser that has already paired can use
+**Already paired? Open directly**.
 
 The owner page authenticates each request through Tailscale Serve. The
 gateway requests and renews its Lattice administrator session on the server.

@@ -11,9 +11,10 @@
     <main>
       <header>
         <h1>Workspace devices</h1>
-        <a id="workspace" href="{{PUBLIC_ORIGIN}}/">Open workspace</a>
+        <button id="open" type="button">Open workspace</button>
       </header>
       <p>Signed in with Tailscale.</p>
+      <p{{DIRECT_LINK_HIDDEN}}><a id="workspace" href="{{PUBLIC_ORIGIN}}/">Already paired? Open directly</a></p>
       <section aria-labelledby="pair-heading">
         <h2 id="pair-heading">Pair a device</h2>
         <p>On a new device, scan the code or open its pairing link. Once paired, open the workspace directly.</p>

@@ -13,7 +13,7 @@ let countdown;
 async function request(path, method = "GET") {
   const response = await fetch(path, {
     method,
-    credentials: "omit",
+    credentials: path === "/api/workspace/open" ? "same-origin" : "omit",
     mode: "same-origin",
     cache: "no-store",
     redirect: "error",
@@ -48,14 +48,25 @@ function drawCode(matrix) {
   });
 }
 
+function workspaceLink(value, needsCode = false) {
+  const link = new URL(value);
+  const hasCode = /^#pair=[A-Za-z0-9_-]{32,128}$/.test(link.hash);
+  if (link.origin !== workspace.origin || link.pathname !== "/" || link.search ||
+      link.username || link.password || (!hasCode && (needsCode || link.hash))) {
+    throw new Error("The server returned an invalid workspace link.");
+  }
+  return link;
+}
+
+async function openWorkspace() {
+  const data = await request("/api/workspace/open", "POST");
+  window.location.assign(workspaceLink(data.url).href);
+}
+
 async function showInvitation() {
   hideInvitation();
   const data = await request("/api/devices/invites", "POST");
-  const link = new URL(data.url);
-  if (link.origin !== workspace.origin || link.pathname !== "/" || link.search ||
-      !/^#pair=[A-Za-z0-9_-]{32,128}$/.test(link.hash)) {
-    throw new Error("The server returned an invalid pairing link.");
-  }
+  const link = workspaceLink(data.url, true);
   inviteLink.href = link.href;
   drawCode(data.qr);
   invitation.hidden = false;
@@ -116,6 +127,7 @@ async function refreshDevices() {
   }
 }
 
+byId("open").addEventListener("click", withButton(byId("open"), openWorkspace));
 byId("pair").addEventListener("click", withButton(byId("pair"), showInvitation));
 byId("refresh").addEventListener("click", withButton(byId("refresh"), refreshDevices));
 byId("copy").addEventListener("click", withButton(byId("copy"), async () => {

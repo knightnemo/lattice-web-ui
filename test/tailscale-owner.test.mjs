@@ -16,6 +16,8 @@ const ownerHost = new URL(ownerOrigin).host;
 const ownerLogin = "owner@example.test";
 const token = "0".repeat(64);
 const pairFragment = "#pair=" + "a".repeat(64);
+const deviceCookie = "__Host-lattice_device=" + "b".repeat(64);
+const staleDeviceCookie = "__Host-lattice_device=" + "c".repeat(64);
 const deviceId = "a".repeat(32);
 const claimedDevice = { id: deviceId, label: "<template>Test Mac", expiresAt: 1800000000 };
 const qr = Array.from({ length: 21 }, () => "0".repeat(21));
@@ -92,6 +94,12 @@ test("Tailscale owner gateway isolates the trusted Unix ingress and upstream pai
         "Set-Cookie": `lattice_session=${sessionId}; Path=/api; Secure; HttpOnly`,
       });
     }
+    if (req.url === "/api/devices/resume" && req.method === "POST") {
+      if (req.headers.cookie !== deviceCookie) return respond(401, { error: "Unknown device." });
+      return respond(200, { authenticated: true, devicePairing: true, canManageDevices: false }, {
+        "Set-Cookie": `lattice_session=${"d".repeat(32)}; Path=/api; Secure; HttpOnly`,
+      });
+    }
     if (!sessions.has(req.headers.cookie)) return respond(403, { error: "No session." });
     if (req.url === "/api/devices") return respond(200, { devices });
     if (req.url === "/api/devices/invites") {
@@ -117,10 +125,10 @@ test("Tailscale owner gateway isolates the trusted Unix ingress and upstream pai
   upstream.listen(0, "127.0.0.1");
   await once(upstream, "listening");
 
-  async function start(ingressUid = process.getuid()) {
+  async function start(ingressUid = process.getuid(), privateOrigin = ownerOrigin, listener = socketPath) {
     const child = spawn("python3", [
-      source, "--socket", socketPath, "--owner-file", join(directory, "owner"),
-      "--token-file", join(directory, "token"), "--private-origin", ownerOrigin,
+      source, "--socket", listener, "--owner-file", join(directory, "owner"),
+      "--token-file", join(directory, "token"), "--private-origin", privateOrigin,
       "--public-origin", publicOrigin, "--ingress-uid", String(ingressUid),
       "--upstream-port", String(upstream.address().port),
     ], { stdio: "ignore" });
@@ -128,7 +136,7 @@ test("Tailscale owner gateway isolates the trusted Unix ingress and upstream pai
     const started = once(child, "spawn");
     await started;
     const deadline = Date.now() + 4000;
-    while (!existsSync(socketPath) || (statSync(socketPath).mode & 0o777) !== 0o600) {
+    while (!existsSync(listener) || (statSync(listener).mode & 0o777) !== 0o600) {
       assert.equal(child.exitCode, null, "Gateway exited during startup.");
       assert.ok(Date.now() < deadline, "Gateway did not create its private socket.");
       await pause(25);
@@ -162,13 +170,18 @@ test("Tailscale owner gateway isolates the trusted Unix ingress and upstream pai
     assert.match(await rawResponse(socketPath, `${prefix}Tailscale-User-Login: ${ownerLogin}\r\n\r\n`), /^HTTP\/1\.0 403/);
     assert.match(await rawResponse(socketPath, `${prefix}Host: ${ownerHost}\r\n\r\n`), /^HTTP\/1\.0 403/);
     assert.match(await rawResponse(socketPath, `${prefix}X-Forwarded-Host: ${ownerHost}\r\n\r\n`), /^HTTP\/1\.0 403/);
-    for (const invalid of [undefined, publicOrigin, "https://different.example.test"]) {
-      assert.equal((await request(socketPath, "/api/devices/invites", {
-        method: "POST",
-        headers: invalid ? { ...headers, Origin: invalid } : headers,
-      })).status, 403);
+    for (const path of ["/api/devices/invites", "/api/workspace/open"]) {
+      for (const invalid of [undefined, publicOrigin, "https://different.example.test"]) {
+        assert.equal((await request(socketPath, path, {
+          method: "POST",
+          headers: invalid ? { ...headers, Origin: invalid } : headers,
+        })).status, 403);
+      }
     }
-    for (const path of ["/api/session", "/api/devices/pair", "/api/devices?name=Other", "/api/devices/invalid/revoke"]) {
+    assert.equal((await request(socketPath, "/api/workspace/open", {
+      method: "POST", headers: { ...anonymous, Origin: ownerOrigin, Cookie: deviceCookie },
+    })).status, 403);
+    for (const path of ["/api/session", "/api/devices/pair", "/api/devices?name=Other", "/api/devices/invalid/revoke", "/api/workspace/open"]) {
       assert.equal((await request(socketPath, path)).status, 404);
     }
     assert.equal((await request(socketPath, "/api/devices/invites", {
@@ -181,6 +194,8 @@ test("Tailscale owner gateway isolates the trusted Unix ingress and upstream pai
     const page = await request(socketPath, "/");
     assert.equal(page.status, 200);
     assert.match(page.body, /Signed in with Tailscale/);
+    assert.match(page.body, /<button id="open" type="button">Open workspace<\/button>/);
+    assert.match(page.body, /<p hidden><a id="workspace"/);
     assert.ok(page.body.includes(`href="${publicOrigin}/"`));
     assert.equal(page.headers["cache-control"], "no-store");
     assert.match(page.headers["content-security-policy"], /frame-ancestors 'none'/);
@@ -209,6 +224,66 @@ test("Tailscale owner gateway isolates the trusted Unix ingress and upstream pai
     assert.equal(logins, 2);
     assert.equal(listing.headers["set-cookie"], undefined);
     assert.deepEqual(JSON.parse(listing.body).devices, [claimedDevice]);
+  });
+
+  const openPath = "/api/workspace/open";
+  function openWorkspace(cookie, listener = socketPath, privateOrigin = ownerOrigin) {
+    return request(listener, openPath, {
+      method: "POST",
+      headers: {
+        ...headers,
+        "X-Forwarded-Host": new URL(privateOrigin).host,
+        Origin: privateOrigin,
+        ...(cookie && { Cookie: cookie }),
+      },
+    });
+  }
+
+  await t.test("opens an already paired browser with only its device cookie and no new invitation", async () => {
+    const before = upstreamRequests.length;
+    const result = await openWorkspace(`unrelated=ignored; ${deviceCookie}; lattice_session=ignored`);
+    assert.equal(result.status, 200);
+    assert.deepEqual(JSON.parse(result.body), { url: `${publicOrigin}/` });
+    assert.equal(result.headers["set-cookie"], undefined);
+    assert.deepEqual(upstreamRequests.slice(before).map(({ path, method, headers, body }) =>
+      [path, method, headers.cookie, body]), [["/api/devices/resume", "POST", deviceCookie, "{}"]]);
+    const listing = await request(socketPath, "/api/devices");
+    assert.equal(listing.status, 200);
+    assert.equal(logins, 2, "A device probe leaves the owner session alone.");
+  });
+
+  await t.test("creates an invitation when the browser credential is absent, invalid, ambiguous or stale", async () => {
+    for (const cookie of [null, "__Host-lattice_device=no", `${deviceCookie}; ${staleDeviceCookie}`, staleDeviceCookie]) {
+      const before = upstreamRequests.length;
+      const result = await openWorkspace(cookie);
+      assert.equal(result.status, 200);
+      assert.deepEqual(JSON.parse(result.body), { url: `${publicOrigin}/${pairFragment}` });
+      assert.equal(result.headers["set-cookie"], undefined);
+      const paths = upstreamRequests.slice(before).map(({ path }) => path);
+      assert.deepEqual(paths, cookie === staleDeviceCookie
+        ? ["/api/devices/resume", "/api/devices/invites"]
+        : ["/api/devices/invites"]);
+      assert.match(upstreamRequests.at(-1).headers.cookie, /^lattice_session=[a-f0-9]{32}$/);
+    }
+  });
+
+  await t.test("ignores cookies when owner and editor use different hostnames", async () => {
+    const separateOrigin = "https://owner.example.test:9443";
+    const separateSocket = join(directory, "other.sock");
+    await start(process.getuid(), separateOrigin, separateSocket);
+    const page = await request(separateSocket, "/", {
+      headers: { ...headers, "X-Forwarded-Host": new URL(separateOrigin).host },
+    });
+    assert.equal(page.status, 200);
+    assert.match(page.body, /<p><a id="workspace"[^>]*>Already paired\? Open directly/);
+    const before = upstreamRequests.length;
+    const result = await openWorkspace(deviceCookie, separateSocket, separateOrigin);
+    assert.equal(result.status, 200);
+    assert.deepEqual(JSON.parse(result.body), { url: `${publicOrigin}/${pairFragment}` });
+    assert.equal(result.headers["set-cookie"], undefined);
+    const requests = upstreamRequests.slice(before);
+    assert.deepEqual(requests.map(({ path }) => path), ["/api/session", "/api/devices/invites"]);
+    assert.ok(requests.every(({ headers }) => headers.cookie !== deviceCookie));
   });
 
   await t.test("mints an invitation only for the public origin and supports revoking a device", async () => {
