@@ -3,8 +3,8 @@ set -euo pipefail
 
 root="$(cd "$(dirname "$0")/.." && pwd)"
 source_checkout="${1:-$root/../lattice-integrated}"
-revision=a83eb0572150eeeeb2003e93a7df02ea825ba6e6
-version=0.1.0
+revision=76820bab093ba2f0f5949efbdf944c41eb99f766
+version=0.2.0
 out="$root/dist"
 
 if ! git -C "$source_checkout" cat-file -e "$revision^{commit}"; then

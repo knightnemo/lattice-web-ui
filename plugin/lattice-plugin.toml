@@ -1,7 +1,7 @@
 schema = 1
 id = "io.github.knightnemo.lattice-remote"
 name = "Remote Workspace"
-version = "0.1.0"
+version = "0.2.0"
 api = 1
 license = "MIT"
 description = "Open your private Lattice workspace served by a Linux host."

@@ -18,8 +18,20 @@ The plugin remembers the HTTPS origin in its own data folder and has no
 network, project or secret grants. The browser keeps the authentication cookie.
 On a phone, open the same address directly.
 
-`dist/remote-workspace-0.1.0.zip` is the corresponding package for **Install from
+`dist/remote-workspace-0.2.0.zip` is the corresponding package for **Install from
 URL…** when hosted at an HTTPS URL. Its checksum is in `dist/SHA256SUMS`.
+
+## Use Remote Workspace on iPhone Duo
+
+Open the workspace HTTPS address in Safari. The outer display shows a full-width
+editor. Unfold to see the editor and PDF side by side, with your draft and cursor
+position intact. When Safari is in a narrow Split View window, the editor uses
+the single-pane layout. The mobile toolbar can open the PDF or project files
+directly.
+
+The layout is served by the Linux companion. To upgrade an existing server,
+build the 0.2.0 source kit and rerun the companion installer with your existing
+workspace and service settings. The Mac plugin keeps using the same URL.
 
 ## Run the Linux companion
 
@@ -33,8 +45,8 @@ On the Linux host, install Node 22, pnpm 10.13.1, Rust (see
 `latexmk`. Join the authorized tailnet. Extract the source kit and build it:
 
 ```bash
-tar -xzf lattice-remote-source-0.1.0.tar.gz
-cd lattice-remote-source-0.1.0
+tar -xzf lattice-remote-source-0.2.0.tar.gz
+cd lattice-remote-source-0.2.0
 ./build-linux.sh
 tar -xzf "lattice-remote-host-$(uname -m).tar.gz"
 cd lattice-remote-host
