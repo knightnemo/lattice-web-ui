@@ -15,7 +15,7 @@ on:
 permissions: {}
 
 concurrency:
-  group: verify-${{ inputs.pr_number }}-${{ inputs.head_sha }}
+  group: verify-${{ inputs.pr_number }}-${{ inputs.head_sha }}-${{ github.sha }}
   cancel-in-progress: true
 
 jobs:
@@ -46,6 +46,7 @@ jobs:
   verify:
     name: Verify tests and packages
     needs: plan
+    if: needs.plan.outputs.head != ''
     runs-on: ubuntu-24.04
     timeout-minutes: 15
     permissions:
@@ -120,6 +121,8 @@ jobs:
       && github.repository == 'knightnemo/lattice-web-ui'
       && github.ref == 'refs/heads/main' }}
     needs: [plan, verify]
+    outputs:
+      requeue: ${{ steps.publish.outputs.requeue }}
     runs-on: ubuntu-24.04
     timeout-minutes: 5
     permissions:
@@ -131,15 +134,26 @@ jobs:
         with:
           ref: ${{ github.sha }}
           persist-credentials: false
-      - env:
+      - id: publish
+        env:
           GH_TOKEN: ${{ github.token }}
           PR_NUMBER: ${{ inputs.pr_number }}
           PR_HEAD_SHA: ${{ inputs.head_sha }}
           VERIFY_RESULT: ${{ needs.verify.result }}
         run: node automation/pr-ci.mjs publish
 
+  requeue:
+    needs: publish
+    if: ${{ !cancelled() && needs.publish.outputs.requeue == 'true' }}
+    permissions:
+      actions: write
+    uses: ./.github/workflows/queue-pr-verification.yml
+    with:
+      pr_number: ${{ inputs.pr_number }}
+      head_sha: ${{ inputs.head_sha }}
+
   review:
-    if: needs.plan.result == 'success'
+    if: needs.plan.outputs.head != ''
     needs: plan
     uses: ./.github/workflows/pr-review.yml
     permissions:

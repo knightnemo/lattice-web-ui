@@ -91,12 +91,14 @@ test("packaging uses the exact PR pin and requires its tag, commit and tree", as
     `head=${head}\nnumber=2\npackaging=false\ncompanion_sha=\n`);
 });
 
-test("the required CI result belongs to current main and the exact open PR head", async () => {
+test("the required CI result belongs to current main and the exact open PR head", async (t) => {
+  const directory = await mkdtemp(join(tmpdir(), "lattice-pr-requeue-"));
+  t.after(() => rm(directory, { recursive: true, force: true }));
   const repo = "knightnemo/lattice-web-ui";
   const base = "b".repeat(40);
   const env = {
     GITHUB_REPOSITORY: repo, GITHUB_REF: "refs/heads/main", GITHUB_SHA: base,
-    GITHUB_RUN_ID: "17", VERIFY_RESULT: "success",
+    GITHUB_RUN_ID: "17", VERIFY_RESULT: "success", GITHUB_OUTPUT: join(directory, "output"),
   };
   const checks = [];
   const pull = {
@@ -117,7 +119,11 @@ test("the required CI result belongs to current main and the exact open PR head"
   );
   await assert.rejects(publish(api(), headRequest, { ...env, GITHUB_REF: "refs/tags/v0.4.0" }),
     /trusted main/);
-  await assert.rejects(publish(api(pull, head), headRequest, env), /Main changed/);
+  await plan(api(pull, head), headRequest, env);
+  await publish(api(pull, head), headRequest, env);
+  await publish(api({ ...pull, state: "closed" }, head), headRequest, env);
+  await publish(api({ ...pull, head: { sha: base } }, head), headRequest, env);
+  assert.equal(await readFile(env.GITHUB_OUTPUT, "utf8"), "requeue=true\n");
   await publish(api({ ...pull, head: { sha: base } }), headRequest, env);
   await publish(api({ ...pull, base: { ...pull.base, repo: { full_name: "other/repo" } } }),
     headRequest, env);
