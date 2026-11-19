@@ -25,6 +25,8 @@ cp "$root/test/account-gateway.test.mjs" "$kit/test/"
 printf '%s\n' "$original" > "$kit/source-revision.txt"
 
 node "$root/scripts/pack-plugin.mjs" "$root/plugin" "$out/remote-workspace-$version.zip"
+mkdir -p "$kit/docs"
+cp "$root/docs/releases.md" "$kit/docs/"
 COPYFILE_DISABLE=1 tar --no-xattrs -czf "$out/lattice-remote-source-$version.tar.gz" -C "$stage" "lattice-remote-source-$version"
 (cd "$out" && shasum -a 256 "remote-workspace-$version.zip" "lattice-remote-source-$version.tar.gz" > SHA256SUMS)
 printf '%s\n' "$out/lattice-remote-source-$version.tar.gz"
