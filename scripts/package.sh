@@ -28,6 +28,12 @@ node "$root/scripts/pack-plugin.mjs" "$root/plugin" "$out/remote-workspace-$vers
 mkdir -p "$kit/docs/assets"
 cp "$root/docs/releases.md" "$kit/docs/"
 cp "$root/docs/assets/lattice-web-ui.png" "$kit/docs/assets/"
+if [[ ! -f "$root/scripts/check-host-update.py" || -L "$root/scripts/check-host-update.py" ]]; then
+  echo 'Expected a regular host update helper.' >&2
+  exit 1
+fi
+cp "$root/scripts/check-host-update.py" "$kit/check-host-update.py"
+printf '%s\n' "$version" > "$kit/release-version.txt"
 COPYFILE_DISABLE=1 tar --no-xattrs -czf "$out/lattice-remote-source-$version.tar.gz" -C "$stage" "lattice-remote-source-$version"
 (cd "$out" && shasum -a 256 "remote-workspace-$version.zip" "lattice-remote-source-$version.tar.gz" > SHA256SUMS)
 printf '%s\n' "$out/lattice-remote-source-$version.tar.gz"
