@@ -3,6 +3,7 @@
   <h1>Lattice-web-ui</h1>
   <p>Edit LaTeX and preview PDFs from your computer or phone, with the workspace running on a Linux host.</p>
   <p>
+    <a href="https://github.com/lattice-writer/lattice-web-ui/releases/latest"><img src="https://img.shields.io/github/v/release/lattice-writer/lattice-web-ui?color=4f6456" alt="Latest stable release"></a>
     <a href="#run-your-own-workspace"><img src="https://img.shields.io/badge/Host-Linux-4f6456" alt="Host platform Linux"></a>
     <a href="https://github.com/lattice-writer/lattice-web-ui/blob/main/plugin/LICENSE"><img src="https://img.shields.io/badge/Mac_plugin-MIT-4f6456" alt="Mac plugin license MIT"></a>
     <a href="https://github.com/lattice-writer/lattice-web-ui/blob/6fe84151f216df4057797a5e24982b4613c64868/README.md#license"><img src="https://img.shields.io/badge/Companion-License_notices-4f6456" alt="Companion license notices"></a>
@@ -27,15 +28,19 @@ expires after two minutes. Bookmark the address and keep using the same
 browser profile or installed web app. The pairing survives a server restart.
 On iPhone, use Safari's **Share → Add to Home Screen** to open it like an app.
 
-If you use Lattice on your Mac, you can add a shortcut inside the app.
+### Add a shortcut in Lattice for Mac
 
-1. In **Settings → Plugins**, choose **Install from folder…** and select this
-   repository's `plugin/` folder. Enable **Lattice-web-ui**.
+1. Open the [latest release](https://github.com/lattice-writer/lattice-web-ui/releases/latest)
+   and copy the URL of `remote-workspace-X.Y.Z.zip`. In **Settings → Plugins →
+   Install from URL…**, enter that URL and its SHA-256 from the release's checksum
+   file. Enable **Lattice-web-ui**.
 2. In the command palette, run **Lattice-web-ui: Set workspace address…** and
    enter the same HTTPS address you opened in the browser.
 3. Run **Lattice-web-ui: Open remote workspace** to open it in your browser.
 
-A release ZIP also works with **Install from URL…**. [Release downloads](https://github.com/lattice-writer/lattice-web-ui/releases)
+To try the source version, [download the repository ZIP](https://github.com/lattice-writer/lattice-web-ui/archive/refs/heads/main.zip)
+or clone the repository. Use **Install from folder…** and select its `plugin/`
+directory. Keep that directory in place while the plugin is installed.
 
 ## Run your own workspace
 

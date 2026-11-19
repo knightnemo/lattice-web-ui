@@ -5,7 +5,7 @@ Each release has these four assets.
 
 | File | Use it for |
 | --- | --- |
-| `remote-workspace-X.Y.Z.zip` | Install the launcher from Lattice's Plugins settings. |
+| `remote-workspace-X.Y.Z.zip` | Install the launcher in [Lattice's Plugins settings](../README.md#add-a-shortcut-in-lattice-for-mac) with the ZIP URL and its SHA-256. |
 | `lattice-remote-source-X.Y.Z.tar.gz` | Build the Linux host kit on the target architecture. |
 | `SHA256SUMS-vX.Y.Z.txt` | Check the two downloads with `shasum -a 256 -c` or `sha256sum -c`. |
 | `release-vX.Y.Z.json` | Identify the exact release commit, companion snapshot, and asset hashes. |
