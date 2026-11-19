@@ -9,6 +9,16 @@
   </p>
 </div>
 
+## Watch the setup film
+
+*The Line Stays* (5:59) follows one workspace from its Linux host to a second Mac
+and a paired iPhone. It shows how to install the plugin, add the web app to the
+Dock or Home Screen, and keep an unsaved edit when the phone unfolds.
+
+https://github.com/user-attachments/assets/8052b304-7d79-45c5-91cb-7ac2d459ffd0
+
+[English transcript and film credits](https://github.com/knightnemo/lattice-web-ui/blob/main/docs/the-line-stays.md)
+
 ## Open a workspace
 
 Open the workspace's HTTPS address. If the workspace uses device pairing, ask
