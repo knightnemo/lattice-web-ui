@@ -16,6 +16,13 @@ workspace window and keeps the current document in place. If a revoked device
 opens a new pairing invitation in that window, confirm the device name there
 to reconnect with the editor still open.
 
+Opening the address of a pairing-enabled workspace on a new phone shows the
+invitation instructions. Scan the owner's fresh code to reach **Pair this
+device**. The owner can expand **Workspace owner sign-in** to use the host
+token. The example below uses a local test address.
+
+![Pairing instructions with a separate owner sign-in option](images/mobile-pairing-entry.png)
+
 On a standalone server, the workspace shows one panel at widths up to 640 CSS
 pixels. From 641 to 1024 pixels, it opens the editor and PDF side by side.
 The bottom bar highlights the visible panels. Opening a project file brings
