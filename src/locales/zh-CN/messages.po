@@ -4381,6 +4381,10 @@ msgstr "无法从服务器读取此资源。"
 msgid "Could not read:"
 msgstr "无法读取："
 
+#: src/platform/headless-session-recovery.ts
+msgid "Could not reconnect. If your device needs pairing, open a new invite in another tab of this browser, then reconnect here. Your edits are still here."
+msgstr "无法重新连接。如果设备需要配对，请在同一浏览器的新标签页中打开新的邀请链接，然后回到这里重新连接。此标签页保留了你的修改。"
+
 #: src/overleaf/use-overleaf-realtime.ts
 msgid "Could not record Overleaf's {scopedPermission} permission locally ({detail})."
 msgstr "无法保存 Overleaf 的 {scopedPermission} 权限（{detail}）"
@@ -4424,6 +4428,10 @@ msgstr "无法显示改动：{errorMessage}"
 #: src/history/conflict-resolver.tsx
 msgid "Could not render this file: {0}"
 msgstr "无法显示：{0}"
+
+#: src/platform/headless-session-recovery.ts
+msgid "Could not reopen this project. Keep this tab open and reconnect when the workspace is available."
+msgstr "无法重新打开此项目。请保留此标签页，待工作区恢复后重新连接。"
 
 #: src/platform/host-errors-workspace.ts
 msgid "Could not replace the installed rtex: {error}"
@@ -11620,6 +11628,10 @@ msgstr "重新检查服务器工具"
 msgid "Recompiling…"
 msgstr "正在重新编译…"
 
+#: src/platform/headless-session-recovery.ts
+msgid "Reconnect"
+msgstr "重新连接"
+
 #: src/platform/host-errors-google.ts
 msgid "Reconnect Google Workspace with permission for this product."
 msgstr "请重新连接 Google Workspace 并授权此产品。"
@@ -11635,6 +11647,10 @@ msgstr "正在重连 — 最近在线的成员"
 #: src/overleaf/overleaf-presence.tsx
 msgid "Reconnecting to Overleaf…"
 msgstr "正在重新连接 Overleaf…"
+
+#: src/platform/headless-session-recovery.ts
+msgid "Reconnecting to your workspace…"
+msgstr "正在重新连接工作区…"
 
 #: src/project/paper-inspector.tsx
 msgid "Record"
@@ -13241,6 +13257,10 @@ msgstr "分隔线"
 msgid "Server access token"
 msgstr "服务器访问令牌"
 
+#: src/platform/headless-session-recovery.ts
+msgid "Server session expired. Keep this tab open, reconnect, then try the action again."
+msgstr "服务器会话已过期。请保留此标签页，重新连接后再试一次。"
+
 #: src/build/server-tool-setup.tsx
 msgid "Server tools"
 msgstr "服务器工具"
@@ -13459,6 +13479,10 @@ msgstr "登录 {linkedHost} 后继续同步"
 #: src/overleaf/overleaf-connect.tsx
 msgid "Sign in to {linkedHost}, then resume"
 msgstr "登录 {linkedHost} 后继续"
+
+#: src/platform/headless-session-recovery.ts
+msgid "Sign in to keep editing. Your unsaved changes are still in this tab."
+msgstr "登录后即可继续编辑。未保存的修改仍保留在此标签页中。"
 
 #: src/app/use-overleaf-workspace.ts
 #: src/overleaf/use-overleaf-login.ts

@@ -13,3 +13,6 @@
 .headless-device-list { list-style:none; padding:0; max-height:25dvh; overflow:auto; }
 .headless-device-list li { display:flex; align-items:center; justify-content:space-between; gap:var(--space-5); padding:var(--space-3) 0; }
 .headless-device-list li span { overflow-wrap:anywhere; }
+
+.headless-reconnect { position:fixed; z-index:var(--z-toast); inset:auto var(--space-8) var(--space-8) auto; max-width:min(26rem,90vw); max-height:85dvh; overflow:auto; padding:var(--space-8); border:1px solid var(--border-subtle); border-radius:var(--radius-dialog); color:var(--text-primary); background:var(--surface-app); }
+.headless-reconnect .headless-login { min-height:0; padding:var(--space-4) 0; }

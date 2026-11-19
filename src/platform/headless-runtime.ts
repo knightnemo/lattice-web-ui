@@ -1,5 +1,6 @@
 import { BrowserEventRegistry, decodeBridgeValue, encodeBridgeValue, isHeadlessHosted, LOCAL_COMMANDS } from "./browser-runtime";
 import { confirmDevicePairing, showServerLogin, takePairingCode } from "./headless-login";
+import { installSessionRecovery, sessionExpired } from "./headless-session-recovery";
 import "./headless.css";
 
 declare global {
@@ -32,7 +33,7 @@ export async function serverRequest<T>(path: string, body?: unknown): Promise<T>
   });
   if (response.status === 401) {
     window.dispatchEvent(new Event("lattice:session-expired"));
-    throw new Error("Server session expired. Reload to sign in again.");
+    throw new Error(sessionExpired());
   }
   const value = await response.json();
   if (!response.ok || value.error) {
@@ -50,19 +51,23 @@ export function installHeadlessRuntime(session: HeadlessSession): () => void {
   let nextId = 1;
   const runCallback = (id: number, payload: unknown) => callbacks.get(id)?.(payload);
   const localEvents = new BrowserEventRegistry(runCallback);
-  const eventSource = new EventSource(`/api/events?${new URLSearchParams({ client })}`, { withCredentials: true });
+  const openStream = () => new EventSource(`/api/events?${new URLSearchParams({ client })}`, { withCredentials: true });
+  let eventSource = openStream();
+  let projectRoot: string | undefined;
+  let disposed = false;
   const waitForEvents = () => {
-    if (eventSource.readyState === 1) return Promise.resolve();
+    const stream = eventSource;
+    if (stream.readyState === 1) return Promise.resolve();
     return new Promise<void>((resolve, reject) => {
       const opened = () => { clearTimeout(timer); resolve(); };
       const timer = window.setTimeout(() => {
-        eventSource.removeEventListener("open", opened);
+        stream.removeEventListener("open", opened);
         reject(new Error("The server event stream is unavailable. Reconnect before opening a terminal."));
       }, 20_000);
-      eventSource.addEventListener("open", opened, { once: true });
+      stream.addEventListener("open", opened, { once: true });
     });
   };
-  eventSource.onmessage = (message) => {
+  const handleMessage = (message: MessageEvent) => {
     let value: EventPayload;
     try { value = JSON.parse(message.data) as EventPayload; } catch { return; }
     if (typeof value.callback === "number") {
@@ -73,6 +78,26 @@ export function installHeadlessRuntime(session: HeadlessSession): () => void {
       if (listener.event === value.event) runCallback(listener.callback, { event: value.event, id, payload: value.payload });
     }
   };
+  const attachStream = () => {
+    eventSource.onmessage = handleMessage;
+    eventSource.onerror = () => {
+      if (eventSource.readyState === EventSource.CLOSED) window.dispatchEvent(new Event("lattice:session-expired"));
+    };
+  };
+  attachStream();
+  const recovery = installSessionRecovery(session, () => eventSource.close(), async (renewed) => {
+    if (projectRoot) {
+      // A fresh session starts on the host default. Restore the tab before allowing any new commands.
+      const restored = await serverRequest<{ result: { root: string } }>("/api/invoke", {
+        command: "open_project", args: { path: projectRoot },
+      });
+      if (restored.result.root !== projectRoot) throw new Error("The server returned a different project.");
+    }
+    if (disposed) return;
+    session = renewed;
+    eventSource = openStream();
+    attachStream();
+  });
   const invoke = async (command: string, args: Record<string, unknown> = {}) => {
     const local = LOCAL_COMMANDS.get(command);
     if (local) return local(args);
@@ -111,11 +136,14 @@ export function installHeadlessRuntime(session: HeadlessSession): () => void {
       const { chooseServerProject } = await import("./headless-project-picker");
       return chooseServerProject();
     }
+    recovery.requireConnected();
     if (session.capabilities && !session.capabilities.commands.includes(command)) {
       throw new Error(`${command} is unavailable on this server. See server capabilities.`);
     }
     if (command === "terminal_open" || command === "terminal_run" || command === "terminal_attach") await waitForEvents();
     const value = await serverRequest<{ result: unknown }>("/api/invoke", { command, args: encodeBridgeValue(args) });
+    if ((command === "initial_project" || command === "open_project") && value.result && typeof value.result === "object" &&
+        "root" in value.result && typeof value.result.root === "string") projectRoot = value.result.root;
     if (command === "read_compiled_pdf" && Array.isArray(value.result)) return Uint8Array.from(value.result).buffer;
     return decodeBridgeValue(value.result as Parameters<typeof decodeBridgeValue>[0]);
   };
@@ -151,6 +179,7 @@ export function installHeadlessRuntime(session: HeadlessSession): () => void {
   runtime.__LATTICE_HEADLESS_TERMINAL__ = Boolean(session.capabilities?.commands.includes("terminal_open"));
   runtime.isTauri = true;
   return () => {
+    disposed = true; recovery.dispose();
     eventSource.close(); listeners.clear(); callbacks.clear();
     if (activeClient === client) {
       activeClient = undefined;

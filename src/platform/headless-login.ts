@@ -3,9 +3,8 @@ import { i18n } from "../i18n";
 import { serverRequest, type HeadlessSession } from "./headless-runtime";
 
 /** Keep the access token in the form only; the server issues an HttpOnly session cookie. */
-export function showServerLogin(devicePairing = false): Promise<HeadlessSession> {
+export function showServerLogin(devicePairing = false, root = document.getElementById("root")!): Promise<HeadlessSession> {
   return new Promise((resolve) => {
-    const root = document.getElementById("root")!;
     const form = document.createElement("form");
     form.className = "headless-login";
     const title = document.createElement("h1");
@@ -32,7 +31,8 @@ export function showServerLogin(devicePairing = false): Promise<HeadlessSession>
     }
     form.append(label, button, status);
     root.replaceChildren(form);
-    input.focus();
+    // A background autosave can expire while the user is still typing in the editor.
+    if (root.id === "root") input.focus();
     form.onsubmit = async (event) => {
       event.preventDefault();
       button.disabled = true;

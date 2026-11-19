@@ -30,20 +30,29 @@ function spawnService(binary, args, env = {}) {
   const program = spawn(binary, args, { env: { ...process.env, ...env }, stdio: ["ignore", "ignore", "pipe"] });
   const stopped = new Promise((done) => program.once("close", done));
   program.stderr.on("data", (bytes) => logs.push(String(bytes)));
-  processes.push({ program, stopped });
+  const service = { program, stopped };
+  processes.push(service);
+  return service;
 }
 
 try {
   const [backendPort, tlsPort] = await Promise.all([listenPort(), listenPort()]);
   const origin = `https://127.0.0.1:${tlsPort}`;
   const tokenFile = join(scratch, "token");
-  const workspace = join(scratch, "paper");
-  await mkdir(workspace);
-  await writeFile(join(workspace, "main.tex"), "\\documentclass{article}\n\\begin{document}\nPaired workspace.\n\\end{document}\n");
-  spawnService(backend, [
-    "serve", "--workspace-root", workspace, "--state-dir", join(scratch, "state"), "--token-file", tokenFile,
+  const workspace = join(scratch, "projects");
+  const paper = join(workspace, "paper");
+  const otherPaper = join(workspace, "other");
+  const otherText = "Another project with the same filename.";
+  await mkdir(paper, { recursive: true });
+  await mkdir(otherPaper);
+  await writeFile(join(otherPaper, "main.tex"), otherText);
+  const main = join(paper, "main.tex");
+  await writeFile(main, "\\documentclass{article}\n\\begin{document}\nPaired workspace.\n\\end{document}\n");
+  const startBackend = (project) => spawnService(backend, [
+    "serve", "--project", project, "--workspace-root", workspace, "--state-dir", join(scratch, "state"), "--token-file", tokenFile,
     "--assets", assets, "--listen", `127.0.0.1:${backendPort}`, "--secure-cookies", "--public-origin", origin, "--device-pairing",
   ]);
+  const original = startBackend(paper);
   const config = join(scratch, "Caddyfile");
   const local = (await readFile(template, "utf8")).replace(
     "{$LATTICE_PAIRING_ORIGIN} {", "{$LATTICE_PAIRING_ORIGIN} {\n\tbind 127.0.0.1\n\ttls internal",
@@ -102,9 +111,10 @@ try {
     assert.ok(scanned.trim() === url, "scanning the rendered code returns the exact invite");
   }
 
-  const phone = await browser.newPage({
+  const phoneContext = await browser.newContext({
     viewport: { width: 382, height: 580 }, hasTouch: true, isMobile: true, ignoreHTTPSErrors: true,
   });
+  const phone = await phoneContext.newPage();
   const redemption = [];
   phone.on("request", (request) => {
     assert.ok(!request.url().includes("#pair="));
@@ -124,13 +134,93 @@ try {
   await phone.reload();
   await phone.locator(".cm-content").first().waitFor();
 
+  await owner.keyboard.press("Escape");
+  await owner.getByRole("dialog", { name: "Remote devices" }).waitFor({ state: "hidden" });
+  await owner.setViewportSize({ width: 382, height: 580 });
+  const editor = owner.locator(".cm-content").first();
+  await editor.focus();
+  original.program.kill("SIGTERM");
+  await original.stopped;
+  await owner.keyboard.press("End");
+  await owner.keyboard.insertText("OWNER-DRAFT");
+  await owner.keyboard.press("ArrowLeft");
+  const editorNode = await editor.elementHandle();
+  const caret = () => editor.evaluate((node) => {
+    const selection = window.getSelection();
+    if (!selection?.focusNode || !node.contains(selection.focusNode)) return null;
+    const range = document.createRange();
+    range.setStart(node, 0);
+    range.setEnd(selection.focusNode, selection.focusOffset);
+    return range.toString().length;
+  });
+  const offset = await caret();
+  assert.ok(offset > 0);
+  startBackend(otherPaper);
+  for (let i = 0; i < 100; i++) {
+    if (await fetch(`http://127.0.0.1:${backendPort}/api/session`).then((r) => r.ok).catch(() => false)) break;
+    await delay(100);
+  }
+  const save = (page) => page.getByRole("navigation", { name: "Workspace panels" }).getByRole("button", { name: "Save", exact: true });
+  await save(owner).dispatchEvent("click");
+  await owner.getByLabel("Server access token").fill(token);
+  assert.ok(!(await readFile(main, "utf8")).includes("OWNER-DRAFT"));
+  await owner.getByRole("button", { name: "Connect", exact: true }).click();
+  await owner.locator(".headless-reconnect").waitFor({ state: "detached" });
+  assert.equal(await editor.evaluate((node, previous) => node === previous, editorNode), true);
+  await editor.focus();
+  assert.equal(await caret(), offset);
+  const waitForSaved = async (marker) => {
+    for (let i = 0; i < 100; i++) {
+      if ((await readFile(main, "utf8")).includes(marker)) return;
+      await delay(100);
+    }
+    assert.fail("draft did not reach the original project");
+  };
+  await save(owner).dispatchEvent("click");
+  await waitForSaved("OWNER-DRAFT");
+  assert.equal(await readFile(join(otherPaper, "main.tex"), "utf8"), otherText);
+
+  // An existing paired browser resumes through the device cookie after the same restart.
+  const getProject = () => phone.evaluate(async () => (await window.__TAURI_INTERNALS__.invoke("initial_project")).root);
+  await getProject().catch(() => {});
+  const realRoot = await editor.evaluate(() => window.__TAURI_INTERNALS__.invoke("initial_project").then((project) => project.root));
+  await phone.waitForFunction(async (root) => {
+    try { return (await window.__TAURI_INTERNALS__.invoke("initial_project")).root === root; } catch { return false; }
+  }, realRoot);
+  assert.equal(await phone.getByLabel("Server access token").count(), 0);
+  await owner.setViewportSize({ width: 1300, height: 820 });
+  await devices.click();
   await owner.getByRole("button", { name: "Refresh devices" }).click();
   await owner.getByText("Test iPhone", { exact: true }).waitFor();
   await owner.getByRole("button", { name: "Revoke", exact: true }).click();
   await owner.getByText("Test iPhone", { exact: true }).waitFor({ state: "hidden" });
-  await phone.reload();
-  await phone.getByRole("heading", { name: "Workspace owner sign-in" }).waitFor();
-  console.log(`${engine.name()}: Mac QR, iPhone confirmation, return session and revocation passed over HTTPS.`);
+  const phoneEditor = phone.locator(".cm-content").first();
+  await phoneEditor.focus();
+  await phone.keyboard.press("End");
+  await phone.keyboard.insertText("PAIRED-DRAFT");
+  await save(phone).dispatchEvent("click");
+  await phone.getByRole("button", { name: "Reconnect", exact: true }).waitFor();
+  assert.equal(await phone.getByLabel("Server access token").count(), 0);
+  assert.ok((await phoneEditor.innerText()).includes("PAIRED-DRAFT"));
+  assert.ok(!(await readFile(main, "utf8")).includes("PAIRED-DRAFT"));
+
+  const [newInvite] = await Promise.all([
+    owner.waitForResponse((response) => response.url() === origin + "/api/devices/invites", { timeout: 12000 }),
+    owner.getByRole("button", { name: "Pair a device", exact: true }).click({ timeout: 10000 }),
+  ]);
+  const fresh = await phoneContext.newPage();
+  await fresh.goto((await newInvite.json()).url);
+  await fresh.getByLabel("Device name").fill("Paired again");
+  await fresh.getByRole("button", { name: "Connect this device" }).click();
+  await fresh.locator(".cm-content").first().waitFor();
+  await phone.getByRole("button", { name: "Reconnect", exact: true }).click();
+  await phone.locator(".headless-reconnect").waitFor({ state: "detached" });
+  await save(phone).dispatchEvent("click");
+  await waitForSaved("PAIRED-DRAFT");
+  assert.equal(await readFile(join(otherPaper, "main.tex"), "utf8"), otherText);
+  assert.equal(await phone.getByRole("button", { name: "Devices", exact: true }).count(), 0);
+  assert.ok((await readFile(main, "utf8")).includes("OWNER-DRAFT"));
+  console.log(`${engine.name()}: owner draft and caret survived restart; paired resume, revocation, new invitation, and saving to the original project passed over HTTPS.`);
 } catch (error) {
   console.error(logs.join("").slice(-4500));
   throw error;

@@ -42,6 +42,13 @@ The server confines projects to its configured workspace root. Run and install
 the standalone server as described in its own documentation; this frontend
 does not provide an AI sidecar, terminal or language server by itself.
 
+If a session expires while editing, keep the tab open. Token users can sign in
+in the editor, and paired browsers try their device credential. After
+reconnection, retry the failed action. The editor keeps its draft and restores
+the same project on the server. If a device was revoked, ask the owner for a
+fresh invite, open it in another tab of the same browser, and select
+**Reconnect** in the original tab.
+
 ## Phone and foldable layouts
 
 The remote workspace opens the active editor as a single pane at widths up to

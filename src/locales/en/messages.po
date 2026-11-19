@@ -4381,6 +4381,10 @@ msgstr "Could not read this asset from the server."
 msgid "Could not read:"
 msgstr "Could not read:"
 
+#: src/platform/headless-session-recovery.ts
+msgid "Could not reconnect. If your device needs pairing, open a new invite in another tab of this browser, then reconnect here. Your edits are still here."
+msgstr "Could not reconnect. If your device needs pairing, open a new invite in another tab of this browser, then reconnect here. Your edits are still here."
+
 #: src/overleaf/use-overleaf-realtime.ts
 msgid "Could not record Overleaf's {scopedPermission} permission locally ({detail})."
 msgstr "Could not record Overleaf's {scopedPermission} permission locally ({detail})."
@@ -4424,6 +4428,10 @@ msgstr "Could not render this diff: {errorMessage}"
 #: src/history/conflict-resolver.tsx
 msgid "Could not render this file: {0}"
 msgstr "Could not render this file: {0}"
+
+#: src/platform/headless-session-recovery.ts
+msgid "Could not reopen this project. Keep this tab open and reconnect when the workspace is available."
+msgstr "Could not reopen this project. Keep this tab open and reconnect when the workspace is available."
 
 #: src/platform/host-errors-workspace.ts
 msgid "Could not replace the installed rtex: {error}"
@@ -11620,6 +11628,10 @@ msgstr "Recheck server tools"
 msgid "Recompiling…"
 msgstr "Recompiling…"
 
+#: src/platform/headless-session-recovery.ts
+msgid "Reconnect"
+msgstr "Reconnect"
+
 #: src/platform/host-errors-google.ts
 msgid "Reconnect Google Workspace with permission for this product."
 msgstr "Reconnect Google Workspace with permission for this product."
@@ -11635,6 +11647,10 @@ msgstr "Reconnecting to Overleaf — people last seen in this project"
 #: src/overleaf/overleaf-presence.tsx
 msgid "Reconnecting to Overleaf…"
 msgstr "Reconnecting to Overleaf…"
+
+#: src/platform/headless-session-recovery.ts
+msgid "Reconnecting to your workspace…"
+msgstr "Reconnecting to your workspace…"
 
 #: src/project/paper-inspector.tsx
 msgid "Record"
@@ -13241,6 +13257,10 @@ msgstr "Separator"
 msgid "Server access token"
 msgstr "Server access token"
 
+#: src/platform/headless-session-recovery.ts
+msgid "Server session expired. Keep this tab open, reconnect, then try the action again."
+msgstr "Server session expired. Keep this tab open, reconnect, then try the action again."
+
 #: src/build/server-tool-setup.tsx
 msgid "Server tools"
 msgstr "Server tools"
@@ -13459,6 +13479,10 @@ msgstr "Sign in to {linkedHost} to resume syncing"
 #: src/overleaf/overleaf-connect.tsx
 msgid "Sign in to {linkedHost}, then resume"
 msgstr "Sign in to {linkedHost}, then resume"
+
+#: src/platform/headless-session-recovery.ts
+msgid "Sign in to keep editing. Your unsaved changes are still in this tab."
+msgstr "Sign in to keep editing. Your unsaved changes are still in this tab."
 
 #: src/app/use-overleaf-workspace.ts
 #: src/overleaf/use-overleaf-login.ts

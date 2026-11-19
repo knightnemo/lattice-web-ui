@@ -84,6 +84,36 @@ describe("the real Tauri consumers on a headless server", () => {
     await expect(serverRequest("/api/invoke", {})).rejects.toThrow("session expired");
     expect(expired).toHaveBeenCalledOnce();
   });
+  it("holds new commands until the old project is restored and never replays the rejected command", async () => {
+    vi.stubGlobal("EventSource", ServerEvents);
+    const session = { headless: true, authenticated: true, devicePairing: true, canManageDevices: false };
+    disposers.push(installHeadlessRuntime(session));
+    const eventStream = ServerEvents.current;
+    const commands: string[] = [];
+    let finishRestore!: () => void;
+    const restoring = new Promise<void>((resolve) => { finishRestore = resolve; });
+    vi.stubGlobal("fetch", vi.fn(async (path: string, options: RequestInit) => {
+      if (path === "/api/session") return Response.json({ ...session, authenticated: false });
+      if (path === "/api/devices/resume") return Response.json(session);
+      const { command, args } = JSON.parse(String(options.body));
+      commands.push(command);
+      if (command === "create_project_entry") return new Response(null, { status: 401 });
+      if (command === "open_project") {
+        expect(args.path).toBe("/projects/paper");
+        await restoring;
+      }
+      return Response.json({ result: { root: "/projects/paper" } });
+    }));
+    await invoke("initial_project");
+    await expect(invoke("create_project_entry")).rejects.toThrow("session expired");
+    await vi.waitFor(() => expect(commands).toContain("open_project"));
+    await expect(invoke("terminal_run")).rejects.toThrow("session expired");
+    finishRestore();
+    await vi.waitFor(() => expect(ServerEvents.current).not.toBe(eventStream));
+    expect(eventStream.close).toHaveBeenCalledOnce();
+    expect(commands).toEqual(["initial_project", "create_project_entry", "open_project"]);
+    await expect(invoke("read_project_file")).resolves.toEqual({ root: "/projects/paper" });
+  });
   it("opens an isolated browser login while preserving a self-hosted path prefix", async () => {
     install();
     const open = vi.spyOn(window, "open").mockReturnValue(null);
