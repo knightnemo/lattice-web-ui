@@ -5,6 +5,8 @@ import { installHeadlessRuntime, serverRequest } from "./headless-runtime";
 
 class ServerEvents extends EventTarget {
   static current: ServerEvents;
+  static readonly CLOSED = 2;
+  onerror: (() => Promise<void>) | null = null;
   onmessage: ((event: { data: string }) => void) | null = null;
   close = vi.fn();
   readyState = 1;
@@ -83,6 +85,34 @@ describe("the real Tauri consumers on a headless server", () => {
     vi.stubGlobal("fetch", vi.fn().mockResolvedValue(new Response("", { status: 401 })));
     await expect(serverRequest("/api/invoke", {})).rejects.toThrow("session expired");
     expect(expired).toHaveBeenCalledOnce();
+  });
+  it("probes a closed stream once without reopening a healthy session or acting on a stale probe", async () => {
+    vi.stubGlobal("EventSource", ServerEvents);
+    const session = { headless: true, authenticated: true, devicePairing: true, canManageDevices: false };
+    disposers.push(installHeadlessRuntime(session));
+    const first = ServerEvents.current;
+    first.readyState = ServerEvents.CLOSED;
+    const probe = vi.fn().mockResolvedValue(Response.json({}));
+    vi.stubGlobal("fetch", probe);
+    await first.onerror!();
+    expect(probe.mock.calls.map(([path]) => path)).toEqual(["/api/capabilities"]);
+    expect(ServerEvents.current).toBe(first);
+    expect(first.onerror).toBeNull();
+    disposers.pop()!();
+    disposers.push(installHeadlessRuntime(session));
+    const closed = ServerEvents.current;
+    closed.readyState = ServerEvents.CLOSED;
+    let finishProbe!: (response: Response) => void;
+    probe.mockReturnValueOnce(new Promise<Response>((resolve) => { finishProbe = resolve; }));
+    const stale = closed.onerror!();
+    probe.mockResolvedValue(Response.json(session));
+    window.dispatchEvent(new Event("lattice:session-expired"));
+    await vi.waitFor(() => expect(ServerEvents.current).not.toBe(closed));
+    const recovered = ServerEvents.current;
+    finishProbe(new Response(null, { status: 401 }));
+    await stale;
+    expect(ServerEvents.current).toBe(recovered);
+    expect(probe.mock.calls.map(([path]) => path)).toEqual(["/api/capabilities", "/api/capabilities", "/api/session"]);
   });
   it("holds new commands until the old project is restored and never replays the rejected command", async () => {
     vi.stubGlobal("EventSource", ServerEvents);

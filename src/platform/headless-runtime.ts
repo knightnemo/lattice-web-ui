@@ -79,13 +79,27 @@ export function installHeadlessRuntime(session: HeadlessSession): () => void {
     }
   };
   const attachStream = () => {
-    eventSource.onmessage = handleMessage;
-    eventSource.onerror = () => {
-      if (eventSource.readyState === EventSource.CLOSED) window.dispatchEvent(new Event("lattice:session-expired"));
+    const stream = eventSource;
+    stream.onmessage = handleMessage;
+    stream.onerror = async () => {
+      if (stream.readyState !== EventSource.CLOSED) return;
+      stream.onerror = null;
+      // EventSource hides the HTTP status. A proxy or terminal-stream failure must not restart a healthy session.
+      try {
+        const probe = await fetch("/api/capabilities", { credentials: "same-origin", cache: "no-store" });
+        if (!disposed && eventSource === stream && probe.status === 401) {
+          window.dispatchEvent(new Event("lattice:session-expired"));
+        }
+      } catch { /* Offline: the next protected request can report an expired session. */ }
     };
   };
+  const closeStream = () => {
+    eventSource.onmessage = null;
+    eventSource.onerror = null;
+    eventSource.close();
+  };
   attachStream();
-  const recovery = installSessionRecovery(session, () => eventSource.close(), async (renewed) => {
+  const recovery = installSessionRecovery(session, closeStream, async (renewed) => {
     if (projectRoot) {
       // A fresh session starts on the host default. Restore the tab before allowing any new commands.
       const restored = await serverRequest<{ result: { root: string } }>("/api/invoke", {
@@ -180,7 +194,7 @@ export function installHeadlessRuntime(session: HeadlessSession): () => void {
   runtime.isTauri = true;
   return () => {
     disposed = true; recovery.dispose();
-    eventSource.close(); listeners.clear(); callbacks.clear();
+    closeStream(); listeners.clear(); callbacks.clear();
     if (activeClient === client) {
       activeClient = undefined;
       delete window.__LATTICE_HEADLESS_DEVICE_OWNER__;
