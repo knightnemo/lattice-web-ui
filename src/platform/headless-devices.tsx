@@ -68,11 +68,9 @@ function DeviceDialog({ onClose }: { onClose: () => void }) {
     update({ busy: true, status: "", invite: null });
     try {
       // eslint-disable-next-line lingui/no-unlocalized-strings -- server route
-      update({ invite: await serverRequest<Invite>("/api/devices/invites", {}) });
+      update({ invite: await serverRequest<Invite>("/api/devices/invites", {}), busy: false });
     } catch {
-      update({ status: t`Could not create a pairing code.` });
-    } finally {
-      update({ busy: false });
+      update({ status: t`Could not create a pairing code.`, busy: false });
     }
   };
   const revoke = async (id: string) => {
@@ -81,10 +79,9 @@ function DeviceDialog({ onClose }: { onClose: () => void }) {
       // eslint-disable-next-line lingui/no-unlocalized-strings -- server route
       await serverRequest(`/api/devices/${encodeURIComponent(id)}/revoke`, {});
       await refresh();
-    } catch {
-      update({ status: t`Could not revoke this device.` });
-    } finally {
       update({ busy: false });
+    } catch {
+      update({ status: t`Could not revoke this device.`, busy: false });
     }
   };
 
