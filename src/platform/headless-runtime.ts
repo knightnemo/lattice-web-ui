@@ -206,7 +206,7 @@ export function installHeadlessRuntime(session: HeadlessSession): () => void {
   };
   runtime.__LATTICE_BROWSER_RUNTIME__ = true;
   runtime.__LATTICE_HEADLESS_CLIENT__ = client;
-  window.__LATTICE_HEADLESS_DEVICE_OWNER__ = Boolean(session.devicePairing && session.canManageDevices);
+  window.__LATTICE_HEADLESS_DEVICE_OWNER__ = session.devicePairing ? Boolean(session.canManageDevices) : undefined;
   runtime.__LATTICE_HEADLESS_TERMINAL__ = Boolean(session.capabilities?.commands.includes("terminal_open"));
   runtime.isTauri = true;
   return () => {

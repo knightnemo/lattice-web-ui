@@ -59,6 +59,11 @@ Choosing the action saves the open document edits and reopens this tab’s
 project. An unfinished composition, a failed write or an edit made during
 saving keeps the workspace open so you can finish the edit and retry.
 
+If the host enables its release-check timer, Settings also lists newer stable
+Lattice-web-ui releases with a link to the official GitHub notes. Browsers read
+the host’s same-origin `/lattice-host-update.json`. A new upstream release is
+informational until the host operator deploys it.
+
 ## Phone and foldable layouts
 
 The remote workspace opens the active editor as a single pane at widths up to

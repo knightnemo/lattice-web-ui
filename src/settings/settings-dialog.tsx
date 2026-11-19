@@ -13,6 +13,7 @@ import { SwitchField } from "../components/ui/switch-field";
 import { ModalDialog } from "../components/ui/modal-dialog";
 import { useUpdater, type UpdaterApi } from "../telemetry/app-updater";
 import { isHeadlessHosted } from "../platform/browser-runtime";
+import { buttonClassName } from "../components/ui/button-styles";
 import { subscribeWebUpdate, webUpdateSnapshot } from "../platform/headless-web-update";
 import {
   type Theme,
@@ -484,18 +485,24 @@ function WebBuildSettings() {
   const detail = failed ? t`Couldn’t check for updates`
     : available ? t`This tab uses build ${loaded}. The server has build ${served}.`
     : loaded ? t`This tab uses build ${loaded}.` : undefined;
+  const release = update?.release;
   return (
-    <SettingsRow data-setting="version" label={t`Version`} description={detail}>
-      <ReloadButton size="compact" busy={busy} disabled={busy || !update} onClick={async () => {
-        if (!update) return;
-        setBusy(true);
-        if (available) { await update.reload(); setFailed(false); }
-        else setFailed(!await update.check());
-        setBusy(false);
-      }}>
-        {available ? t`Save and reload` : busy ? t`Checking…` : t`Check for updates`}
-      </ReloadButton>
-    </SettingsRow>
+    <>
+      <SettingsRow data-setting="version" label={t`Version`} description={detail}>
+        <ReloadButton size="compact" busy={busy} disabled={busy || !update} onClick={async () => {
+          if (!update) return;
+          setBusy(true);
+          if (available) { await update.reload(); setFailed(false); }
+          else setFailed(!await update.check());
+          setBusy(false);
+        }}>
+          {available ? t`Save and reload` : busy ? t`Checking…` : t`Check for updates`}
+        </ReloadButton>
+      </SettingsRow>
+      {release && <SettingsRow label={t`Host release`} description={t`This host runs Lattice-web-ui ${release.installedVersion}. Version ${release.latestVersion} is available on GitHub.`}>
+        <a className={buttonClassName({ size: "compact" })} href={release.notesUrl} target="_blank" rel="noopener noreferrer">{t`View release notes`}</a>
+      </SettingsRow>}
+    </>
   );
 }
 

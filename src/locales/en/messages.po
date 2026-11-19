@@ -6841,6 +6841,10 @@ msgstr "Horizontal rule that divides sections."
 msgid "Horizontal space"
 msgstr "Horizontal space"
 
+#: src/settings/settings-dialog.tsx
+msgid "Host release"
+msgstr "Host release"
+
 #: src/papers/bib-entry-dialog.tsx
 msgid "How the entry reads"
 msgstr "How the entry reads"
@@ -7944,6 +7948,10 @@ msgstr "Lattice update failed"
 #: src/trellis/trellis-workspace.tsx
 msgid "Lattice workspace"
 msgstr "Lattice workspace"
+
+#: src/platform/headless-web-update.ts
+msgid "Lattice-web-ui {latestVersion} is available on GitHub"
+msgstr "Lattice-web-ui {latestVersion} is available on GitHub"
 
 #: src/platform/host-errors-setup.ts
 msgid "Lattice's managed {tool} failed user-level verification.\n"
@@ -15434,6 +15442,12 @@ msgstr "This Google Workspace operation is not supported."
 msgid "this group"
 msgstr "this group"
 
+#. placeholder {0}: release.installedVersion
+#. placeholder {1}: release.latestVersion
+#: src/settings/settings-dialog.tsx
+msgid "This host runs Lattice-web-ui {0}. Version {1} is available on GitHub."
+msgstr "This host runs Lattice-web-ui {0}. Version {1} is available on GitHub."
+
 #: src/platform/host-errors-project.ts
 msgid "This HTML file is too large to open (32 MB maximum)."
 msgstr "This HTML file is too large to open (32 MB maximum)."
@@ -16482,6 +16496,11 @@ msgstr "View license"
 #: src/canvas/paper-reader.tsx
 msgid "View original PDF"
 msgstr "View original PDF"
+
+#: src/platform/headless-web-update.ts
+#: src/settings/settings-dialog.tsx
+msgid "View release notes"
+msgstr "View release notes"
 
 #: src/build/compile-diagnostics-panel.tsx
 msgid "View repair"

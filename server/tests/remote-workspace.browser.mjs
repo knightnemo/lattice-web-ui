@@ -1,7 +1,8 @@
 /** Run against the standalone server and the production web bundle on loopback. */
 import assert from "node:assert/strict";
 import { spawn } from "node:child_process";
-import { mkdtemp, mkdir, readFile, rm, writeFile } from "node:fs/promises";
+import { constants } from "node:fs";
+import { cp, mkdtemp, mkdir, readFile, rm, writeFile } from "node:fs/promises";
 import { createServer } from "node:net";
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
@@ -10,8 +11,12 @@ import { chromium, webkit } from "playwright-core";
 
 const engine = process.env.LATTICE_TEST_BROWSER === "webkit" ? webkit : chromium;
 const binary = resolve(process.env.LATTICE_SERVER_BINARY ?? "server/target/debug/lattice-server");
-const assets = resolve(process.env.LATTICE_WEB_ASSETS ?? "dist");
 const scratch = await mkdtemp(join(tmpdir(), "lattice-duo-"));
+const assets = join(scratch, "web");
+await cp(resolve(process.env.LATTICE_WEB_ASSETS ?? "dist"), assets, { recursive: true, mode: constants.COPYFILE_FICLONE });
+await writeFile(join(assets, "lattice-host-update.json"), JSON.stringify({
+  schema: 1, installedVersion: "0.4.3", latestVersion: "0.5.0",
+}));
 const projects = join(scratch, "projects");
 const project = join(projects, "Duo Paper");
 const main = join(project, "main.tex");
@@ -52,10 +57,18 @@ try {
   });
   const page = await browsing.newPage();
   const errors = [];
+  const githubTraffic = [];
+  browsing.on("request", (request) => {
+    const { hostname, pathname } = new URL(request.url());
+    if (["github.com", "api.github.com"].includes(hostname) && pathname.includes("/knightnemo/lattice-web-ui")) githubTraffic.push(request.url());
+  });
   page.on("pageerror", (error) => errors.push(error.message));
   await page.goto(origin, { waitUntil: "domcontentloaded" });
   await page.getByLabel("Server access token").fill((await readFile(tokenPath, "utf8")).trim());
   await page.getByRole("button", { name: "Connect", exact: true }).click();
+
+  await page.getByText("Lattice-web-ui 0.5.0 is available on GitHub", { exact: true }).waitFor();
+  assert.equal(await page.getByRole("button", { name: "Save and reload" }).count(), 0);
 
   if (engine === chromium) {
     const devtools = await browsing.newCDPSession(page);
@@ -222,6 +235,15 @@ try {
   });
   const reload = page.getByRole("button", { name: "Save and reload" });
   await reload.waitFor();
+  await page.keyboard.press("Meta+,");
+  const settings = page.getByRole("dialog", { name: "Settings" });
+  await settings.getByRole("button", { name: "Editor & builds" }).click();
+  await settings.getByText("This host runs Lattice-web-ui 0.4.3. Version 0.5.0 is available on GitHub.").waitFor();
+  assert.equal(await settings.getByRole("link", { name: "View release notes" }).getAttribute("href"),
+    "https://github.com/knightnemo/lattice-web-ui/releases/tag/v0.5.0");
+  await settings.getByRole("button", { name: "Save and reload" }).waitFor();
+  await page.keyboard.press("Escape");
+  await settings.waitFor({ state: "hidden" });
   const originalClient = await page.evaluate(() => window.__LATTICE_HEADLESS_CLIENT__);
   await editor.click();
   await page.keyboard.type("update draft ");
@@ -237,6 +259,7 @@ try {
   assert.match(await otherEditor.innerText(), /switch draft/);
   assert.equal(page.context().pages().length, 2);
   assert.deepEqual(errors, []);
+  assert.deepEqual(githubTraffic, []);
   console.log(`${engine.name()}: Duo layouts, draft, caret, save, PDF download, independent project navigation and save-before-update reload passed.`);
 } finally {
   await browser?.close();
