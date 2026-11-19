@@ -1,12 +1,14 @@
 # Releases
 
-Download the Mac plugin and Linux companion source kit from [GitHub Releases](https://github.com/knightnemo/lattice-web-ui/releases).
-Each release has these four assets.
+To install from this repository, follow the [Mac shortcut](../README.md#add-a-shortcut-in-lattice-for-mac)
+or [Linux host instructions](../README.md#run-your-own-workspace). Published
+versions appear on [GitHub Releases](https://github.com/knightnemo/lattice-web-ui/releases)
+with the following assets.
 
 | File | Use it for |
 | --- | --- |
-| `remote-workspace-X.Y.Z.zip` | Install the launcher from Lattice's Plugins settings. |
-| `lattice-remote-source-X.Y.Z.tar.gz` | Build the Linux host kit on the target architecture. |
+| `remote-workspace-X.Y.Z.zip` | In **Settings → Plugins → Install from URL…**, enter the asset's HTTPS URL and its SHA-256 from the checksum file. |
+| `lattice-remote-source-X.Y.Z.tar.gz` | Extract on Linux and follow [Build the Linux host](../README.md#build-the-linux-host) from the extracted directory. |
 | `SHA256SUMS-vX.Y.Z.txt` | Check the two downloads with `shasum -a 256 -c` or `sha256sum -c`. |
 | `release-vX.Y.Z.json` | Identify the exact release commit, companion snapshot, and asset hashes. |
 

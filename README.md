@@ -7,50 +7,75 @@
     <a href="https://github.com/knightnemo/lattice-web-ui/blob/main/plugin/LICENSE"><img src="https://img.shields.io/badge/Mac_plugin-MIT-4f6456" alt="Mac plugin license MIT"></a>
     <a href="https://github.com/knightnemo/lattice-web-ui/blob/6fe84151f216df4057797a5e24982b4613c64868/README.md#license"><img src="https://img.shields.io/badge/Companion-License_notices-4f6456" alt="Companion license notices"></a>
   </p>
+  <p>
+    <a href="#open-a-workspace">Open in a browser</a> ·
+    <a href="#add-a-shortcut-in-lattice-for-mac">Mac shortcut</a> ·
+    <a href="#run-your-own-workspace">Host on Linux</a>
+  </p>
 </div>
 
 ## Open a workspace
 
-Open the workspace's HTTPS address. If the workspace uses device pairing, ask
-the owner for a QR code or a pairing link. Each invite can be used once and
-expires after two minutes. Bookmark the address and keep using the same
-browser profile or installed web app. The pairing survives a server restart.
-On iPhone, use Safari's **Share → Add to Home Screen** to open it like an app.
+Ask the workspace owner for its HTTPS address. Open it in a browser on your
+computer or phone. For a paired workspace, scan the owner's QR code or open
+the pairing link, check the hostname, and select **Connect this device**.
+Each invite works once and expires after two minutes.
 
-If you use Lattice on your Mac, you can add a shortcut inside the app.
+Bookmark the workspace address. A paired device can reconnect after a server
+restart using the same browser profile or installed web app. On iPhone,
+Safari's **Share → Add to Home Screen** adds the workspace to your Home Screen.
 
-1. In **Settings → Plugins**, choose **Install from folder…** and select this
-   repository's `plugin/` folder. Enable **Lattice-web-ui**.
-2. In the command palette, run **Lattice-web-ui: Set workspace address…** and
-   enter the same HTTPS address you opened in the browser.
-3. Run **Lattice-web-ui: Open remote workspace** to open it in your browser.
+### Add a shortcut in Lattice for Mac
 
-A release ZIP also works with **Install from URL…**. [Release downloads](https://github.com/knightnemo/lattice-web-ui/releases)
+1. [Download the repository ZIP](https://github.com/knightnemo/lattice-web-ui/archive/refs/heads/main.zip)
+   and unzip it somewhere you can keep it. Lattice runs folder installs in place.
+2. In **Settings → Plugins → Install from folder…**, select
+   `lattice-web-ui-main/plugin/` and enable **Lattice-web-ui**.
+3. Press **⌘K** and run **Lattice-web-ui: Set workspace address…**. Enter only
+   the HTTPS origin, such as `https://workspace.example.com`, including a port
+   if needed. Use the workspace's permanent address after pairing.
+4. Select the **Open remote workspace** result to launch your browser. Next
+   time, use **⌘K → Lattice-web-ui: Open remote workspace** and select the result.
 
 ## Run your own workspace
 
-You need a Linux host and an existing Lattice project. Install Node 22,
-pnpm 10.13.1, the Rust toolchain pinned in the kit, a C/C++ toolchain, Python 3,
-and LaTeX with `latexmk`.
+Use a Linux host with an existing Lattice project. Building the host kit needs
+Node 22, pnpm 10.13.1, the Rust toolchain pinned in `source/rust-toolchain.toml`,
+and a C/C++ toolchain. Running the service needs Python 3, systemd user services,
+and LaTeX with `latexmk` and a TeX engine to compile papers.
 
-Download `lattice-remote-source-X.Y.Z.tar.gz` from [Releases](https://github.com/knightnemo/lattice-web-ui/releases).
-If there is no release yet, run `bash scripts/package.sh "$PWD"` in a full clone
-to create the kit in `dist/`.
+### Get the source kit
 
-On the Linux host, replace `X.Y.Z` with the version you downloaded or built.
+From a full Git clone, package the pinned companion source with Bash, Git,
+`zip`, `tar`, and `shasum`. If you already have an extracted source kit,
+skip to [Build the Linux host](#build-the-linux-host).
 
 ```sh
-version=X.Y.Z
+git clone https://github.com/knightnemo/lattice-web-ui.git
+cd lattice-web-ui
+bash scripts/package.sh "$PWD"
+version=$(node automation/release-package.mjs version plugin/lattice-plugin.toml)
+cd dist
 tar -xzf "lattice-remote-source-$version.tar.gz"
 cd "lattice-remote-source-$version"
+```
+
+### Build the Linux host
+
+On the target Linux machine, run these commands from the extracted source kit.
+
+```sh
 ./build-linux.sh
 tar -xzf "lattice-remote-host-$(uname -m).tar.gz"
 cd lattice-remote-host
 ```
 
-For a private workspace on Tailscale, join the host to your tailnet and set up
-[Tailscale operator access and the user service](https://github.com/knightnemo/lattice-web-ui/blob/6fe84151f216df4057797a5e24982b4613c64868/docs/private-headless-deployment.md).
-From the extracted host kit, point the installer at an existing project.
+### Connect over Tailscale
+
+For a private workspace, join the host and client to your tailnet. Set up
+[Tailscale operator access and the systemd user service](https://github.com/knightnemo/lattice-web-ui/blob/6fe84151f216df4057797a5e24982b4613c64868/docs/private-headless-deployment.md).
+From the extracted host kit, substitute the paths to your existing workspace
+directory and the project inside it.
 
 ```sh
 python3 scripts/install-headless-service.py \
@@ -60,17 +85,17 @@ python3 scripts/install-headless-service.py \
   --port 18482 --https-port 8443 --tailscale
 ```
 
-Open the HTTPS address shown by `tailscale serve status`. For the token-based
-sign-in, use the private `access-token` file in the companion's data directory.
-If you sign in with this token, sign in again after the companion restarts.
+Open the HTTPS address shown by `tailscale serve status`. Sign in with the
+token in `~/.local/share/lattice-headless/access-token` on the host. Sign in
+again after the companion restarts.
 
-If the editor needs to be reachable without Tailscale, choose one of these setups.
+### Connect from outside the tailnet
 
-- [Device pairing](device-pairing/README.md) gives the owner a QR code or pairing link to share. Paired browsers can reconnect after the server restarts, and the owner can revoke access.
-- [Account sign-in](account-gateway/README.md) gives approved email addresses access through an OAuth gateway.
+- [Device pairing](device-pairing/README.md) lets an owner invite a trusted browser with a QR code or link and revoke it later. Owners can use the [private Tailscale owner page](tailscale-owner/README.md) to manage devices.
+- [Account sign-in](account-gateway/README.md) lets approved email addresses sign in through an OAuth gateway.
 
-For the optional Codex runtime, see `docs/headless-agent.md` in the built host
-kit. [Agent setup](https://github.com/knightnemo/lattice-web-ui/blob/6fe84151f216df4057797a5e24982b4613c64868/docs/headless-agent.md)
+For the optional Codex runtime, follow the [agent setup guide](https://github.com/knightnemo/lattice-web-ui/blob/6fe84151f216df4057797a5e24982b4613c64868/docs/headless-agent.md)
+or read `docs/headless-agent.md` in the built host kit.
 
 ## Contribute
 
