@@ -110,10 +110,9 @@ export function useProjectTreeWatch(state: ProjectState, enabled: boolean) {
           invoke<ProjectSnapshot>("refresh_project"),
           invoke<GitStatus>("git_status"),
         ]);
-        // Navigation cancels outstanding reads before WebKit sends pagehide.
-        // A queued rescan must not immediately retry a failed read in that
-        // departing document. The next real watcher event or poll retries.
-        if (snapshotResult.status === "rejected" || gitStatusResult.status === "rejected") stale = false;
+        // WebKit cancels both reads before pagehide. Let the next event retry
+        // that scan. If one read succeeded, a queued file change still matters.
+        if (snapshotResult.status === "rejected" && gitStatusResult.status === "rejected") stale = false;
         const currentProject = projectRef.current;
         const quiet = !stopped && projectTreeMutationCountRef.current === 0;
         if (
