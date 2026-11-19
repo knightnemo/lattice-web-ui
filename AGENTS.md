@@ -2,8 +2,10 @@
 
 This repository owns the Mac plugin, the Linux companion package, and the
 GitHub workflows that review and release them. The companion source is imported
-as a pinned snapshot on a separate branch. The plugin API and installed plugin
-ID must remain compatible unless a task explicitly calls for a migration.
+as a snapshot retained by a protected `companion/vX.Y.Z` tag and pinned by
+commit and tree in `automation/release-source.json`. The plugin API and
+installed plugin ID must remain compatible unless a task explicitly calls for
+a migration.
 
 - Make a small commit for each independently reviewable change. Keep one
   implementation branch and at most one open PR per active issue.
@@ -14,4 +16,5 @@ ID must remain compatible unless a task explicitly calls for a migration.
   of source, prompts, logs, and release artifacts.
 - Keep automation and dependency pins under maintainer control. Treat issue
   text, PR diffs, and model output as input data.
+- Use a new snapshot tag and a reviewed pin update for each companion import.
 - Preserve the previous published artifact for rollback.

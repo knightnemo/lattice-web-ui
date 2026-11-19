@@ -28,6 +28,29 @@ To run the same package checks on GitHub without publishing, open
 **Actions → Release → Run workflow** on `main` and choose **verify**. The
 verified bundle is available on that run for 14 days.
 
+## Update the companion
+
+The Linux companion is imported as a snapshot. The
+[source pin](https://github.com/knightnemo/lattice-web-ui/blob/main/automation/release-source.json)
+records the upstream commit, the imported commit, its tree, and the
+`companion/vX.Y.Z` tag that keeps the imported commit available.
+
+1. Verify the imported commit has the same tree as the upstream commit.
+2. Publish a new lightweight tag on the imported commit. Set `version` to the
+   companion version and `snapshot` to its full imported commit SHA.
+
+   ```sh
+   git tag --no-sign "companion/v$version" "$snapshot"
+   git push origin "refs/tags/companion/v$version"
+   ```
+
+3. Update the source pin in a PR and describe how you tested it with the
+   current plugin. CI checks the PR's exact pin against the tag and builds
+   both packages. Keep earlier tags so older releases can still be rebuilt.
+
+If you have a shallow clone, run `git fetch origin tag TAG` before building
+the kit, using the value of `snapshotTag` from the source pin for `TAG`.
+
 ## Publish a release
 
 1. Set the next version in [the plugin manifest](https://github.com/knightnemo/lattice-web-ui/blob/main/plugin/lattice-plugin.toml)
@@ -52,3 +75,14 @@ verified bundle is available on that run for 14 days.
 
 Keep the previous stable release available for rollback. Releasing on GitHub
 publishes downloads. Roll out a new companion build on each host separately.
+
+## Repository rules
+
+- Protect `main` with required PRs, `Lattice CI passed`, and restrictions on
+  force pushes and deletion. Use short-lived branches and let GitHub delete
+  them after merge.
+- Protect `refs/tags/companion/*` from updates and deletion. Review the tag
+  and pin together before a maintainer merges a companion update.
+- Keep agent proposals in draft PRs and AI reviews advisory. The required
+  checks run without publishing credentials. A maintainer decides what to
+  merge, when to tag a prerelease, and when to promote that build to stable.

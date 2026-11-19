@@ -94,6 +94,7 @@ jobs:
           RELEASE_COMMIT: ${{ steps.target.outputs.commit }}
           RELEASE_TAG: ${{ steps.target.outputs.tag }}
         run: |
+          node automation/release-package.mjs verify-snapshot "$PWD"
           node --test test/*.test.mjs
           out="$RUNNER_TEMP/lattice-pack"
           bash scripts/package.sh "$PWD" "$out"
