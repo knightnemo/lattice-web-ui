@@ -31,6 +31,13 @@ for the commands.
 
 ## Open a pull request
 
+For browser changes, try the action in a standalone workspace with a sample
+project. For a change that switches projects, reconnects a session, or
+rearranges the editor, start with an unsaved line. Check the caret and verify
+the file in the original project after saving. Include the tested browser
+and viewport size in the PR. For a companion pin update, link the source diff
+between the two snapshots so reviewers can inspect the implementation.
+
 Target `main` and keep the PR to one change. Describe what it fixes, link the
 issue if there is one, and list what you tested, including skipped checks.
 For visible changes, include a screenshot or short recording. For changes to
