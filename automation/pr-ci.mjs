@@ -15,15 +15,16 @@ export function needsPackaging(files, labels, complete) {
       typeof path === "string" && packagePaths.test(path)));
 }
 
-async function requireCurrentMain(api, env) {
+async function isCurrentMain(api, env) {
   if (env.GITHUB_REPOSITORY !== trustedRepository || env.GITHUB_REF !== trustedRef ||
       !/^[0-9a-f]{40}$/.test(env.GITHUB_SHA ?? "")) {
     throw new Error("Verification requires the trusted main workflow.");
   }
   const ref = await api(`/git/ref/heads/${trustedBranch}`);
-  if (ref.object?.type !== "commit" || ref.object.sha !== env.GITHUB_SHA) {
-    throw new Error("Main changed since dispatch. Retry verification from current main.");
+  if (ref.object?.type !== "commit" || !/^[0-9a-f]{40}$/.test(ref.object.sha)) {
+    throw new Error("Cannot resolve the trusted main branch.");
   }
+  return ref.object.sha === env.GITHUB_SHA;
 }
 
 async function currentGatePull(api, request) {
@@ -50,7 +51,7 @@ async function companionSnapshot(api, head) {
 }
 
 export async function plan(api, request, env) {
-  await requireCurrentMain(api, env);
+  if (!await isCurrentMain(api, env)) return;
   const pull = await currentGatePull(api, request);
   if (!pull) throw new Error("PR is closed, has changed head, or targets another branch.");
   const { files, complete } = await pullFiles(api, request.number, pull.changed_files);
@@ -74,9 +75,14 @@ export async function plan(api, request, env) {
 }
 
 export async function publish(api, request, env) {
-  await requireCurrentMain(api, env);
+  const currentMain = await isCurrentMain(api, env);
   if (!(await currentGatePull(api, request))) {
     console.log("PR changed or closed. The dispatch result was not published.");
+    return;
+  }
+  if (!currentMain) {
+    await appendFile(env.GITHUB_OUTPUT, "requeue=true\n");
+    console.log("Main changed. Queue verification of the current PR head from the new main.");
     return;
   }
   const conclusion = ["success", "failure", "cancelled", "skipped"].includes(env.VERIFY_RESULT)

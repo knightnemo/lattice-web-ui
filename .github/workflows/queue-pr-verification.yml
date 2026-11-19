@@ -1,6 +1,14 @@
 name: Queue trusted PR verification
 
 on:
+  workflow_call:
+    inputs:
+      pr_number:
+        required: true
+        type: string
+      head_sha:
+        required: true
+        type: string
   pull_request_target:
     branches: [main]
     types: [opened, synchronize, reopened, ready_for_review, labeled, unlabeled]
@@ -12,7 +20,7 @@ jobs:
     if: >-
       github.repository == 'lattice-writer/lattice-web-ui'
       && github.ref == 'refs/heads/main'
-      && github.event.pull_request.base.repo.full_name == github.repository
+      && (github.event_name == 'workflow_dispatch' || github.event.pull_request.base.repo.full_name == github.repository)
     runs-on: ubuntu-24.04
     timeout-minutes: 5
     permissions:
@@ -24,8 +32,8 @@ jobs:
         shell: bash
         env:
           GH_TOKEN: ${{ github.token }}
-          PR_NUMBER: ${{ github.event.pull_request.number }}
-          PR_HEAD: ${{ github.event.pull_request.head.sha }}
+          PR_NUMBER: ${{ inputs.pr_number || github.event.pull_request.number }}
+          PR_HEAD: ${{ inputs.head_sha || github.event.pull_request.head.sha }}
         run: |
           [[ "$PR_NUMBER" =~ ^[1-9][0-9]{0,8}$ ]]
           [[ "$PR_HEAD" =~ ^[0-9a-f]{40}$ ]]
