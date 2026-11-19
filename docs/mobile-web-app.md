@@ -1,10 +1,16 @@
 # Installable mobile workspace
 
-The standalone headless server can serve the regular Lattice frontend over a
-private HTTPS origin. Open that address while connected to the server's tailnet,
-sign in with the server access token, then use the browser's **Install app** or
-**Add to Home Screen** action. Safari on iPhone exposes this under Share; desktop
-browsers expose installation in their address bar or menu when available.
+Open your workspace in the browser you plan to install it from. For a new
+phone on a workspace with device pairing, scan the owner's **Pair a device**
+code and choose **Connect this device**. For an account gateway, open its
+HTTPS address and sign in with the account the owner approved. For a private
+Tailscale address, connect to the tailnet first. A workspace configured for
+token sign-in prompts its owner for the server access token.
+
+Once you see the editor, choose **Share → Add to Home Screen** in iPhone
+Safari. On a desktop, look for **Install app** in the address bar or browser
+menu. See the [standalone server guide](headless-web-client.md) for the sign-in
+options and how to reconnect with edits still open.
 
 On a standalone server, the workspace shows one panel at widths up to 640 CSS
 pixels. From 641 to 1024 pixels, it opens the editor and PDF side by side.
