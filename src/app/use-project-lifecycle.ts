@@ -5,7 +5,7 @@ import { getCurrentWindow } from "@tauri-apps/api/window";
 import { open, save as saveDialog } from "@tauri-apps/plugin-dialog";
 import type { ProjectSnapshot } from "../app-types";
 import { hostErrorMessage, toMessage } from "../app-utils";
-import { browserRuntimeDetached } from "../platform/browser-runtime";
+import { browserRuntimeDetached, isHeadlessHosted } from "../platform/browser-runtime";
 import {
   forgetRecentProject, hasSeenTutorial, loadRecentProjects, markTutorialSeen, rememberRecentProject, type RecentProject,
 } from "../settings/app-settings";
@@ -88,6 +88,9 @@ export function useProjectLifecycle(deps: ProjectLifecycleDeps) {
     claimBibliographyRefresh, resetBibliographyIndex, applyCitations, applyReferences, failIndex, publishPapers, failPapers,
   } = library;
   const { runBuild, resetForProject } = build;
+  // A standalone server binds the selected project to this browser tab. Only
+  // a desktop-backed workspace can open a project in a separate native window.
+  const openInNewWindow = Boolean(project?.root) && !isHeadlessHosted();
   const [busyLabel, setBusyLabel] = useState<string | null>(null);
   /** The workspace is being handed to another surface: its editors stay read-only meanwhile. */
   const [movingWorkspace, setMovingWorkspace] = useState(false);
@@ -259,7 +262,7 @@ export function useProjectLifecycle(deps: ProjectLifecycleDeps) {
     onError?: (reason: unknown) => void,
   ) => {
     setBusyLabel(label);
-    const openHere = !project?.root;
+    const openHere = !openInNewWindow;
     await (async () => {
       if (openHere && !await startProjectTransition()) return;
       const root = await create();
@@ -270,7 +273,7 @@ export function useProjectLifecycle(deps: ProjectLifecycleDeps) {
       if (onError) onError(reason);
       else showError(toMessage(reason));
     }).finally(() => setBusyLabel(null));
-  }, [cancelProjectTransition, enterProject, openProjectWindow, project?.root, startProjectTransition]);
+  }, [cancelProjectTransition, enterProject, openInNewWindow, openProjectWindow, startProjectTransition]);
 
   /// Replace this window's project with the one at `path`: save, claim the
   /// switch, enter; roll the claim back on failure.
@@ -289,11 +292,10 @@ export function useProjectLifecycle(deps: ProjectLifecycleDeps) {
   const chooseExisting = useCallback(async () => {
     const selected = await open({ directory: true, multiple: false, title: t`Open a LaTeX project` });
     if (!selected) return;
-    // Same rule as the recent-projects list: a window in use keeps the project
-    // it has, and the chosen one gets a window of its own.
-    if (project?.root) await openProjectWindow(String(selected));
+    if (!openInNewWindow && selected === project?.root) return;
+    if (openInNewWindow) await openProjectWindow(String(selected));
     else await switchProject(t`Opening project…`, String(selected));
-  }, [openProjectWindow, project?.root, switchProject, t]);
+  }, [openInNewWindow, openProjectWindow, project?.root, switchProject, t]);
 
   const createProject = useCallback(async () => {
     if (!createForm.name.trim()) {
@@ -455,12 +457,12 @@ export function useProjectLifecycle(deps: ProjectLifecycleDeps) {
       setProjectMenuOpen(false);
       return;
     }
-    // Another project gets its own window once this one is in use. Replacing
+    // Another project gets its own native window once this one is in use. Replacing
     // the project in place would close editors, cancel a build and reset the
     // agent for work the writer never asked to put away. With nothing open yet
     // the window is empty, so it takes the project itself rather than leaving
     // a blank window behind.
-    if (project?.root) {
+    if (openInNewWindow) {
       setProjectMenuOpen(false);
       const failure = await openProjectWindow(path);
       // Only the project itself failing means the entry is worth dropping; a
@@ -471,7 +473,7 @@ export function useProjectLifecycle(deps: ProjectLifecycleDeps) {
       return;
     }
     await switchProject(t`Switching project…`, path, () => setRecents((current) => ({ ...current, projects: forgetRecentProject(path) })));
-  }, [openProjectWindow, project?.root, switchProject, t]);
+  }, [openInNewWindow, openProjectWindow, project?.root, switchProject, t]);
 
   // ---- Closing, quitting and reloading save first -----------------------------------------------------------------
   useSaveBeforeClose({ browserHosted, flush, save, hasUnsavedEdits });

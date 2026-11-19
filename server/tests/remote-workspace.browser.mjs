@@ -18,6 +18,9 @@ const main = join(project, "main.tex");
 const original = "\\documentclass{article}\n\\begin{document}\nA test paper for folding and unfolding.\n\\end{document}\n";
 await mkdir(project, { recursive: true });
 await writeFile(main, original);
+const other = join(projects, "Second Paper");
+await mkdir(other);
+await writeFile(join(other, "main.tex"), original.replace("A test paper for folding and unfolding.", "Another project."));
 
 const reservation = createServer();
 await new Promise((ready) => reservation.listen(0, "127.0.0.1", ready));
@@ -147,10 +150,33 @@ try {
     assert.equal(await readFile(main, "utf8"), original, "save is held while testing the draft");
   }
   await page.locator(".trellis-pdf canvas").first().waitFor({ state: "visible", timeout: 30_000 });
-  assert.deepEqual(errors, []);
+  // A compiled PDF downloads to the browser's device, even with the toolbar folded.
+  const download = page.waitForEvent("download");
+  const savePdf = page.getByRole("button", { name: "Save PDF as…" });
+  if (await savePdf.isVisible()) await savePdf.click();
+  else {
+    await page.getByRole("button", { name: "More PDF actions" }).click();
+    await page.getByRole("menuitem", { name: "Save PDF as…" }).click();
+  }
+  const pdf = await download;
+  assert.match(pdf.suggestedFilename(), /\.pdf$/i);
+  assert.deepEqual(await readFile(await pdf.path()), await readFile(join(project, "main.pdf")));
+
   await page.evaluate(() => window.resumeDuoTestWrites());
   await until(async () => (await readFile(main, "utf8")).includes("unsaved "), "normal save works after unfolding");
-  console.log(`${engine.name()}: Duo outer/inner layouts, draft, editor identity, caret, and save passed.`);
+  // Switch a working tab via the regular picker and back via Recent projects.
+  await editor.click();
+  await page.keyboard.type("switch draft ");
+  await page.getByRole("button", { name: "Switch project" }).click();
+  await page.getByRole("menuitem", { name: "Open another folder" }).click();
+  await page.getByRole("dialog", { name: "Open server project" }).getByRole("button", { name: "Second Paper" }).click();
+  await until(async () => (await editor.innerText()).includes("Another project."), "the chosen project opens");
+  assert.match(await readFile(main, "utf8"), /switch draft/);
+  await page.getByRole("button", { name: "Switch project" }).click();
+  await page.getByRole("menuitem", { name: "Duo Paper" }).click();
+  await until(async () => (await editor.innerText()).includes("switch draft"), "the recent project reopens with its saved edit");
+  assert.deepEqual(errors, []);
+  console.log(`${engine.name()}: Duo layouts, draft, caret, save, PDF download and server project switching passed.`);
 } finally {
   await browser?.close();
   if (server.exitCode === null) server.kill("SIGTERM");

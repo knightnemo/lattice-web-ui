@@ -114,6 +114,7 @@ vi.mock("../telemetry/interface-sounds", () => ({
 }));
 vi.mock("../platform/browser-runtime", () => ({
   isBrowserHosted: () => browserRuntime.hosted,
+  isHeadlessHosted: () => false,
   browserRuntimeDetached: () => false,
   readBrowserHostAsset: vi.fn(),
 }));

@@ -18,7 +18,8 @@ import {
   type RefObject,
 } from "react";
 import { useLingui } from "@lingui/react/macro";
-import { invoke } from "@tauri-apps/api/core";
+import { convertFileSrc, invoke } from "@tauri-apps/api/core";
+import { isHeadlessHosted } from "../platform/browser-runtime";
 import { save as saveDialog } from "@tauri-apps/plugin-dialog";
 import {
   CaseSensitive,
@@ -60,7 +61,7 @@ import { MotionButton } from "../components/ui/motion";
 import { OverlayScrollbars } from "../components/ui/overlay-scrollbar";
 import type { PdfFileViewState } from "../app-types";
 import { logAction } from "../telemetry/app-notify";
-import { utf8ToBase64 } from "./pdf-bytes";
+import { pdfBytesToObjectUrl, utf8ToBase64 } from "./pdf-bytes";
 import type { ViewerRecord } from "./pdf-slick";
 import { PdfSourceTargets, type PdfSourceQuote, type PdfSyncTarget } from "./pdf-source-targets";
 import { usePdfSelectionReport } from "./pdf-text-layer-selection";
@@ -576,6 +577,24 @@ export function PdfPreview({
   const canSave = Boolean(pdfBytes || projectFile);
   const download = () => {
     if (!canSave || savingPdf) return;
+    if (isHeadlessHosted()) {
+      const link = document.createElement("a");
+      link.download = fileName;
+      if (pdfBytes) {
+        // The build pipeline already owns a blob URL for the compiled preview.
+        if (url?.startsWith("blob:")) link.href = url;
+        else {
+          const objectUrl = pdfBytesToObjectUrl(pdfBytes);
+          link.href = objectUrl;
+          window.setTimeout(() => URL.revokeObjectURL(objectUrl), 1000);
+        }
+      } else {
+        // Stream the current project file through the authenticated asset route.
+        link.href = convertFileSrc(projectFile!.path);
+      }
+      link.click();
+      return;
+    }
     setSavingPdf(true);
     const trace = logAction(PDF_SOURCE, t`Save PDF`, fileName);
     // A promise chain, not try/finally: that statement makes the React Compiler bail out.

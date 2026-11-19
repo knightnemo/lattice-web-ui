@@ -21,6 +21,7 @@ const pdf = vi.hoisted(() => {
     deferReady: false,
     pendingLoad: null as null | { onProgress?: (progress: LoadProgress) => void; resolve: () => void },
     hosted: false,
+    headless: false,
     workerOptions: {} as { workerSrc?: string },
   };
 
@@ -216,9 +217,10 @@ vi.mock("@tauri-apps/api/event", () => ({ listen: vi.fn(async () => () => undefi
 vi.mock("@tauri-apps/api/core", async (importOriginal) => ({
   ...await importOriginal<typeof import("@tauri-apps/api/core")>(),
   invoke: vi.fn(async () => "/tmp/scan copy.pdf"),
+  convertFileSrc: (path: string) => `/api/asset?path=${encodeURIComponent(path)}`,
 }));
 vi.mock("@tauri-apps/plugin-dialog", () => ({ save: vi.fn(async () => "/tmp/scan copy.pdf") }));
-vi.mock("../platform/browser-runtime", () => ({ isBrowserHosted: () => pdf.state.hosted }));
+vi.mock("../platform/browser-runtime", () => ({ isBrowserHosted: () => pdf.state.hosted, isHeadlessHosted: () => pdf.state.headless }));
 vi.mock("pdfjs-dist", () => ({
   GlobalWorkerOptions: pdf.state.workerOptions,
   PDFDataRangeTransport: class {
@@ -265,7 +267,7 @@ describe("PDFSlick viewer integration", () => {
 
   beforeEach(() => {
     Object.assign(pdf.state, {
-      instances: [], numPages: 3, viewportScale: 1, deferLoad: false, loadError: null, deferReady: false, pendingLoad: null, hosted: false,
+      instances: [], numPages: 3, viewportScale: 1, deferLoad: false, loadError: null, deferReady: false, pendingLoad: null, hosted: false, headless: false,
     });
     localStorage.clear();
   });
@@ -1316,6 +1318,19 @@ describe("PDFSlick viewer integration", () => {
     ));
     expect(invoke).not.toHaveBeenCalledWith("read_project_asset_range", expect.anything());
     expect(invoke).not.toHaveBeenCalledWith("save_compiled_pdf", expect.anything(), expect.anything());
+  });
+
+  it("downloads a project PDF directly from the headless asset route", async () => {
+    pdf.state.headless = true;
+    const click = vi.spyOn(HTMLAnchorElement.prototype, "click").mockImplementation(() => {});
+    const file = { path: "figures/large scan.pdf", length: 100_000_000, version: "v1" };
+    const view = renderPdf({ url: null, projectFile: file, fileName: "scan.pdf" });
+    await viewerAt(0);
+    fireEvent.click(view.getByRole("button", { name: "Save PDF as…" }));
+    expect(click.mock.contexts[0]).toMatchObject({
+      download: "scan.pdf", href: expect.stringContaining("/api/asset?path=figures%2Flarge%20scan.pdf"),
+    });
+    expect(invoke).not.toHaveBeenCalledWith("read_project_asset_range", expect.anything());
   });
 
   it("asks for a project PDF's new version when a read finds it rewritten, then swaps it in at the same page", async () => {

@@ -33,10 +33,12 @@ Server capability checks reject unavailable operations explicitly; native-only
 features do not silently succeed. PDF byte ranges use the selected project's
 versioned asset endpoint, while compiled PDF replies are decoded as binary.
 
-Each browser session selects its own server project. The server confines those
-projects to its configured workspace root. Run and install the standalone
-server as described in its own documentation; this frontend does not provide
-an AI sidecar, terminal or language server by itself.
+In the project menu, **Open another folder** selects a server project for the
+current browser tab. Lattice saves outstanding edits before switching. **Save
+PDF as…** in the PDF toolbar downloads to the device running the browser.
+The server confines projects to its configured workspace root. Run and install
+the standalone server as described in its own documentation; this frontend
+does not provide an AI sidecar, terminal or language server by itself.
 
 ## Phone and foldable layouts
 
