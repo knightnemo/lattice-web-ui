@@ -22,6 +22,7 @@ import { useLatestRef } from "../hooks/use-latest-ref";
 
 /** How long launch shows an empty window while it reopens a project, before the welcome screen. */
 const LAUNCH_EMPTY_WINDOW_MS = 1_000;
+const loadWebUpdate = () => import("../platform/headless-web-update");
 
 // Must match the prefix `open_project_window` puts on a window-creation
 // failure. Everything else it can fail with is the project itself.
@@ -494,7 +495,7 @@ export function useProjectLifecycle(deps: ProjectLifecycleDeps) {
     if (!standaloneServer) return;
     let stopped = false;
     let stop: (() => void) | undefined;
-    void import("../platform/headless-web-update").then(({ watchWebUpdate }) => {
+    void loadWebUpdate().then(({ watchWebUpdate }) => {
       if (stopped) return;
       stop = watchWebUpdate(async () => {
         const { documents, projectState, overleafSync } = depsRef.current;

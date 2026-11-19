@@ -29,7 +29,7 @@ it("offers an update once per deployed build, keeps offline/hidden tabs quiet an
   stop = watchWebUpdate(reload);
   async function check() {
     window.dispatchEvent(new Event("online"));
-    await new Promise((resolve) => setTimeout(resolve, 0));
+    await webUpdateSnapshot()?.check();
   }
   await check();
   expect(notifyInfo).not.toHaveBeenCalled();
@@ -40,8 +40,9 @@ it("offers an update once per deployed build, keeps offline/hidden tabs quiet an
   hidden.mockReturnValue(false);
   window.dispatchEvent(new Event("lattice:workspace-reconnected"));
   window.dispatchEvent(new Event("lattice:workspace-reconnected"));
-  await vi.waitFor(() => expect(notifyInfo).toHaveBeenCalledOnce());
   expect(fetch).toHaveBeenCalledTimes(2);
+  await webUpdateSnapshot()?.check();
+  expect(notifyInfo).toHaveBeenCalledOnce();
   expect(reload).not.toHaveBeenCalled();
   await check();
   expect(notifyInfo).toHaveBeenCalledOnce();
