@@ -14,6 +14,96 @@ The [Release workflow](https://github.com/knightnemo/lattice-web-ui/blob/main/.g
 Actions artifact to pass the verified files from build to publishing. Install
 from the release assets. GitHub Packages and GHCR publishing are not configured.
 
+## Check for a host update
+
+Run the check from the extracted Linux host or source kit.
+
+```sh
+python3 ./check-host-update.py
+```
+
+The command reads the kit's `release-version.txt` and checks the latest
+published stable release on GitHub. Run it from the kit serving your workspace.
+For an older kit, run the helper from a newer checkout with
+`--installed-version X.Y.Z`, using the version in your installed source archive's
+name. A connection or rate-limit error exits with status 1 so you can retry.
+
+### Schedule checks for the Linux host
+
+Run the following once, as the unprivileged account that owns the host kit.
+Keep the extracted kit at this path while its timer is enabled.
+
+```sh
+python3 ./check-host-update.py --install-timer
+systemctl --user list-timers lattice-host-update.timer
+journalctl --user -u lattice-host-update.service
+```
+
+The user timer checks about one minute after activation and every 15 minutes
+while the user manager is running, with up to 30 seconds of jitter. Run the
+ordinary check command above for an immediate result. Each scheduled check has
+a 60-second deadline. Its
+journal reports available updates. The last successful result is also stored
+in `$XDG_STATE_HOME/lattice-web-ui/lattice-host-update.json` (by default
+`~/.local/state/lattice-web-ui/lattice-host-update.json`). A failed network or
+release check preserves that result.
+
+To make the same version information available to the web client, explicitly
+select the existing web asset directory passed to the companion's `--assets`
+option. The standard extracted host kit uses its writable `web` directory.
+
+```sh
+python3 ./check-host-update.py --install-timer --public-status-dir ./web
+```
+
+The timer atomically publishes `lattice-host-update.json` at that directory's
+root. The file is readable by anyone with access to the hosted assets. It
+contains exactly the three fields below.
+
+```json
+{"schema": 1, "installedVersion": "0.4.3", "latestVersion": "0.5.0"}
+```
+
+`latestVersion` is null when GitHub reports no published stable release.
+Re-run installation from the new kit after deploying a host update. To remove
+the timer and its check service, use the following command.
+
+```sh
+python3 ./check-host-update.py --uninstall-timer
+```
+
+To withdraw a previously published result, remove `lattice-host-update.json`
+from the asset directory you selected. The workspace service continues running
+through installation and removal.
+
+### Prepare a verified source kit
+
+To prepare a newer release, choose a staging directory on the build host.
+
+```sh
+python3 ./check-host-update.py --prepare "$HOME/lattice-updates"
+```
+
+The command downloads the Linux source kit, checks its size and SHA-256 against
+GitHub's release assets, and prints the verified archive path. A current or newer
+installation needs no download. An existing staged archive stays in place if
+you repeat the command. No reader's browser contacts GitHub for this check.
+
+Extract the verified archive in a fresh build directory. Substitute the
+printed version for `X.Y.Z`.
+
+```sh
+version=X.Y.Z
+build_dir="$(mktemp -d)"
+tar -xzf "$HOME/lattice-updates/lattice-remote-source-$version.tar.gz" -C "$build_dir"
+cd "$build_dir/lattice-remote-source-$version"
+./build-linux.sh
+```
+
+The host kit in this directory is ready for a separately scheduled rollout.
+Keep the current binary, web assets, service settings and project data in place
+while building and testing the candidate.
+
 ## Build a preview
 
 In a full checkout, run the following from the repository root to create the
