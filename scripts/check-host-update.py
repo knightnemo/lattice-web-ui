@@ -190,12 +190,13 @@ NoNewPrivileges=yes
 """, 0o644)
     atomic_write(timer, f"""{MARKER}
 [Unit]
-Description=Check for Lattice-web-ui host updates every six hours
+Description=Check for Lattice-web-ui host updates every 15 minutes
 
 [Timer]
 OnActiveSec=1min
-OnUnitActiveSec=6h
-AccuracySec=30s
+OnUnitActiveSec=15min
+RandomizedDelaySec=30s
+AccuracySec=15s
 
 [Install]
 WantedBy=timers.target

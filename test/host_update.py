@@ -128,7 +128,8 @@ class ReleaseCheck(unittest.TestCase):
             self.assertIn('web %%h $HOME \\"quoted\\"', service.read_text())
             self.assertIn('TimeoutStartSec=60s', service.read_text())
             self.assertIn('OnActiveSec=1min', timer.read_text())
-            self.assertIn('OnUnitActiveSec=6h', timer.read_text())
+            self.assertIn('OnUnitActiveSec=15min', timer.read_text())
+            self.assertIn('RandomizedDelaySec=30s', timer.read_text())
             analyzer = shutil.which("systemd-analyze")
             if os.environ.get("GITHUB_ACTIONS") == "true" and os.environ.get("RUNNER_OS") == "Linux":
                 self.assertIsNotNone(analyzer, "The Linux CI must validate the generated units with systemd-analyze")

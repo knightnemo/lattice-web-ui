@@ -39,8 +39,10 @@ systemctl --user list-timers lattice-host-update.timer
 journalctl --user -u lattice-host-update.service
 ```
 
-The user timer checks about one minute after activation and every six hours
-while the user manager is running. Each check has a 60-second deadline. Its
+The user timer checks about one minute after activation and every 15 minutes
+while the user manager is running, with up to 30 seconds of jitter. Run the
+ordinary check command above for an immediate result. Each scheduled check has
+a 60-second deadline. Its
 journal reports available updates. The last successful result is also stored
 in `$XDG_STATE_HOME/lattice-web-ui/lattice-host-update.json` (by default
 `~/.local/state/lattice-web-ui/lattice-host-update.json`). A failed network or
