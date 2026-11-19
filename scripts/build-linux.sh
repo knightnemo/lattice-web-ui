@@ -27,15 +27,7 @@ export CARGO_TARGET_DIR="$stage/cargo-target"
 install -m 755 "$CARGO_TARGET_DIR/release/lattice-server" "$kit/lattice-server"
 cp -R "$source_dir/dist" "$kit/web"
 cp -R "$source_dir/licenses" "$kit/licenses"
-if [[ -d "$root/account-gateway" ]]; then
-  cp -R "$root/account-gateway" "$kit/account-gateway"
-fi
-if [[ -d "$root/device-pairing" ]]; then
-  cp -R "$root/device-pairing" "$kit/device-pairing"
-fi
-if [[ -d "$root/tailscale-owner" ]]; then
-  cp -R "$root/tailscale-owner" "$kit/tailscale-owner"
-fi
+bash "$root/copy-deployment-files.sh" "$root" "$kit" optional
 for file in LICENSE NOTICE THIRD_PARTY_NOTICES.md; do
   cp "$source_dir/$file" "$kit/"
 done

@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-root="$(cd "$(dirname "$0")/.." && pwd)"
+root="$(cd "$(dirname "$0")/.." && pwd -P)"
 source_checkout="${1:-$root/../lattice-integrated}"
 out="${2:-$root/dist}"
 release_package="$root/automation/release-package.mjs"
@@ -16,10 +16,9 @@ kit="$stage/lattice-remote-source-$version"
 mkdir -p "$kit"
 git -C "$source_checkout" archive --prefix=source/ "$revision" | tar -xf - -C "$kit"
 cp "$root/scripts/build-linux.sh" "$kit/build-linux.sh"
+cp "$root/scripts/copy-deployment-files.sh" "$kit/copy-deployment-files.sh"
 cp "$root/README.md" "$kit/README.md"
-cp -R "$root/account-gateway" "$kit/account-gateway"
-cp -R "$root/device-pairing" "$kit/device-pairing"
-cp -R "$root/tailscale-owner" "$kit/tailscale-owner"
+bash "$kit/copy-deployment-files.sh" "$root" "$kit" required
 mkdir -p "$kit/test"
 cp "$root/test/account-gateway.test.mjs" "$kit/test/"
 printf '%s\n' "$original" > "$kit/source-revision.txt"

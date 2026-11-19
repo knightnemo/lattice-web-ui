@@ -1,11 +1,9 @@
 #!/usr/bin/env node
-// Pack a plugin folder as the .zip Settings › Plugins › Install from URL
-// takes, and print its SHA-256 to publish beside it:
-//   node plugin-sdk/scripts/pack-plugin.mjs examples/plugins/bib-check dist/bib-check-0.1.0.zip
+// Pack the Lattice-web-ui launcher for Settings › Plugins › Install from URL.
 import { execFileSync } from "node:child_process";
 import { createHash } from "node:crypto";
-import { mkdirSync, readFileSync, rmSync } from "node:fs";
-import { dirname, resolve } from "node:path";
+import { lstatSync, mkdirSync, mkdtempSync, readFileSync, renameSync, rmSync } from "node:fs";
+import { dirname, join, resolve } from "node:path";
 
 const [folder, out] = process.argv.slice(2);
 if (!folder || !out) {
@@ -13,8 +11,18 @@ if (!folder || !out) {
   process.exit(2);
 }
 const target = resolve(out);
+const files = ["LICENSE", "lattice-plugin.mjs", "lattice-plugin.toml", "main.mjs"];
+for (const file of files) {
+  if (!lstatSync(join(folder, file)).isFile()) throw new Error(`Expected regular plugin file: ${file}`);
+}
 mkdirSync(dirname(target), { recursive: true });
-rmSync(target, { force: true });
-execFileSync("zip", ["-qr", "-X", target, ".", "-x", "*.test.mjs", "-x", ".*"], { cwd: resolve(folder) });
+const staging = mkdtempSync(join(dirname(target), ".lattice-plugin-"));
+try {
+  const archive = join(staging, "plugin.zip");
+  execFileSync("zip", ["-q", "-X", "-MM", archive, ...files], { cwd: resolve(folder) });
+  renameSync(archive, target);
+} finally {
+  rmSync(staging, { recursive: true, force: true });
+}
 const sha256 = createHash("sha256").update(readFileSync(target)).digest("hex");
 console.log(`${target}\nsha256 ${sha256}`);

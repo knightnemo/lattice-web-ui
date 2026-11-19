@@ -19,15 +19,17 @@ private hostnames, and project content from screenshots and logs.
   the companion source, then propose a pin update here. See how
   [companion snapshots are pinned](docs/releases.md#update-the-companion).
 
-From a full clone, run the portable tests with Node 22, Python 3, and Git installed.
+Run the portable tests from a full clone with Node 22, Python 3, Git, Bash,
+`zip`, `unzip`, `tar`, and `shasum` installed.
 
 ```sh
 node --test test/*.test.mjs
 ```
 
 If you change packaging or the companion pin, build the plugin ZIP and Linux
-source kit and verify their checksums. See the [release guide](docs/releases.md)
-for the commands.
+source kit and verify their checksums. New launcher or deployment template
+files must be listed in the corresponding packaging script and archive test.
+See the [release guide](docs/releases.md) for the commands.
 
 ## Open a pull request
 
