@@ -18,7 +18,7 @@ function workspaceAddress(input) {
     url.password ||
     url.pathname !== "/"
   ) {
-    throw new PluginError("Use the HTTPS workspace origin with no path, credentials, or login token.");
+    throw new PluginError("Enter only the workspace address, such as https://workspace.example.ts.net:8443. Remove any path or sign-in details.");
   }
   return url.origin;
 }
