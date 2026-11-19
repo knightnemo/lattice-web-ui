@@ -46,6 +46,22 @@ describe("the real Tauri consumers on a headless server", () => {
     ServerEvents.current.onopen!();
     expect(reconnected).toHaveBeenCalledOnce();
   });
+  it("rejects a disposed adapter before it can send an unscoped request or use a replacement client", async () => {
+    const fetch = vi.fn();
+    vi.stubGlobal("fetch", fetch);
+    install();
+    const old = (window as unknown as { __TAURI_INTERNALS__: { invoke: typeof invoke } }).__TAURI_INTERNALS__.invoke;
+    const stream = ServerEvents.current;
+    stream.readyState = 0;
+    const opening = old("terminal_open");
+    disposers.pop()!();
+    await expect(old("write_project_file", { path: "main.tex", content: "late" })).rejects.toMatchObject({ name: "AbortError" });
+    install();
+    stream.dispatchEvent(new Event("open"));
+    await expect(opening).rejects.toMatchObject({ name: "AbortError" });
+    await expect(old("initial_project")).rejects.toMatchObject({ name: "AbortError" });
+    expect(fetch).not.toHaveBeenCalled();
+  });
   it("delivers server build events to listen(), then removes the callback on unlisten", async () => {
     install();
     const callback = vi.fn();

@@ -56,6 +56,9 @@ export function installHeadlessRuntime(session: HeadlessSession): () => void {
   let connectedBefore = false;
   let projectRoot: string | undefined;
   let disposed = false;
+  const requireLiveClient = () => {
+    if (disposed || activeClient !== client) throw new DOMException("The workspace connection closed.", "AbortError");
+  };
   const waitForEvents = () => {
     const stream = eventSource;
     if (stream.readyState === 1) return Promise.resolve();
@@ -138,6 +141,7 @@ export function installHeadlessRuntime(session: HeadlessSession): () => void {
       listeners.delete(id);
       return;
     }
+    requireLiveClient();
     if (command === "plugin:opener|open_url") {
       const url = new URL(String(args.url));
       if (!["https:", "http:", "mailto:"].includes(url.protocol)) throw new Error("Unsupported URL scheme.");
@@ -156,13 +160,18 @@ export function installHeadlessRuntime(session: HeadlessSession): () => void {
     if (command === "plugin:clipboard-manager|read_text") return navigator.clipboard.readText();
     if (command === "plugin:dialog|open") {
       const { chooseServerProject } = await import("./headless-project-picker");
+      requireLiveClient();
       return chooseServerProject();
     }
     recovery.requireConnected();
     if (session.capabilities && !session.capabilities.commands.includes(command)) {
       throw new Error(`${command} is unavailable on this server. See server capabilities.`);
     }
-    if (command === "terminal_open" || command === "terminal_run" || command === "terminal_attach") await waitForEvents();
+    if (command === "terminal_open" || command === "terminal_run" || command === "terminal_attach") {
+      await waitForEvents();
+      requireLiveClient();
+      recovery.requireConnected();
+    }
     const value = await serverRequest<{ result: unknown }>("/api/invoke", { command, args: encodeBridgeValue(args) });
     if ((command === "initial_project" || command === "open_project") && value.result && typeof value.result === "object" &&
         "root" in value.result && typeof value.result.root === "string") projectRoot = value.result.root;
@@ -220,5 +229,12 @@ export async function initializeHeadlessRuntime(): Promise<void> {
   }
   if (!session.authenticated) session = await showServerLogin(session.devicePairing);
   const dispose = installHeadlessRuntime(session);
-  window.addEventListener("pagehide", dispose, { once: true });
+  // A back-forward-cache entry retains this document, including its client
+  // identity. Only dispose the adapter when the browser discards the entry.
+  const leaving = (event: PageTransitionEvent) => {
+    if (event.persisted) return;
+    dispose();
+    window.removeEventListener("pagehide", leaving);
+  };
+  window.addEventListener("pagehide", leaving);
 }
