@@ -2,6 +2,7 @@
 .mobile-workspace-nav { display:flex; flex:none; align-items:center; gap:var(--space-1); padding:var(--space-2) var(--space-2) max(var(--space-2),env(safe-area-inset-bottom)); background:var(--surface-sidebar); border-top:1px solid var(--border-subtle); }
 .mobile-workspace-nav :is(button,select) { flex:1 1 0; min-width:0; min-height:44px; padding:var(--space-2); border:0; border-radius:var(--radius-control); background:transparent; color:var(--text-primary); font:inherit; font-size:var(--type-caption-size); touch-action:manipulation; }
 .mobile-workspace-nav button:active { background:var(--chrome-hover-surface); }
+.mobile-workspace-nav :is(button[aria-pressed="true"],select[aria-current="true"]) { background:var(--control-tinted-surface); font-weight:var(--weight-medium); }
 .mobile-workspace-nav button:disabled { opacity:.4; }
 .mobile-workspace .pdf-toolbar { overflow-x:auto; }
 @media (max-width:700px) {

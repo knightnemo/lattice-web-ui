@@ -82,16 +82,17 @@ export function installMobileWorkspace(controller: TrellisController, ws: Worksp
     ws.focus(view.id);
     ws.navigation.frame(view.panelId);
   };
-  button(i18n._(msg`Project`), () => showPanel("project"));
+  const project = button(i18n._(msg`Project`), () => showPanel("project"));
   const editor = button(i18n._(msg`Editor`), showEditor);
-  button(i18n._(msg`PDF`), () => showPanel("pdf"));
+  const pdf = button(i18n._(msg`PDF`), () => showPanel("pdf"));
   const more = document.createElement("select");
   more.setAttribute("aria-label", i18n._(msg`More panels`));
   const placeholder = document.createElement("option");
   placeholder.value = "";
   placeholder.textContent = i18n._(msg`More`);
   more.append(placeholder);
-  for (const kind of ["agent", "terminal", "papers", "git", "history", "overleaf", "literature", "todos", "checklist"] as const) {
+  const morePanels = ["agent", "terminal", "papers", "git", "history", "overleaf", "literature", "todos", "checklist"] as const;
+  for (const kind of morePanels) {
     const option = document.createElement("option");
     option.value = kind;
     option.textContent = i18n._(PANEL_TITLES[kind]);
@@ -107,6 +108,32 @@ export function installMobileWorkspace(controller: TrellisController, ws: Worksp
     const key = controller.app.get().activeKey;
     void controller.bridge?.build(key);
   });
+  // Trellis owns visibility across tab changes, camera navigation and spread layouts.
+  const syncSelection = () => {
+    const visible = new Set(ws.surfaces().filter(({ view }) => view.visible).map(({ view }) => view.type));
+    project.setAttribute("aria-pressed", String(visible.has("project")));
+    editor.setAttribute("aria-pressed", String(visible.has("file")));
+    pdf.setAttribute("aria-pressed", String(visible.has("pdf")));
+    const shownTools = morePanels.filter((kind) => visible.has(kind));
+    if (shownTools.length > 0) {
+      more.setAttribute("aria-current", "true");
+      more.setAttribute("aria-description", shownTools.map((kind) => i18n._(PANEL_TITLES[kind])).join(", "));
+    } else {
+      more.removeAttribute("aria-current");
+      more.removeAttribute("aria-description");
+    }
+  };
+  let visibilityListeners: Array<() => void> = [];
+  const stopVisibility = () => {
+    visibilityListeners.forEach((off) => off());
+    visibilityListeners = [];
+  };
+  const trackVisibility = () => {
+    stopVisibility();
+    if (mode === "desktop") return;
+    visibilityListeners = ws.surfaces().map(({ view }) => view.on("visibility", syncSelection));
+    syncSelection();
+  };
   const sync = () => {
     if (mode === "desktop") return;
     const state = controller.app.get();
@@ -122,6 +149,7 @@ export function installMobileWorkspace(controller: TrellisController, ws: Worksp
   };
   const clearMobileUi = () => {
     cancelAnimationFrame(frame);
+    stopVisibility();
     nav.remove();
     container?.classList.remove("mobile-workspace");
   };
@@ -148,6 +176,7 @@ export function installMobileWorkspace(controller: TrellisController, ws: Worksp
       previousFrame = ws.navigation.framed;
       container?.classList.add("mobile-workspace");
       host.after(nav);
+      trackVisibility();
       if (remote) arrangeEditingPanels();
       ws.update({ navigation: "focus" });
     }
@@ -156,10 +185,12 @@ export function installMobileWorkspace(controller: TrellisController, ws: Worksp
   };
   const stop = onWorkspacePresentationChange(update);
   const unsubscribe = controller.app.subscribe(sync);
+  const stopSurfaces = ws.on("surfaces", trackVisibility);
   update();
   return () => {
     stop();
     unsubscribe();
+    stopSurfaces();
     if (mode !== "desktop" && controller.ws === ws) restoreDesktop();
     else clearMobileUi();
   };

@@ -1,6 +1,6 @@
 import { createWorkspace, layout as L, type WorkspaceHandle } from "@danfessler/trellis";
 import { afterEach, beforeEach, expect, it, vi } from "vitest";
-import { fireEvent, waitFor } from "@testing-library/react";
+import { fireEvent, waitFor, within } from "@testing-library/react";
 import { TrellisController } from "./trellis-controller";
 import { installMobileWorkspace } from "./mobile-workspace";
 
@@ -50,13 +50,21 @@ it("navigates real Trellis panels and restores desktop framing without replacing
   cleanup = installMobileWorkspace(controller, ws);
   const nav = document.querySelector(".mobile-workspace-nav")!;
   const workspace = document.querySelector(".workspace.trellis-workspace")!;
+  const panels = within(nav as HTMLElement);
+  await new Promise(requestAnimationFrame);
   expect(nav.parentElement).toBe(workspace);
   expect(workspace).toHaveClass("mobile-workspace");
   expect(document.querySelector(".lattice-trellis")?.nextElementSibling).toBe(nav);
   await waitFor(() => expect(ws.navigation.framed).toBe("editor-panel"));
+  await waitFor(() => expect(panels.getByRole("button", { name: "Editor" })).toHaveAttribute("aria-pressed", "true"));
   const editorSurface = ws.view("editor")!.element;
   fireEvent.click(document.querySelector(".mobile-workspace-nav button:nth-child(3)")!);
   expect(ws.navigation.framed).toBe("pdf-panel");
+  await waitFor(() => expect(panels.getByRole("button", { name: "PDF" })).toHaveAttribute("aria-pressed", "true"));
+  expect(panels.getByRole("button", { name: "Editor" })).toHaveAttribute("aria-pressed", "false");
+  ws.navigation.frame("project-panel");
+  await waitFor(() => expect(panels.getByRole("button", { name: "Project" })).toHaveAttribute("aria-pressed", "true"));
+  expect(panels.getByRole("button", { name: "PDF" })).toHaveAttribute("aria-pressed", "false");
   expect(ws.getDocument().root).toEqual(original.root);
   expect(ws.view("editor")!.element).toBe(editorSurface);
   media.matches = false;
@@ -84,12 +92,18 @@ it("opens and frames the existing Terminal panel from the mobile More menu", asy
   cleanup = installMobileWorkspace(controller, ws);
   const editor = ws.view("editor")!.element;
   const menu = document.querySelector<HTMLSelectElement>('.mobile-workspace-nav select')!;
+  await new Promise(requestAnimationFrame);
   expect([...menu.options].find((option) => option.value === "terminal")?.textContent).toBe("Terminal");
   fireEvent.change(menu, { target: { value: "terminal" } });
   const terminal = ws.view("terminal")!;
   expect(terminal).not.toBeNull();
   expect(ws.navigation.framed).toBe(terminal.panelId);
   await waitFor(() => expect(terminal.visible).toBe(true));
+  await waitFor(() => expect(menu).toHaveAttribute("aria-current", "true"));
+  expect(menu).toHaveAccessibleDescription("Terminal");
   expect(menu.value).toBe("");
+  ws.navigation.frame("editor-panel");
+  await waitFor(() => expect(menu).not.toHaveAttribute("aria-current"));
+  expect(menu).not.toHaveAttribute("aria-description");
   expect(ws.view("editor")!.element).toBe(editor);
 });

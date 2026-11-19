@@ -144,6 +144,12 @@ try {
       }))));
       throw error;
     });
+    const panelNav = page.getByRole("navigation", { name: "Workspace panels" });
+    const expected = expanded ? ["Editor", "PDF"] : ["Editor"];
+    await until(async () => {
+      const active = await panelNav.getByRole("button", { pressed: true }).allTextContents();
+      return active.join(",") === expected.join(",");
+    }, `panel indicators match the visible layout at ${width} × ${height}`);
     assert.equal(await editor.evaluate((node, originalEditor) => node === originalEditor, element), true, "keeps the same editor DOM");
     assert.deepEqual(await caret(), selection, "keeps the caret after resize");
     assert.match(await editor.innerText(), /unsaved /);
