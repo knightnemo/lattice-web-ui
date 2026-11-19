@@ -113,6 +113,8 @@ folder in the current tab. Downloads live directly under the configured workspac
 beside other projects. The CLI uses its `--project` directory as the parent and
 also accepts the older `projectName` argument. When a local folder has unlinked
 files, the picker offers to link that folder or download a separate copy.
+Publishing a local folder uses `overleaf_publish_project` with `projectRoot`
+and `projectName`. Existing CLI requests may continue using `name` for the title.
 
 The service cannot open a useful default browser
 on a remote machine; embedded/native login commands report unavailable.

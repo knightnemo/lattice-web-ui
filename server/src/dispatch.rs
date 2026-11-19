@@ -247,7 +247,11 @@ impl Core {
             "overleaf_link" => value(overleaf::project_link(root))?,
             "overleaf_preview" => value(overleaf::preview(&self.state_dir, root, &Default::default()))?,
             "overleaf_sync" => value(overleaf::sync(&self.state_dir, root, &Default::default(), None))?,
-            "overleaf_publish_project" => value(overleaf::publish_project(&self.state_dir, root, string("name")?))?,
+            "overleaf_publish_project" => {
+                // Desktop and browser clients send projectName; retain the CLI's original name.
+                let name = opt("projectName").or_else(|| opt("name")).ok_or("Missing project name")?;
+                value(overleaf::publish_project(&self.state_dir, root, name))?
+            }
             "overleaf_clone_target" | "overleaf_clone_project" => {
                 let id = string("projectId")?;
                 let name = opt("name").or_else(|| opt("projectName")).ok_or("Missing project name")?;

@@ -4,6 +4,8 @@
 import html
 import io
 import json
+from email import policy
+from email.parser import BytesParser
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 import subprocess
@@ -23,7 +25,8 @@ class OverleafFixture(BaseHTTPRequestHandler):
             dashboard = html.escape(json.dumps([
                 {"id": "fixture-project", "name": "Browser Import", "accessLevel": "readOnly"},
             ]))
-            payload = f'<meta name="ol-projects" content="{dashboard}">'.encode()
+            payload = (f'<meta name="ol-projects" content="{dashboard}">'
+                       '<meta name="ol-csrfToken" content="fixture-csrf">').encode()
             content_type = "text/html"
         elif self.path == "/project/fixture-project/updates?min_count=1":
             payload = b'{"updates":[{"toV":1}]}'
@@ -44,6 +47,31 @@ class OverleafFixture(BaseHTTPRequestHandler):
         self.end_headers()
         self.wfile.write(payload)
 
+    def do_POST(self):
+        if self.path != "/project/new/upload":
+            self.send_error(404)
+            return
+        if (self.headers.get("Cookie") != "overleaf_session2=fixture"
+                or self.headers.get("X-Csrf-Token") != "fixture-csrf"):
+            self.send_error(403)
+            return
+        body = self.rfile.read(int(self.headers["Content-Length"]))
+        multipart = BytesParser(policy=policy.default).parsebytes(
+            f"Content-Type: {self.headers['Content-Type']}\r\n\r\n".encode() + body
+        )
+        parts = {part.get_param("name", header="content-disposition"): part
+                 for part in multipart.iter_parts()}
+        filename = parts["name"].get_content()
+        part = parts["qqfile"]
+        with zipfile.ZipFile(io.BytesIO(part.get_payload(decode=True))) as archive:
+            self.server.uploads.append((filename, part.get_filename(), archive.read("main.tex")))
+        payload = b'{"success":true,"project_id":"fixture-upload"}'
+        self.send_response(200)
+        self.send_header("Content-Type", "application/json")
+        self.send_header("Content-Length", str(len(payload)))
+        self.end_headers()
+        self.wfile.write(payload)
+
     def log_message(self, *_args):
         pass
 
@@ -59,6 +87,7 @@ class OverleafOpen(unittest.TestCase):
         cls.addClassCleanup(smoke.HeadlessSmoke.tearDownClass.__func__, cls)
         fixture = ThreadingHTTPServer(("127.0.0.1", 0), OverleafFixture)
         fixture.downloads = 0
+        fixture.uploads = []
         cls.fixture = fixture
         worker = threading.Thread(target=fixture.serve_forever)
         worker.start()
@@ -136,6 +165,27 @@ class OverleafOpen(unittest.TestCase):
         self.assertEqual(self.invoke("overleaf_clone_target", args), (200, {"result": {
             "path": str(downloaded), "kind": "open", "folder": "Draft (2)",
         }}))
+
+    def test_publish_accepts_browser_and_legacy_names(self):
+        for field in ("projectName", "name"):
+            with self.subTest(field=field):
+                title = f"Published {field}"
+                root = (self.workspace / field).resolve()
+                root.mkdir()
+                (root / "main.tex").write_text("synthetic document")
+                cookie = self.login()
+                self.assertEqual(self.invoke("open_project", {"path": str(root)}, cookie)[0], 200)
+                previous = len(self.fixture.uploads)
+                status, result = self.invoke("overleaf_publish_project", {
+                    "projectRoot": str(root), field: title,
+                }, cookie)
+                self.assertEqual(status, 200, result)
+                self.assertEqual(result["result"]["projectName"], title)
+                self.assertEqual(result["result"]["projectId"], "fixture-upload")
+                self.assertEqual(self.fixture.uploads[previous:], [
+                    (f"{title}.zip", f"{title}.zip", b"synthetic document"),
+                ])
+                self.assertEqual(self.invoke("overleaf_link", cookie=cookie)[1], result)
 
     def test_cli_accepts_legacy_project_name_in_selected_parent(self):
         parent = self.workspace / "beta"
