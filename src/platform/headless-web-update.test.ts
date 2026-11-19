@@ -1,7 +1,9 @@
+import { createElement } from "react";
+import { render } from "@testing-library/react";
 import { afterEach, expect, it, vi } from "vitest";
 import { notifyInfo } from "../telemetry/app-notify";
 import { dismissAppToastByDedupeKey } from "../telemetry/app-log-store";
-import { watchWebUpdate, webUpdateSnapshot } from "./headless-web-update";
+import { recoverHostedSettings, watchWebUpdate, webUpdateSnapshot } from "./headless-web-update";
 
 vi.mock("../telemetry/app-notify", () => ({ notifyInfo: vi.fn() }));
 vi.mock("../telemetry/app-log-store", () => ({ dismissAppToastByDedupeKey: vi.fn() }));
@@ -130,4 +132,27 @@ it("backs off for hosts without a timer and finds a newly enabled timer on a man
   await vi.waitFor(() => expect(webUpdateSnapshot()?.release?.latestVersion).toBe("0.10.0"));
   expect(fetchStatus).toHaveBeenCalledTimes(2);
   expect(notifyInfo).toHaveBeenCalledOnce();
+});
+
+it("reoffers a dismissed deployment from an unavailable Settings chunk without touching the draft", async () => {
+  const { reload } = hostFixture(() => new Response(null, { status: 404 }), changed);
+  await webUpdateSnapshot()?.check();
+  expect(notifyInfo).toHaveBeenCalledOnce();
+  vi.mocked(notifyInfo).mockClear();
+  const fallback = await recoverHostedSettings(new Error("Missing Settings chunk"));
+  const onClose = vi.fn();
+  const panel = render(createElement(fallback.default, { onClose }));
+  expect(onClose).toHaveBeenCalledOnce();
+  expect(notifyInfo).toHaveBeenCalledOnce();
+  expect(reload).not.toHaveBeenCalled();
+  await expect(webUpdateSnapshot()?.reload()).resolves.toBe(true);
+  expect(reload).toHaveBeenCalledOnce();
+  panel.unmount();
+});
+
+it("preserves ordinary Settings failures when the host is still serving this build", async () => {
+  hostFixture(() => new Response(null, { status: 404 }));
+  const failure = new Error("Unexpected Settings failure");
+  await expect(recoverHostedSettings(failure)).rejects.toBe(failure);
+  expect(notifyInfo).not.toHaveBeenCalled();
 });

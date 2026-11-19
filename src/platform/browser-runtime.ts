@@ -477,6 +477,9 @@ export function isBrowserHosted(): boolean {
   return browserRuntime || isHeadlessHosted();
 }
 
+/** The hosted project and Settings share one lazy update observer. */
+export const loadWebUpdate = () => import("./headless-web-update");
+
 export function isHeadlessHosted(): boolean {
   return (window as Window & { __LATTICE_HEADLESS__?: boolean }).__LATTICE_HEADLESS__ === true;
 }

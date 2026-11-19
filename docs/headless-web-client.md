@@ -54,7 +54,9 @@ fresh invite, open it in another tab of the same browser, and select
 When the host deploys a new web build, an open editor offers **Save and
 reload**. It checks when the tab becomes visible, when the network or server connection returns,
 and every five minutes while visible. Dismiss the notice to keep writing. In **Settings → Editor & builds → App
-updates**, you can check again, compare build IDs and reload later.
+updates**, you can check again, compare build IDs and reload later. If the host
+has replaced the files used to open Settings, opening Settings brings back
+**Save and reload** and keeps the editor open.
 Choosing the action saves the open document edits and reopens this tab’s
 project. An unfinished composition, a failed write or an edit made during
 saving keeps the workspace open so you can finish the edit and retry.

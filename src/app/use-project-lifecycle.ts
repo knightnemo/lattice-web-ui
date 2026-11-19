@@ -5,7 +5,7 @@ import { getCurrentWindow } from "@tauri-apps/api/window";
 import { open, save as saveDialog } from "@tauri-apps/plugin-dialog";
 import type { ProjectSnapshot } from "../app-types";
 import { hostErrorMessage, toMessage } from "../app-utils";
-import { browserRuntimeDetached, isHeadlessHosted } from "../platform/browser-runtime";
+import { browserRuntimeDetached, isHeadlessHosted, loadWebUpdate } from "../platform/browser-runtime";
 import {
   forgetRecentProject, hasSeenTutorial, loadRecentProjects, markTutorialSeen, rememberRecentProject, type RecentProject,
 } from "../settings/app-settings";
@@ -22,7 +22,6 @@ import { useLatestRef } from "../hooks/use-latest-ref";
 
 /** How long launch shows an empty window while it reopens a project, before the welcome screen. */
 const LAUNCH_EMPTY_WINDOW_MS = 1_000;
-const loadWebUpdate = () => import("../platform/headless-web-update");
 
 // Must match the prefix `open_project_window` puts on a window-creation
 // failure. Everything else it can fail with is the project itself.

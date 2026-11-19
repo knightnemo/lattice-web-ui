@@ -1,5 +1,5 @@
 import { invoke } from "@tauri-apps/api/core";
-import type { RefObject } from "react";
+import { useEffect, type RefObject } from "react";
 import type { ProjectSnapshot } from "../app-types";
 import { toMessage } from "../app-utils";
 import { showError } from "../app/notify";
@@ -48,6 +48,7 @@ type WebUpdate = {
   release: HostRelease | null;
   check: () => Promise<boolean>;
   reload: () => Promise<boolean>;
+  showNotice: () => void;
 };
 let update: WebUpdate | null = null;
 export const webUpdateSnapshot = () => update;
@@ -117,6 +118,7 @@ export function watchWebUpdate(saveAndReload: () => Promise<boolean>): () => voi
   }
 
   function offer(failed = false) {
+    if (stopped || !update || update.served === loaded) return;
     notifyInfo(i18n._(msg`App updater`), i18n._(msg`Workspace update available`), {
       dedupeKey: NOTICE,
       timeoutMs: 0,
@@ -155,7 +157,7 @@ export function watchWebUpdate(saveAndReload: () => Promise<boolean>): () => voi
   update = { loaded, served: loaded, release: null, check: () => {
     retryMissingHostAfter = 0;
     return check();
-  }, reload };
+  }, reload, showNotice: offer };
   checkHost();
   changes.dispatchEvent(new Event("change"));
   let lastReconnectCheck = -Infinity;
@@ -180,6 +182,21 @@ export function watchWebUpdate(saveAndReload: () => Promise<boolean>): () => voi
     update = null;
     changes.dispatchEvent(new Event("change"));
   };
+}
+
+/** A deployment can remove the old Settings chunk before this tab has ever opened it. */
+export async function recoverHostedSettings(error: unknown) {
+  if (update && update.loaded === update.served) await update.check();
+  if (!update || update.loaded === update.served) throw error;
+  return { default: ReturnToWorkspaceUpdate };
+}
+
+function ReturnToWorkspaceUpdate({ onClose }: { onClose: () => void }) {
+  useEffect(() => {
+    onClose();
+    update?.showNotice();
+  }, [onClose]);
+  return null;
 }
 
 /** Restore this tab's project and keep its deployed-build observer attached until unmount. */
