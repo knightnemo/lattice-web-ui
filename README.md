@@ -74,9 +74,9 @@ kit. [Agent setup](https://github.com/knightnemo/lattice-web-ui/blob/6fe84151f21
 
 ## Contribute
 
-Run `node --test test/*.test.mjs` before opening a PR. See the
-[release guide](docs/releases.md)
-for packaging, verification, and publishing.
+See the [contributing guide](https://github.com/knightnemo/lattice-web-ui/blob/main/CONTRIBUTING.md)
+for local tests and pull requests, or the [release guide](docs/releases.md)
+for packaging and publishing.
 
 The [Mac plugin is MIT-licensed](https://github.com/knightnemo/lattice-web-ui/blob/main/plugin/LICENSE).
 The companion archive includes the original source licenses and notices.
