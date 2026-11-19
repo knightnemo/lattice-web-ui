@@ -213,6 +213,7 @@ try {
   await fresh.getByLabel("Device name").fill("Paired again");
   await fresh.getByRole("button", { name: "Connect this device" }).click();
   await fresh.locator(".cm-content").first().waitFor();
+  await phone.bringToFront();
   await phone.getByRole("button", { name: "Reconnect", exact: true }).click();
   await phone.locator(".headless-reconnect").waitFor({ state: "detached" });
   await save(phone).dispatchEvent("click");
