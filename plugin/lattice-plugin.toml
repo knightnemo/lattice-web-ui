@@ -1,10 +1,11 @@
 schema = 1
 id = "io.github.knightnemo.lattice-remote"
 name = "Lattice-web-ui"
-version = "0.4.0"
+version = "0.4.6"
 api = 1
 license = "MIT"
-description = "Open your Lattice workspace through Tailscale, device pairing, or account sign-in."
+description = "Open your self-hosted Lattice workspace in the browser from the command palette."
+repository = "https://github.com/lattice-writer/lattice-web-ui"
 runtime = "node"
 main = "main.mjs"
 

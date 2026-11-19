@@ -4,7 +4,7 @@ import { parseCompanionPin } from "./companion-source.mjs";
 import { currentPull, githubApi, parsePullRequest, pullFiles } from "./pr-github.mjs";
 
 export const checkName = "Lattice CI passed";
-const trustedRepository = "knightnemo/lattice-web-ui";
+const trustedRepository = "lattice-writer/lattice-web-ui";
 const trustedBranch = "main";
 const trustedRef = `refs/heads/${trustedBranch}`;
 const packagePaths = /^(?:plugin\/|scripts\/|account-gateway\/|device-pairing\/|tailscale-owner\/|automation\/|test\/|\.github\/|companion(?:\/|\.)|docs\/assets\/|docs\/releases\.md$|README\.md$)/;

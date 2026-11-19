@@ -47,7 +47,7 @@ test("paginates bounded file metadata and selects packaging for incomplete data 
 test("packaging uses the exact PR pin and requires its tag, commit and tree", async (t) => {
   const directory = await mkdtemp(join(tmpdir(), "lattice-pr-plan-"));
   t.after(() => rm(directory, { recursive: true, force: true }));
-  const repo = "knightnemo/lattice-web-ui";
+  const repo = "lattice-writer/lattice-web-ui";
   const base = "b".repeat(40);
   const pin = {
     snapshotTag: "companion/v0.5.0",
@@ -94,7 +94,7 @@ test("packaging uses the exact PR pin and requires its tag, commit and tree", as
 test("the required CI result belongs to current main and the exact open PR head", async (t) => {
   const directory = await mkdtemp(join(tmpdir(), "lattice-pr-requeue-"));
   t.after(() => rm(directory, { recursive: true, force: true }));
-  const repo = "knightnemo/lattice-web-ui";
+  const repo = "lattice-writer/lattice-web-ui";
   const base = "b".repeat(40);
   const env = {
     GITHUB_REPOSITORY: repo, GITHUB_REF: "refs/heads/main", GITHUB_SHA: base,
