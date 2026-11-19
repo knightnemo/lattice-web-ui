@@ -1,10 +1,10 @@
-import { expectNotification, windowApi, browserRuntime, fileNode, fileNodes, dirNode, projectCommands, refreshableProject, attentionPaper, ROOT, projectSnapshot, rootDocument, deferred, setAutoBuildMode, setInterfaceLanguage, projectTreeRoot, queryProjectTreeItem, findInProjectTree, findProjectTreeItem, findProjectTreeRenameInput, findElement, expectInvoked, invokeCalls, stubElementFromPoint, storedFileViews, dropFinderPaths, argPath, waitForSelectedTab, openTreeFile, openAgentFrame, postedOfType, dragTreeItem, chooseNewDocument, nextFrames, fileHit, expandDirectories } from "./app-test-utils";
+import { expectNotification, windowApi, browserRuntime, fileNode, fileNodes, dirNode, projectCommands, refreshableProject, attentionPaper, ROOT, projectSnapshot, rootDocument, deferred, setAutoBuildMode, setInterfaceLanguage, projectTreeRoot, queryProjectTreeItem, findInProjectTree, findProjectTreeItem, findProjectTreeRenameInput, findElement, expectInvoked, invokeCalls, stubElementFromPoint, storedFileViews, overleafStatus, dropFinderPaths, argPath, waitForSelectedTab, openTreeFile, openAgentFrame, postedOfType, dragTreeItem, chooseNewDocument, nextFrames, fileHit, expandDirectories } from "./app-test-utils";
 import { appHarness } from "./app-test-mount";
 import { invoke } from "@tauri-apps/api/core";
 import { open } from "@tauri-apps/plugin-dialog";
 import { revealItemInDir } from "@tauri-apps/plugin-opener";
 import { readText, writeText } from "@tauri-apps/plugin-clipboard-manager";
-import { act, fireEvent, screen, waitFor } from "@testing-library/react";
+import { act, fireEvent, screen, waitFor, within } from "@testing-library/react";
 import { describe, expect, it, vi } from "vitest";
 
 const { renderApp } = appHarness();
@@ -68,6 +68,48 @@ describe("project tree and projects", () => {
       fireEvent.keyDown(screen.getByRole("searchbox", { name: "Command palette" }), { key: "Enter" });
       await expectInvoked("return_to_desktop");
     });
+  });
+
+  it("adds an Overleaf project to the hosted page and keeps the project it came from", async () => {
+    Object.assign(browserRuntime, { hosted: true, headless: true });
+    sessionStorage.clear();
+    const first = projectSnapshot({ name: "First paper" });
+    const second = projectSnapshot({ root: "/tmp/second-paper", name: "Second paper" });
+    const openProject = vi.fn((args) => argPath(args) === second.root ? second : first);
+    renderApp({
+      ...projectCommands(first),
+      open_project: openProject,
+      overleaf_status: overleafStatus(),
+      overleaf_list_projects: [{
+        id: "overleaf-second", name: second.manifest.name, accessLevel: "owner",
+        lastUpdated: null, ownerEmail: null, ownerName: null, archived: false, trashed: false,
+      }],
+      overleaf_clone_project: second.root,
+    });
+
+    fireEvent.pointerDown(await screen.findByRole("button", { name: "Switch project" }), { button: 0 });
+    fireEvent.click(await screen.findByRole("menuitem", { name: "Open from Overleaf" }));
+    const picker = within(await screen.findByRole("dialog", { name: "Open from Overleaf" }));
+    fireEvent.click(await picker.findByRole("button", { name: /Second paper/ }));
+    fireEvent.click(await picker.findByRole("button", { name: "Open" }));
+    const tabs = within(await screen.findByRole("navigation", { name: "Open projects" }));
+    const firstTab = tabs.getByRole("button", { name: "First paper" });
+    const secondTab = tabs.getByRole("button", { name: "Second paper" });
+    await waitFor(() => expect(firstTab).toBeEnabled());
+    expect(secondTab).toHaveAttribute("aria-current", "page");
+    expect(invokeCalls("open_project_window")).toHaveLength(0);
+
+    fireEvent.click(firstTab);
+    await waitFor(() => {
+      expect(firstTab).toHaveAttribute("aria-current", "page");
+      expect(firstTab).toBeEnabled();
+    });
+    expect(openProject.mock.calls.map(([args]) => argPath(args))).toEqual([second.root, first.root]);
+
+    fireEvent.click(tabs.getByRole("button", { name: "Close project First paper" }));
+    await waitFor(() => expect(screen.queryByRole("navigation", { name: "Open projects" })).toBeNull());
+    expect(screen.getByRole("button", { name: "Switch project" })).toHaveTextContent(second.manifest.name);
+    sessionStorage.clear();
   });
 
   it("asks for the system's title-bar action on a double-click of the bar, never full screen, and leaves its controls alone", async () => {

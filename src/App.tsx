@@ -107,6 +107,7 @@ import { showError, showingErrors } from "./app/notify";
 import "./App.css";
 
 const PaperDropBridge = lazy(() => import("./papers/paper-drop-bridge"));
+const HostedProjectTabs = lazy(() => import("./app/hosted-project-tabs"));
 // The workspace, the canvas and the project PDF beside it render behind a
 // ChunkGate, so a project's first frame shows as soon as their chunks are in,
 // with no Suspense reveal to wait out. The file tree and paper library
@@ -549,7 +550,7 @@ function App({ surfaces }: { surfaces: AppSurfaces }) {
   });
   const {
     launching, busyLabel, recentProjects, unopenedProject, projectMenuOpen, setProjectMenuOpen, createForm, updateCreateForm,
-    chooseExisting, createProject, chooseRecentProject,
+    chooseExisting, createProject, chooseRecentProject, hostedProjectTabs, openHostedProjectTab, closeHostedProjectTab,
     openTutorialProject, importOverleafZip, exportProjectZip, moveWorkspace, movingWorkspace,
   } = lifecycle;
 
@@ -834,6 +835,17 @@ function App({ surfaces }: { surfaces: AppSurfaces }) {
         ) : undefined}
         canvasToolbar={canvasToolbar}
       />
+      {!focusMode && hostedProjectTabs.length > 1 && (
+        <Suspense fallback={null}>
+          <HostedProjectTabs
+            tabs={hostedProjectTabs}
+            activeRoot={project.root}
+            busy={busyLabel !== null || referenceImport.importing || building}
+            onOpen={(root) => void openHostedProjectTab(root)}
+            onClose={(root) => void closeHostedProjectTab(root)}
+          />
+        </Suspense>
+      )}
 
       {referenceHits && (
         <ReferencesPanel

@@ -19,6 +19,7 @@ import type { OpenDocuments } from "./use-open-documents";
 import { requestBibliographyIndex, type useProjectLibrary } from "./use-project-library";
 import type { ProjectState } from "./use-project-state";
 import { useLatestRef } from "../hooks/use-latest-ref";
+import { useHostedProjectTabs } from "./use-hosted-project-tabs";
 
 /** How long launch shows an empty window while it reopens a project, before the welcome screen. */
 const LAUNCH_EMPTY_WINDOW_MS = 1_000;
@@ -91,6 +92,8 @@ export function useProjectLifecycle(deps: ProjectLifecycleDeps) {
   // A standalone server binds the selected project to this browser tab. Only
   // a desktop-backed workspace can open a project in a separate native window.
   const standaloneServer = isHeadlessHosted();
+  const { tabs: hostedProjectTabs, dispatch: updateHostedProjectTabs } = useHostedProjectTabs(standaloneServer);
+  const switchingProjectRef = useRef(false);
   const openInNewWindow = Boolean(project?.root) && !standaloneServer;
   const [busyLabel, setBusyLabel] = useState<string | null>(null);
   /** The workspace is being handed to another surface: its editors stay read-only meanwhile. */
@@ -187,6 +190,9 @@ export function useProjectLifecycle(deps: ProjectLifecycleDeps) {
     setProject(snapshot);
     const ownsProject = captureProjectScope();
     rememberProject(snapshot);
+    if (standaloneServer) {
+      updateHostedProjectTabs({ type: "open", tab: { root: snapshot.root, name: snapshot.manifest.name } });
+    }
     setProjectMenuOpen(false);
     depsRef.current.resetProjectUi();
     resetForProject(snapshot.root);
@@ -234,7 +240,7 @@ export function useProjectLifecycle(deps: ProjectLifecycleDeps) {
   }, [
     applyCitations, applyReferences, beginProjectTransition, captureProjectScope, claimBibliographyRefresh, depsRef,
     enterDocuments, failIndex, failPapers, projectBeforeTransitionRef, projectRef, publishPapers, rememberProject,
-    resetBibliographyIndex, resetForProject, runBuild, setProject, shellRef,
+    resetBibliographyIndex, resetForProject, runBuild, setProject, shellRef, standaloneServer, updateHostedProjectTabs,
   ]);
   const enterProjectRef = useLatestRef(enterProject);
 
@@ -276,19 +282,41 @@ export function useProjectLifecycle(deps: ProjectLifecycleDeps) {
     }).finally(() => setBusyLabel(null));
   }, [cancelProjectTransition, enterProject, openInNewWindow, openProjectWindow, startProjectTransition]);
 
-  /// Replace this window's project with the one at `path`: save, claim the
-  /// switch, enter; roll the claim back on failure.
+  /// Save, claim the switch and enter. Keep the outgoing project on failure.
   const switchProject = useCallback(async (label: string, path: string, onError?: () => void) => {
+    if (switchingProjectRef.current) return false;
+    switchingProjectRef.current = true;
     setBusyLabel(label);
-    await (async () => {
-      if (!(await save()) || !await startProjectTransition()) return;
+    try {
+      if (!(await save()) || !await startProjectTransition()) return false;
       await enterProject(await invoke<ProjectSnapshot>("open_project", { path }));
-    })().catch((reason: unknown) => {
+      return true;
+    } catch (reason) {
       cancelProjectTransition();
       onError?.();
       showError(toMessage(reason));
-    }).finally(() => setBusyLabel(null));
+      return false;
+    } finally {
+      switchingProjectRef.current = false;
+      setBusyLabel(null);
+    }
   }, [cancelProjectTransition, enterProject, save, startProjectTransition]);
+
+  const openHostedProjectTab = useCallback(async (path: string) => {
+    if (projectRef.current?.root === path) return true;
+    if (projectBeforeTransitionRef.current) return false;
+    return switchProject(t`Switching project…`, path);
+  }, [projectBeforeTransitionRef, projectRef, switchProject, t]);
+
+  const closeHostedProjectTab = useCallback(async (path: string) => {
+    const index = hostedProjectTabs.findIndex(({ root }) => root === path);
+    if (index < 0 || hostedProjectTabs.length < 2 || switchingProjectRef.current || projectBeforeTransitionRef.current) return;
+    if (projectRef.current?.root === path) {
+      const next = hostedProjectTabs[index + 1] ?? hostedProjectTabs[index - 1];
+      if (!await openHostedProjectTab(next.root)) return;
+    }
+    updateHostedProjectTabs({ type: "close", root: path });
+  }, [hostedProjectTabs, openHostedProjectTab, projectBeforeTransitionRef, projectRef, updateHostedProjectTabs]);
 
   const chooseExisting = useCallback(async () => {
     const selected = await open({ directory: true, multiple: false, title: t`Open a LaTeX project` });
@@ -510,7 +538,7 @@ export function useProjectLifecycle(deps: ProjectLifecycleDeps) {
   return {
     launching, busyLabel, recentProjects: recents.projects, unopenedProject: recents.unopened, projectMenuOpen, setProjectMenuOpen, createForm, updateCreateForm,
     startProjectTransition, cancelProjectTransition, revealNewProject, chooseExisting, createProject,
-    chooseRecentProject, openTutorialProject,
+    chooseRecentProject, openTutorialProject, hostedProjectTabs, openHostedProjectTab, closeHostedProjectTab,
     importOverleafZip: standaloneServer ? undefined : importOverleafZip,
     exportProjectZip: standaloneServer ? undefined : exportProjectZip,
     moveWorkspace: standaloneServer ? undefined : moveWorkspace,

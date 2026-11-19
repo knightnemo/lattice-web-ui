@@ -191,17 +191,25 @@ try {
 
   await page.evaluate(() => window.resumeDuoTestWrites());
   await until(async () => (await readFile(main, "utf8")).includes("unsaved "), "normal save works after unfolding");
-  // Switch a working tab via the regular picker and back via Recent projects.
+  // Open another project in the same page, then return via the project tab.
   await editor.click();
   await page.keyboard.type("switch draft ");
+  const projectCaret = await caret();
+  assert.ok(projectCaret?.offset > 0);
   await page.getByRole("button", { name: "Switch project" }).click();
   await page.getByRole("menuitem", { name: "Open another folder" }).click();
   await page.getByRole("dialog", { name: "Open server project" }).getByRole("button", { name: "Second Paper" }).click();
   await until(async () => (await editor.innerText()).includes("Another project."), "the chosen project opens");
   assert.match(await readFile(main, "utf8"), /switch draft/);
-  await page.getByRole("button", { name: "Switch project" }).click();
-  await page.getByRole("menuitem", { name: "Duo Paper" }).click();
-  await until(async () => (await editor.innerText()).includes("switch draft"), "the recent project reopens with its saved edit");
+  const projectTabs = page.getByRole("navigation", { name: "Open projects" });
+  const firstProjectTab = projectTabs.getByRole("button", { name: "Duo Paper", exact: true });
+  const secondProjectTab = projectTabs.getByRole("button", { name: "Second Paper", exact: true });
+  assert.equal(await secondProjectTab.getAttribute("aria-current"), "page");
+  await firstProjectTab.click();
+  await until(async () => (await editor.innerText()).includes("switch draft"), "the first project returns with its saved edit");
+  await editor.focus();
+  await until(async () => (await caret())?.offset === projectCaret.offset, "the first project's caret position is restored");
+  assert.equal(await firstProjectTab.getAttribute("aria-current"), "page");
   // Both tabs use the same authenticated session. Explicitly opening a second
   // tab must not couple its project to this tab's project or update.
   const secondTab = await page.context().newPage();
@@ -255,6 +263,8 @@ try {
   await Promise.all([page.waitForEvent("domcontentloaded"), reload.click()]);
   await until(async () => (await editor.innerText()).includes("update draft"), "reload restored the edited project");
   assert.notEqual(await page.evaluate(() => window.__LATTICE_HEADLESS_CLIENT__), originalClient);
+  assert.equal(await secondProjectTab.getAttribute("aria-current"), "page");
+  assert.equal(await firstProjectTab.count(), 1);
   assert.match(await readFile(join(other, "main.tex"), "utf8"), /update draft/);
   assert.match(await otherEditor.innerText(), /switch draft/);
   assert.equal(page.context().pages().length, 2);

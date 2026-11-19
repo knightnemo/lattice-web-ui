@@ -3595,6 +3595,10 @@ msgstr "Close panel"
 msgid "Close paper details"
 msgstr "Close paper details"
 
+#: src/app/hosted-project-tabs.tsx
+msgid "Close project {name}"
+msgstr "Close project {name}"
+
 #: src/editor/latex/search-panel.ts
 msgid "Close search"
 msgstr "Close search"
@@ -10133,6 +10137,10 @@ msgstr "Open PDF in browser"
 #: src/app/use-command-table.ts
 msgid "Open project history"
 msgstr "Open project history"
+
+#: src/app/hosted-project-tabs.tsx
+msgid "Open projects"
+msgstr "Open projects"
 
 #: src/platform/headless-project-picker.ts
 msgid "Open server project"

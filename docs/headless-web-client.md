@@ -33,11 +33,12 @@ Server capability checks reject unavailable operations explicitly; native-only
 features do not silently succeed. PDF byte ranges use the selected project's
 versioned asset endpoint, while compiled PDF replies are decoded as binary.
 
-In the project menu, **Open another folder** selects a server project for the
-current browser tab. Recent projects and projects opened from the Overleaf picker
-also use this tab. Each browser tab and device has its own active project.
-Lattice saves outstanding edits before switching. **Save
-PDF as…** in the PDF toolbar downloads to the device running the browser.
+In the project menu, **Open another folder**, **Open from Overleaf**, and
+recent projects add or select a project tab in the current browser window.
+Lattice saves outstanding edits before switching and restores the open files
+and editor positions when you return to a project. Each browser tab and device
+has its own active project. **Save PDF as…** in the PDF toolbar downloads to
+the device running the browser.
 To transfer a project ZIP, use the host CLI's `import_project_zip` or
 `export_project_zip` command. [Host CLI](headless-server.md#cli)
 The server confines projects to its configured workspace root. Run and install
