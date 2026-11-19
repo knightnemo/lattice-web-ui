@@ -116,6 +116,7 @@ vi.mock("../platform/browser-runtime", () => ({
   isBrowserHosted: () => browserRuntime.hosted,
   isHeadlessHosted: () => browserRuntime.headless,
   browserRuntimeDetached: () => false,
+  loadWebUpdate: () => import("../platform/headless-web-update"),
   readBrowserHostAsset: vi.fn(),
 }));
 vi.mock("pdfjs-dist", () => ({
