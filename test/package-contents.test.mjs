@@ -6,7 +6,7 @@ import { dirname, join } from "node:path";
 import test from "node:test";
 import { fileURLToPath } from "node:url";
 
-const pluginFiles = ["LICENSE", "lattice-plugin.mjs", "lattice-plugin.toml", "main.mjs"];
+const pluginFiles = ["LICENSE", "README.md", "lattice-plugin.mjs", "lattice-plugin.toml", "main.mjs"];
 const deploymentFiles = [
   "account-gateway/Caddyfile", "account-gateway/README.md", "account-gateway/oauth2-proxy.toml",
   "device-pairing/Caddyfile", "device-pairing/README.md",

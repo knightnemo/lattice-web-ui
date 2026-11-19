@@ -11,7 +11,7 @@ if (!folder || !out) {
   process.exit(2);
 }
 const target = resolve(out);
-const files = ["LICENSE", "lattice-plugin.mjs", "lattice-plugin.toml", "main.mjs"];
+const files = ["LICENSE", "README.md", "lattice-plugin.mjs", "lattice-plugin.toml", "main.mjs"];
 for (const file of files) {
   if (!lstatSync(join(folder, file)).isFile()) throw new Error(`Expected regular plugin file: ${file}`);
 }

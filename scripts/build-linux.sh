@@ -40,5 +40,31 @@ done
 if [[ -f "$root/source-revision.txt" ]]; then
   cp "$root/source-revision.txt" "$kit/"
 fi
+if [[ ! -f "$root/check-host-update.py" || -L "$root/check-host-update.py" ]]; then
+  echo 'Expected a regular host update helper.' >&2
+  exit 1
+fi
+if [[ -f "$root/release-version.txt" && ! -L "$root/release-version.txt" ]]; then
+  kit_version="$(cat "$root/release-version.txt")"
+  release_guide="$root/docs/releases.md"
+elif [[ -f "$root/../plugin/lattice-plugin.toml" ]]; then
+  release_guide="$root/../docs/releases.md"
+  # The build script also accepts an explicit companion source from a repository checkout.
+  kit_version="$(node "$root/../automation/release-package.mjs" version "$root/../plugin/lattice-plugin.toml")"
+else
+  echo 'Expected a release version in the source kit.' >&2
+  exit 1
+fi
+if ! [[ "$kit_version" =~ ^(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)$ ]]; then
+  echo 'Expected a release version in X.Y.Z format.' >&2
+  exit 1
+fi
+printf '%s\n' "$kit_version" > "$kit/release-version.txt"
+cp "$root/check-host-update.py" "$kit/"
+if [[ ! -f "$release_guide" || -L "$release_guide" ]]; then
+  echo 'Expected a regular host release guide.' >&2
+  exit 1
+fi
+cp "$release_guide" "$kit/docs/"
 tar -czf "$out" -C "$stage" lattice-remote-host
 printf '%s\n' "$out"
