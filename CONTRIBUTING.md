@@ -15,9 +15,9 @@ private hostnames, and project content from screenshots and logs.
 
 - `plugin/` contains the Mac launcher. In Lattice, choose **Settings →
   Plugins → Install from folder…** and select that directory to try it.
-- The Linux companion contains the browser editor and server. Its source is
-  on a separate branch and pinned in [`automation/release-source.json`](automation/release-source.json).
-  Make companion changes in the companion source, then propose a pin update here.
+- The Linux companion contains the browser editor and server. Make changes in
+  the companion source, then propose a pin update here. See how
+  [companion snapshots are pinned](docs/releases.md#update-the-companion).
 
 From a full clone, run the portable tests with Node 22, Python 3, and Git installed.
 
@@ -36,4 +36,5 @@ issue if there is one, and list what you tested, including skipped checks.
 For visible changes, include a screenshot or short recording. For changes to
 sign-in, pairing, or saved state, explain how existing installs are affected.
 
-GitHub runs the required `Lattice CI passed` check before merge.
+GitHub requires `Lattice CI passed` before merge. Maintainers squash changes
+into `main`, and GitHub deletes merged branches in this repository.

@@ -4,8 +4,9 @@ import { createReadStream } from "node:fs";
 import { readFile, rename, writeFile } from "node:fs/promises";
 import { join, resolve } from "node:path";
 import { pathToFileURL } from "node:url";
+import { parseCompanionPin } from "./companion-source.mjs";
 
-const pin = JSON.parse(await readFile(new URL("./release-source.json", import.meta.url), "utf8"));
+const pin = parseCompanionPin(await readFile(new URL("./release-source.json", import.meta.url), "utf8"));
 const versionPattern = "(?:0|[1-9]\\d*)\\.(?:0|[1-9]\\d*)\\.(?:0|[1-9]\\d*)";
 const versionRegex = new RegExp(`^${versionPattern}$`);
 const tagRegex = new RegExp(`^v(${versionPattern})$`);
@@ -46,6 +47,19 @@ export function pinnedSource(checkout) {
     return { revision, originalCommit: pin.originalCommit, tree };
   }
   throw new Error("Missing the pinned companion snapshot and the original source commit.");
+}
+
+function verifySnapshotTag(checkout) {
+  let revision;
+  try {
+    revision = git(checkout, "show-ref", "--verify", "--hash", `refs/tags/${pin.snapshotTag}`);
+  } catch {
+    throw new Error(`Missing pinned companion tag ${pin.snapshotTag}.`);
+  }
+  if (revision !== pin.snapshotCommit || git(checkout, "cat-file", "-t", revision) !== "commit") {
+    throw new Error(`Companion tag ${pin.snapshotTag} does not point directly to the pinned commit.`);
+  }
+  pinnedSource(checkout);
 }
 
 async function sha256(path) {
@@ -111,6 +125,9 @@ async function run([operation, ...args]) {
       console.log(source.originalCommit);
       break;
     }
+    case "verify-snapshot":
+      verifySnapshotTag(args[0]);
+      break;
     case "seal":
       console.log(await sealRelease(...args));
       break;
@@ -118,7 +135,7 @@ async function run([operation, ...args]) {
       console.log((await verifyRelease(...args)).join("\n"));
       break;
     default:
-      throw new Error("Use version, source, seal, or verify.");
+      throw new Error("Use version, source, verify-snapshot, seal, or verify.");
   }
 }
 

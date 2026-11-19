@@ -41,22 +41,16 @@ jobs:
           GH_TOKEN: ${{ github.token }}
           PR_NUMBER: ${{ inputs.pr_number }}
           PR_HEAD_SHA: ${{ inputs.head_sha }}
-          COMPANION_REF: ${{ vars.LATTICE_COMPANION_REF }}
         run: node automation/pr-ci.mjs plan
 
   verify:
     name: Verify tests and packages
-    if: always() && needs.plan.result != 'skipped'
     needs: plan
     runs-on: ubuntu-24.04
     timeout-minutes: 15
     permissions:
       contents: read
     steps:
-      - name: Require valid plan
-        env:
-          PLAN_RESULT: ${{ needs.plan.result }}
-        run: test "$PLAN_RESULT" = success
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
         with:
           ref: refs/pull/${{ needs.plan.outputs.number }}/head
@@ -121,7 +115,10 @@ jobs:
 
   publish:
     name: Publish required check on PR head
-    if: always() && !cancelled() && needs.plan.result == 'success'
+    if: >-
+      ${{ !cancelled()
+      && github.repository == 'knightnemo/lattice-web-ui'
+      && github.ref == 'refs/heads/main' }}
     needs: [plan, verify]
     runs-on: ubuntu-24.04
     timeout-minutes: 5
@@ -136,8 +133,8 @@ jobs:
           persist-credentials: false
       - env:
           GH_TOKEN: ${{ github.token }}
-          PR_NUMBER: ${{ needs.plan.outputs.number }}
-          PR_HEAD_SHA: ${{ needs.plan.outputs.head }}
+          PR_NUMBER: ${{ inputs.pr_number }}
+          PR_HEAD_SHA: ${{ inputs.head_sha }}
           VERIFY_RESULT: ${{ needs.verify.result }}
         run: node automation/pr-ci.mjs publish
 

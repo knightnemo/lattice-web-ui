@@ -1,6 +1,9 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-import { needsPackaging, publish } from "../automation/pr-ci.mjs";
+import { mkdtemp, readFile, rm } from "node:fs/promises";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
+import { needsPackaging, plan, publish } from "../automation/pr-ci.mjs";
 import { currentPull, githubApi, parsePullRequest, pullFiles } from "../automation/pr-github.mjs";
 import { formatReview, prepareReview, validateFindings } from "../automation/pr-review.mjs";
 
@@ -37,7 +40,55 @@ test("paginates bounded file metadata and selects packaging for incomplete data 
   assert.equal(needsPackaging(files, [], false), true);
   assert.equal(needsPackaging(files, [{ name: "full-ci" }], true), true);
   assert.equal(needsPackaging([proposal], [], true), true);
+  assert.equal(needsPackaging([{ filename: "docs/assets/lattice-web-ui.png" }], [], true), true);
   assert.equal(needsPackaging([{ filename: "notes.md", previous_filename: "scripts/pack-plugin.mjs" }], [], true), true);
+});
+
+test("packaging uses the exact PR pin and requires its tag, commit and tree", async (t) => {
+  const directory = await mkdtemp(join(tmpdir(), "lattice-pr-plan-"));
+  t.after(() => rm(directory, { recursive: true, force: true }));
+  const repo = "knightnemo/lattice-web-ui";
+  const base = "b".repeat(40);
+  const pin = {
+    snapshotTag: "companion/v0.5.0",
+    snapshotCommit: "c".repeat(40),
+    originalCommit: "d".repeat(40),
+    tree: "e".repeat(40),
+  };
+  const env = {
+    GITHUB_REPOSITORY: repo, GITHUB_REF: "refs/heads/main", GITHUB_SHA: base,
+    GITHUB_OUTPUT: join(directory, "output"), GITHUB_STEP_SUMMARY: join(directory, "summary"),
+  };
+  const pull = {
+    state: "open", head: { sha: head }, base: { ref: "main", repo: { full_name: repo } },
+    labels: [], changed_files: 1,
+  };
+  const object = { type: "commit", sha: pin.snapshotCommit };
+  const api = ({ filePin = pin, ref = { object }, tree = pin.tree, filename = "automation/release-source.json" } = {}) =>
+    async (path) => {
+      if (path === "/git/ref/heads/main") return { object: { type: "commit", sha: base } };
+      if (path === "/pulls/2") return pull;
+      if (path === "/pulls/2/files?per_page=100&page=1") return [{ filename }];
+      assert.notEqual(filename, "CONTRIBUTING.md", "a docs-only PR should skip the snapshot lookup");
+      if (path === `/contents/automation/release-source.json?ref=${head}`) {
+        const bytes = Buffer.from(JSON.stringify(filePin));
+        return { type: "file", encoding: "base64", size: bytes.length, content: bytes.toString("base64") };
+      }
+      if (path === `/git/ref/tags/${pin.snapshotTag}`) return ref;
+      assert.equal(path, `/git/commits/${pin.snapshotCommit}`);
+      return { tree: { sha: tree } };
+    };
+
+  await assert.rejects(plan(api({ filePin: { ...pin, snapshotTag: "v0.5.0" } }), headRequest, env), /requires a companion/);
+  await assert.rejects(plan(api({ ref: null }), headRequest, env), /tag is missing/);
+  await assert.rejects(plan(api({ ref: { object: { type: "tag", sha: object.sha } } }), headRequest, env), /point directly/);
+  await assert.rejects(plan(api({ ref: { object: { ...object, sha: base } } }), headRequest, env), /pinned commit/);
+  await assert.rejects(plan(api({ tree: base }), headRequest, env), /wrong tree/);
+  await plan(api(), headRequest, env);
+  await plan(api({ filename: "CONTRIBUTING.md" }), headRequest, env);
+  assert.equal(await readFile(env.GITHUB_OUTPUT, "utf8"),
+    `head=${head}\nnumber=2\npackaging=true\ncompanion_sha=${pin.snapshotCommit}\n` +
+    `head=${head}\nnumber=2\npackaging=false\ncompanion_sha=\n`);
 });
 
 test("the required CI result belongs to current main and the exact open PR head", async () => {

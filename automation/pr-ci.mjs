@@ -1,12 +1,13 @@
 import { appendFile } from "node:fs/promises";
 import { pathToFileURL } from "node:url";
+import { parseCompanionPin } from "./companion-source.mjs";
 import { currentPull, githubApi, parsePullRequest, pullFiles } from "./pr-github.mjs";
 
 export const checkName = "Lattice CI passed";
 const trustedRepository = "knightnemo/lattice-web-ui";
 const trustedBranch = "main";
 const trustedRef = `refs/heads/${trustedBranch}`;
-const packagePaths = /^(?:plugin\/|scripts\/|account-gateway\/|device-pairing\/|tailscale-owner\/|automation\/|test\/|\.github\/|companion(?:\/|\.)|README\.md$)/;
+const packagePaths = /^(?:plugin\/|scripts\/|account-gateway\/|device-pairing\/|tailscale-owner\/|automation\/|test\/|\.github\/|companion(?:\/|\.)|docs\/assets\/|docs\/releases\.md$|README\.md$)/;
 
 export function needsPackaging(files, labels, complete) {
   return !complete || labels.some(({ name }) => name === "full-ci") ||
@@ -30,7 +31,25 @@ async function currentGatePull(api, request) {
   return pull?.base.repo?.full_name === trustedRepository ? pull : null;
 }
 
-async function plan(api, request, env) {
+async function companionSnapshot(api, head) {
+  const file = await api(`/contents/automation/release-source.json?ref=${head}`);
+  if (file.type !== "file" || file.encoding !== "base64" || typeof file.content !== "string" ||
+      !Number.isInteger(file.size) || file.size < 1 || file.size > 4096) {
+    throw new Error("The PR must provide a small companion pin JSON file.");
+  }
+  const pin = parseCompanionPin(Buffer.from(file.content, "base64").toString("utf8"));
+  const ref = await api(`/git/ref/tags/${pin.snapshotTag}`, { allowMissing: true });
+  if (ref?.object?.type !== "commit" || ref.object.sha !== pin.snapshotCommit) {
+    throw new Error("Companion tag is missing or does not point directly to the pinned commit.");
+  }
+  const commit = await api(`/git/commits/${pin.snapshotCommit}`);
+  if (commit.tree?.sha !== pin.tree) {
+    throw new Error("Companion commit has the wrong tree.");
+  }
+  return pin.snapshotCommit;
+}
+
+export async function plan(api, request, env) {
   await requireCurrentMain(api, env);
   const pull = await currentGatePull(api, request);
   if (!pull) throw new Error("PR is closed, has changed head, or targets another branch.");
@@ -39,15 +58,7 @@ async function plan(api, request, env) {
     throw new Error("PR changed while planning.");
   }
   const packaging = needsPackaging(files, pull.labels, complete);
-  const branch = env.COMPANION_REF || "companion/0.4.0";
-  if (!/^companion\/\d+\.\d+\.\d+$/.test(branch)) throw new Error("Invalid companion ref.");
-  const companion = packaging
-    ? await api(`/git/ref/heads/${branch}`, { allowMissing: true })
-    : undefined;
-  const companionSha = companion?.object?.sha ?? "";
-  if (companion && (!/^[0-9a-f]{40}$/.test(companionSha) || companion.object.type !== "commit")) {
-    throw new Error("Companion reference is not a valid commit.");
-  }
+  const companionSha = packaging ? await companionSnapshot(api, request.head) : "";
 
   await appendFile(env.GITHUB_OUTPUT, [
     `head=${request.head}`,
@@ -57,9 +68,7 @@ async function plan(api, request, env) {
     "",
   ].join("\n"));
   const summary = packaging
-    ? companionSha
-      ? `Plugin archive and full source-kit packaging selected. Companion \`${companionSha}\`.`
-      : "Plugin archive selected. The full source kit requires a published companion ref."
+    ? `Plugin archive and full source-kit packaging selected. Companion \`${companionSha}\`.`
     : "Fast verification selected. No release inputs changed.";
   await appendFile(env.GITHUB_STEP_SUMMARY, `### Test plan\n\n${summary}\n`);
 }
