@@ -1,6 +1,13 @@
-# Lattice-web-ui
-
-Run a Lattice workspace on a Linux host. Edit LaTeX and preview the PDF from a browser on your computer or phone.
+<div align="center">
+  <img src="docs/assets/lattice-web-ui.png" alt="" width="96" height="96">
+  <h1>Lattice-web-ui</h1>
+  <p>Edit LaTeX and preview PDFs from your computer or phone, with the workspace running on a Linux host.</p>
+  <p>
+    <a href="#run-your-own-workspace"><img src="https://img.shields.io/badge/Host-Linux-4f6456" alt="Host platform Linux"></a>
+    <a href="https://github.com/knightnemo/lattice-web-ui/blob/main/plugin/LICENSE"><img src="https://img.shields.io/badge/Mac_plugin-MIT-4f6456" alt="Mac plugin license MIT"></a>
+    <a href="https://github.com/knightnemo/lattice-web-ui/blob/6fe84151f216df4057797a5e24982b4613c64868/README.md#license"><img src="https://img.shields.io/badge/Companion-License_notices-4f6456" alt="Companion license notices"></a>
+  </p>
+</div>
 
 ## Open a workspace
 
@@ -67,9 +74,9 @@ kit. [Agent setup](https://github.com/knightnemo/lattice-web-ui/blob/6fe84151f21
 
 ## Contribute
 
-Run `node --test test/*.test.mjs` before opening a PR. See the
-[release guide](docs/releases.md)
-for packaging, verification, and publishing.
+See the [contributing guide](https://github.com/knightnemo/lattice-web-ui/blob/main/CONTRIBUTING.md)
+for local tests and pull requests, or the [release guide](docs/releases.md)
+for packaging and publishing.
 
 The [Mac plugin is MIT-licensed](https://github.com/knightnemo/lattice-web-ui/blob/main/plugin/LICENSE).
 The companion archive includes the original source licenses and notices.
