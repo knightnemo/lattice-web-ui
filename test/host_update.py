@@ -26,7 +26,7 @@ class ReleaseCheck(unittest.TestCase):
         self.archive = "lattice-remote-source-1.10.0.tar.gz"
         self.sums = "SHA256SUMS-v1.10.0.txt"
         self.data = b"synthetic archive"
-        self.base = "https://github.com/knightnemo/lattice-web-ui/releases/download/v1.10.0/"
+        self.base = "https://github.com/lattice-writer/lattice-web-ui/releases/download/v1.10.0/"
         self.metadata = {
             "tag_name": "v1.10.0", "draft": False, "prerelease": False,
             "assets": [{"name": self.archive, "state": "uploaded", "size": len(self.data)},

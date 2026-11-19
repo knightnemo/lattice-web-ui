@@ -5,7 +5,7 @@ open an issue first so we can agree on where it belongs and how to test it.
 
 ## Report a bug
 
-In [Issues](https://github.com/knightnemo/lattice-web-ui/issues), include what
+In [Issues](https://github.com/lattice-writer/lattice-web-ui/issues), include what
 you expected, what happened, and the shortest steps to reproduce it. Note
 your browser and OS and, if relevant, the plugin version, companion version,
 and sign-in method. Use a sample project and remove tokens, pairing links,

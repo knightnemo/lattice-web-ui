@@ -20,7 +20,7 @@ concurrency:
 
 jobs:
   plan:
-    if: github.repository == 'knightnemo/lattice-web-ui' && github.ref == 'refs/heads/main'
+    if: github.repository == 'lattice-writer/lattice-web-ui' && github.ref == 'refs/heads/main'
     runs-on: ubuntu-24.04
     timeout-minutes: 5
     permissions:
@@ -117,7 +117,7 @@ jobs:
     name: Publish required check on PR head
     if: >-
       ${{ !cancelled()
-      && github.repository == 'knightnemo/lattice-web-ui'
+      && github.repository == 'lattice-writer/lattice-web-ui'
       && github.ref == 'refs/heads/main' }}
     needs: [plan, verify]
     runs-on: ubuntu-24.04

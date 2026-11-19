@@ -17,4 +17,4 @@ Lattice's `openUrl` action to open it in your browser. It requests no project
 access, network origins, loopback ports, or secrets. It does not read or send
 project contents. Your browser handles the connection and any sign-in.
 
-[setup]: https://github.com/knightnemo/lattice-web-ui#run-your-own-workspace
+[setup]: https://github.com/lattice-writer/lattice-web-ui#run-your-own-workspace

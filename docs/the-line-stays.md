@@ -1,6 +1,6 @@
 # The Line Stays
 
-English transcript and credits for the 5:59 Lattice-web-ui setup film, recorded for [v0.4.5](https://github.com/knightnemo/lattice-web-ui/releases/tag/v0.4.5).
+English transcript and credits for the 5:59 Lattice-web-ui setup film, recorded for [v0.4.5](https://github.com/lattice-writer/lattice-web-ui/releases/tag/v0.4.5).
 
 ## Transcript
 
