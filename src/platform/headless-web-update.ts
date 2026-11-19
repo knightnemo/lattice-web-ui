@@ -1,3 +1,10 @@
+import { invoke } from "@tauri-apps/api/core";
+import type { RefObject } from "react";
+import type { ProjectSnapshot } from "../app-types";
+import { toMessage } from "../app-utils";
+import { showError } from "../app/notify";
+import { saveEveryEdit } from "../app/save-every-edit";
+import type { ProjectLifecycleDeps } from "../app/use-project-lifecycle";
 import { msg } from "@lingui/core/macro";
 import { i18n } from "../i18n";
 import { notifyInfo } from "../telemetry/app-notify";
@@ -91,4 +98,33 @@ export function watchWebUpdate(saveAndReload: () => Promise<boolean>): () => voi
     update = null;
     changes.dispatchEvent(new Event("change"));
   };
+}
+
+/** Restore this tab's project and keep its deployed-build observer attached until unmount. */
+export async function startHostedWorkspace(
+  deps: RefObject<Pick<ProjectLifecycleDeps, "documents" | "projectState" | "overleafSync">>,
+  signal: AbortSignal,
+): Promise<ProjectSnapshot | null> {
+  if (signal.aborted) return null;
+  const stop = watchWebUpdate(async () => {
+    const { documents, projectState, overleafSync } = deps.current;
+    const root = projectState.projectRef.current?.root;
+    if (projectState.projectBeforeTransitionRef.current || overleafSync.syncingRef.current) return false;
+    const ownsProject = projectState.captureProjectScope();
+    const saved = await saveEveryEdit({ ...documents, flushWholeFiles: overleafSync.flushWholeFilesRef.current });
+    if (signal.aborted || saved !== "saved" || !ownsProject() || overleafSync.syncingRef.current) return false;
+    // Reload creates a fresh server client. Only this history entry inherits the project.
+    window.history.replaceState({ ...window.history.state, latticeReloadProject: root }, "");
+    window.location.reload();
+    return true;
+  });
+  signal.addEventListener("abort", stop, { once: true });
+  const state = window.history.state;
+  if (typeof state?.latticeReloadProject === "string") {
+    const { latticeReloadProject: path, ...rest } = state;
+    window.history.replaceState(rest, "");
+    try { return await invoke<ProjectSnapshot>("open_project", { path }); }
+    catch (reason) { if (!signal.aborted) showError(toMessage(reason)); }
+  }
+  return invoke<ProjectSnapshot | null>("initial_project");
 }
