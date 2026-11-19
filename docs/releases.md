@@ -157,11 +157,11 @@ the kit, using the value of `snapshotTag` from the source pin for `TAG`.
    git push origin "$tag"
    ```
 
-3. Check the published prerelease and install or build its assets. When ready,
-   the repository owner can run **Actions → Release → Run workflow** on
-   `main`, choose **promote**, and enter that tag. The workflow verifies the
-   commit, manifest digest, and uploaded asset checksums, then marks the same
-   release stable without rebuilding.
+3. Check the published prerelease and install or build its assets. A repository
+   administrator can run **Actions → Release → Run workflow** on `main`, choose
+   **promote**, and enter that tag. The workflow checks the account's current
+   repository role and verifies the commit, manifest digest, and uploaded asset
+   checksums before marking the same release stable.
 
 Keep the previous stable release available for rollback. Releasing on GitHub
 publishes downloads. Roll out a new companion build on each host separately.
