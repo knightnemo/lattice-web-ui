@@ -70,15 +70,23 @@ export function watchWebUpdate(saveAndReload: () => Promise<boolean>): () => voi
   }
   update = { loaded, served: loaded, check, reload };
   changes.dispatchEvent(new Event("change"));
+  let lastReconnectCheck = -Infinity;
+  function onReconnect() {
+    if (document.hidden || Date.now() - lastReconnectCheck < 15_000) return;
+    lastReconnectCheck = Date.now();
+    void check();
+  }
   const interval = window.setInterval(check, 5 * 60_000);
   document.addEventListener("visibilitychange", check);
   window.addEventListener("online", check);
+  window.addEventListener("lattice:workspace-reconnected", onReconnect);
   return () => {
     stopped = true;
     controller.abort();
     window.clearInterval(interval);
     document.removeEventListener("visibilitychange", check);
     window.removeEventListener("online", check);
+    window.removeEventListener("lattice:workspace-reconnected", onReconnect);
     dismissAppToastByDedupeKey(NOTICE);
     update = null;
     changes.dispatchEvent(new Event("change"));

@@ -53,6 +53,7 @@ export function installHeadlessRuntime(session: HeadlessSession): () => void {
   const localEvents = new BrowserEventRegistry(runCallback);
   const openStream = () => new EventSource(`/api/events?${new URLSearchParams({ client })}`, { withCredentials: true });
   let eventSource = openStream();
+  let connectedBefore = false;
   let projectRoot: string | undefined;
   let disposed = false;
   const waitForEvents = () => {
@@ -80,6 +81,12 @@ export function installHeadlessRuntime(session: HeadlessSession): () => void {
   };
   const attachStream = () => {
     const stream = eventSource;
+    stream.onopen = () => {
+      // A deployment can replace the server without an OS/browser "online"
+      // event. Both automatic SSE retries and authenticated recovery land here.
+      if (connectedBefore) window.dispatchEvent(new Event("lattice:workspace-reconnected"));
+      connectedBefore = true;
+    };
     stream.onmessage = handleMessage;
     stream.onerror = async () => {
       if (stream.readyState !== EventSource.CLOSED) return;
@@ -94,6 +101,7 @@ export function installHeadlessRuntime(session: HeadlessSession): () => void {
     };
   };
   const closeStream = () => {
+    eventSource.onopen = null;
     eventSource.onmessage = null;
     eventSource.onerror = null;
     eventSource.close();

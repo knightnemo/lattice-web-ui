@@ -7,6 +7,7 @@ class ServerEvents extends EventTarget {
   static current: ServerEvents;
   static readonly CLOSED = 2;
   onerror: (() => Promise<void>) | null = null;
+  onopen: (() => void) | null = null;
   onmessage: ((event: { data: string }) => void) | null = null;
   close = vi.fn();
   readyState = 1;
@@ -35,6 +36,15 @@ describe("the real Tauri consumers on a headless server", () => {
     expect(client).toBeTruthy();
     expect(fetch.mock.calls[0][1].headers["X-Lattice-Client"]).toBe(client);
     expect(convertFileSrc("figures/plot 1.png")).toBe(`/api/asset?path=figures%2Fplot+1.png&client=${client}`);
+  });
+  it("signals a reopened server stream without treating the first connection as a reconnect", () => {
+    install();
+    const reconnected = vi.fn();
+    window.addEventListener("lattice:workspace-reconnected", reconnected, { once: true });
+    ServerEvents.current.onopen!();
+    expect(reconnected).not.toHaveBeenCalled();
+    ServerEvents.current.onopen!();
+    expect(reconnected).toHaveBeenCalledOnce();
   });
   it("delivers server build events to listen(), then removes the callback on unlisten", async () => {
     install();

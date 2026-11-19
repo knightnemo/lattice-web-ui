@@ -38,8 +38,10 @@ it("offers an update once per deployed build, keeps offline/hidden tabs quiet an
   await check();
   expect(fetch).toHaveBeenCalledTimes(1);
   hidden.mockReturnValue(false);
-  await check();
-  expect(notifyInfo).toHaveBeenCalledOnce();
+  window.dispatchEvent(new Event("lattice:workspace-reconnected"));
+  window.dispatchEvent(new Event("lattice:workspace-reconnected"));
+  await vi.waitFor(() => expect(notifyInfo).toHaveBeenCalledOnce());
+  expect(fetch).toHaveBeenCalledTimes(2);
   expect(reload).not.toHaveBeenCalled();
   await check();
   expect(notifyInfo).toHaveBeenCalledOnce();

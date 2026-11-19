@@ -52,7 +52,7 @@ fresh invite, open it in another tab of the same browser, and select
 **Reconnect** in the original tab.
 
 When the host deploys a new web build, an open editor offers **Save and
-reload**. It checks when the tab becomes visible, when connectivity returns,
+reload**. It checks when the tab becomes visible, when the network or server connection returns,
 and every five minutes while visible. Dismiss the notice to keep writing. In **Settings → Editor & builds → App
 updates**, you can check again, compare build IDs and reload later.
 Choosing the action saves the open document edits and reopens this tab’s
