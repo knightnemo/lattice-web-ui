@@ -3,9 +3,14 @@ import hashlib
 import importlib.util
 import io
 import json
+import os
+import shutil
+import subprocess
+import sys
 from pathlib import Path
 import tempfile
 import unittest
+from unittest.mock import patch
 from urllib.error import HTTPError, URLError
 
 spec = importlib.util.spec_from_file_location("updater", Path(__file__).resolve().parents[1] / "scripts/check-host-update.py")
@@ -73,6 +78,81 @@ class ReleaseCheck(unittest.TestCase):
                     self.check()
                 self.metadata[field] = saved
         self.assertTrue(all(url == updater.LATEST for url in self.calls))
+
+    def test_timer_status_is_atomic_public_data_and_survives_an_error(self):
+        state = self.directory / "private"
+        public = self.directory / "web"
+        public.mkdir()
+        private_status = state / "lattice-web-ui" / updater.STATUS_FILE
+        public_status = public / updater.STATUS_FILE
+        with patch.dict(os.environ, {"XDG_STATE_HOME": str(state)}), contextlib.redirect_stdout(io.StringIO()):
+            updater.run("1.9.0", open_url=self.fetch, record_status=True)
+            self.assertFalse(public_status.exists())
+            updater.run("1.9.0", open_url=self.fetch, record_status=True, public_status_dir=public)
+            body = public_status.read_text()
+            self.assertEqual(json.loads(body), {"schema": 1, "installedVersion": "1.9.0", "latestVersion": "1.10.0"})
+            self.assertEqual(private_status.read_text(), body)
+            self.assertEqual(private_status.stat().st_mode & 0o777, 0o600)
+            self.assertEqual(public_status.stat().st_mode & 0o777, 0o644)
+            def offline(_url):
+                raise URLError("offline")
+            with self.assertRaises(URLError):
+                updater.run("1.9.0", open_url=offline, record_status=True, public_status_dir=public)
+            self.assertEqual(private_status.read_text(), body)
+            self.assertEqual(public_status.read_text(), body)
+            with public_status.open() as old_descriptor:
+                def missing(url):
+                    raise HTTPError(url, 404, "Not Found", {}, None)
+                updater.run("1.9.0", open_url=missing, record_status=True, public_status_dir=public)
+                self.assertEqual(old_descriptor.read(), body)
+            self.assertEqual(json.loads(public_status.read_text())["latestVersion"], None)
+
+    def test_isolated_timer_install_reconfigure_and_remove(self):
+        config = self.directory / "config"
+        tools = self.directory / "bin"
+        tools.mkdir()
+        fake = tools / "systemctl"
+        log = self.directory / "commands"
+        fake.write_text('#!/bin/sh\nprintf "%s\\n" "$*" >> "$FAKE_SYSTEMCTL_LOG"\n')
+        fake.chmod(0o755)
+        public = self.directory / 'web %h $HOME "quoted"'
+        public.mkdir()
+        units = config / "systemd/user"
+        service = units / "lattice-host-update.service"
+        timer = units / "lattice-host-update.timer"
+        environment = {"PATH": str(tools) + os.pathsep + os.environ["PATH"],
+                       "XDG_CONFIG_HOME": str(config), "FAKE_SYSTEMCTL_LOG": str(log)}
+        with patch.dict(os.environ, environment), patch.object(sys, "platform", "linux"), contextlib.redirect_stdout(io.StringIO()):
+            updater.configure_timer(False, "1.9.0", public)
+            self.assertIn('ExecStart=:', service.read_text())
+            self.assertIn('web %%h $HOME \\"quoted\\"', service.read_text())
+            self.assertIn('TimeoutStartSec=60s', service.read_text())
+            self.assertIn('OnActiveSec=1min', timer.read_text())
+            self.assertIn('OnUnitActiveSec=6h', timer.read_text())
+            analyzer = shutil.which("systemd-analyze")
+            if os.environ.get("GITHUB_ACTIONS") == "true" and os.environ.get("RUNNER_OS") == "Linux":
+                self.assertIsNotNone(analyzer, "The Linux CI must validate the generated units with systemd-analyze")
+            if analyzer:
+                subprocess.run([analyzer, "verify", "--man=no", str(service), str(timer)], check=True)
+            updater.configure_timer(False, "1.9.0")
+            self.assertNotIn('--public-status-dir', service.read_text())
+            updater.configure_timer(True)
+            updater.configure_timer(True)
+            self.assertFalse(timer.exists())
+            self.assertFalse(service.exists())
+            commands = log.read_text().splitlines()
+            self.assertEqual(commands, [
+                "--user daemon-reload", "--user enable --now lattice-host-update.timer",
+                "--user daemon-reload", "--user enable --now lattice-host-update.timer",
+                "--user disable --now lattice-host-update.timer", "--user stop lattice-host-update.service", "--user daemon-reload",
+            ])
+            service.write_text("# my own service")
+            with self.assertRaisesRegex(ValueError, "Another unit"):
+                updater.configure_timer(False)
+            with self.assertRaisesRegex(ValueError, "Another unit"):
+                updater.configure_timer(True)
+            self.assertEqual(service.read_text(), "# my own service")
+            self.assertEqual(commands, log.read_text().splitlines())
 
     def test_verified_archive_is_staged_once(self):
         self.assertIn("Verified", self.check())

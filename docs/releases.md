@@ -28,6 +28,54 @@ For an older kit, run the helper from a newer checkout with
 `--installed-version X.Y.Z`, using the version in your installed source archive's
 name. A connection or rate-limit error exits with status 1 so you can retry.
 
+### Schedule checks for the Linux host
+
+Run the following once, as the unprivileged account that owns the host kit.
+Keep the extracted kit at this path while its timer is enabled.
+
+```sh
+python3 ./check-host-update.py --install-timer
+systemctl --user list-timers lattice-host-update.timer
+journalctl --user -u lattice-host-update.service
+```
+
+The user timer checks about one minute after activation and every six hours
+while the user manager is running. Each check has a 60-second deadline. Its
+journal reports available updates. The last successful result is also stored
+in `$XDG_STATE_HOME/lattice-web-ui/lattice-host-update.json` (by default
+`~/.local/state/lattice-web-ui/lattice-host-update.json`). A failed network or
+release check preserves that result.
+
+To make the same version information available to the web client, explicitly
+select the existing web asset directory passed to the companion's `--assets`
+option. The standard extracted host kit uses its writable `web` directory.
+
+```sh
+python3 ./check-host-update.py --install-timer --public-status-dir ./web
+```
+
+The timer atomically publishes `lattice-host-update.json` at that directory's
+root. The file is readable by anyone with access to the hosted assets. It
+contains exactly the three fields below.
+
+```json
+{"schema": 1, "installedVersion": "0.4.3", "latestVersion": "0.5.0"}
+```
+
+`latestVersion` is null when GitHub reports no published stable release.
+Re-run installation from the new kit after deploying a host update. To remove
+the timer and its check service, use the following command.
+
+```sh
+python3 ./check-host-update.py --uninstall-timer
+```
+
+To withdraw a previously published result, remove `lattice-host-update.json`
+from the asset directory you selected. The workspace service continues running
+through installation and removal.
+
+### Prepare a verified source kit
+
 To prepare a newer release, choose a staging directory on the build host.
 
 ```sh
