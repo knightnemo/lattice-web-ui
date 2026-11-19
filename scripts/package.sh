@@ -17,6 +17,12 @@ mkdir -p "$kit"
 git -C "$source_checkout" archive --prefix=source/ "$revision" | tar -xf - -C "$kit"
 cp "$root/scripts/build-linux.sh" "$kit/build-linux.sh"
 cp "$root/README.md" "$kit/README.md"
+if [[ ! -f "$root/scripts/check-host-update.py" || -L "$root/scripts/check-host-update.py" ]]; then
+  echo 'Expected a regular host update helper.' >&2
+  exit 1
+fi
+cp "$root/scripts/check-host-update.py" "$kit/check-host-update.py"
+printf '%s\n' "$version" > "$kit/release-version.txt"
 cp -R "$root/account-gateway" "$kit/account-gateway"
 cp -R "$root/device-pairing" "$kit/device-pairing"
 cp -R "$root/tailscale-owner" "$kit/tailscale-owner"

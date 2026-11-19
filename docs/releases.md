@@ -14,6 +14,46 @@ The [Release workflow](https://github.com/knightnemo/lattice-web-ui/blob/main/.g
 Actions artifact to pass the verified files from build to publishing. Install
 from the release assets. GitHub Packages and GHCR publishing are not configured.
 
+## Check for a host update
+
+Run the check from the extracted Linux host or source kit.
+
+```sh
+python3 ./check-host-update.py
+```
+
+The command reads the kit's `release-version.txt` and checks the latest
+published stable release on GitHub. Run it from the kit serving your workspace.
+For an older kit, run the helper from a newer checkout with
+`--installed-version X.Y.Z`, using the version in your installed source archive's
+name. A connection or rate-limit error exits with status 1 so you can retry.
+
+To prepare a newer release, choose a staging directory on the build host.
+
+```sh
+python3 ./check-host-update.py --prepare "$HOME/lattice-updates"
+```
+
+The command downloads the Linux source kit, checks its size and SHA-256 against
+GitHub's release assets, and prints the verified archive path. A current or newer
+installation needs no download. An existing staged archive stays in place if
+you repeat the command. No reader's browser contacts GitHub for this check.
+
+Extract the verified archive in a fresh build directory. Substitute the
+printed version for `X.Y.Z`.
+
+```sh
+version=X.Y.Z
+build_dir="$(mktemp -d)"
+tar -xzf "$HOME/lattice-updates/lattice-remote-source-$version.tar.gz" -C "$build_dir"
+cd "$build_dir/lattice-remote-source-$version"
+./build-linux.sh
+```
+
+The host kit in this directory is ready for a separately scheduled rollout.
+Keep the current binary, web assets, service settings and project data in place
+while building and testing the candidate.
+
 ## Build a preview
 
 In a full checkout, run the following from the repository root to create the
