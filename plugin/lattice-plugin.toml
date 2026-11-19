@@ -5,7 +5,7 @@ version = "0.4.6"
 api = 1
 license = "MIT"
 description = "Open your self-hosted Lattice workspace in the browser from the command palette."
-repository = "https://github.com/knightnemo/lattice-web-ui"
+repository = "https://github.com/lattice-writer/lattice-web-ui"
 runtime = "node"
 main = "main.mjs"
 

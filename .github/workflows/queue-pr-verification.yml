@@ -10,7 +10,7 @@ permissions: {}
 jobs:
   queue:
     if: >-
-      github.repository == 'knightnemo/lattice-web-ui'
+      github.repository == 'lattice-writer/lattice-web-ui'
       && github.ref == 'refs/heads/main'
       && github.event.pull_request.base.repo.full_name == github.repository
     runs-on: ubuntu-24.04

@@ -14,7 +14,7 @@ import tempfile
 from urllib.error import HTTPError
 from urllib.request import Request, urlopen
 
-REPOSITORY = "knightnemo/lattice-web-ui"
+REPOSITORY = "lattice-writer/lattice-web-ui"
 LATEST = f"https://api.github.com/repos/{REPOSITORY}/releases/latest"
 VERSION = re.compile(r"(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)")
 KIT_VERSION = Path(__file__).resolve().parent / "release-version.txt"
