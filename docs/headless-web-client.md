@@ -36,6 +36,8 @@ versioned asset endpoint, while compiled PDF replies are decoded as binary.
 In the project menu, **Open another folder** selects a server project for the
 current browser tab. Lattice saves outstanding edits before switching. **Save
 PDF as…** in the PDF toolbar downloads to the device running the browser.
+To transfer a project ZIP, use the host CLI's `import_project_zip` or
+`export_project_zip` command. [Host CLI](headless-server.md#cli)
 The server confines projects to its configured workspace root. Run and install
 the standalone server as described in its own documentation; this frontend
 does not provide an AI sidecar, terminal or language server by itself.

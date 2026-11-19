@@ -56,7 +56,7 @@ const openSlideWorkspaceApi = vi.hoisted(() => ({
   onMutation: null as null | ((mutation: OpenSlideMutation) => Promise<OpenSlideSyncOperation[]>),
   onAgentRequest: null as null | ((request: OpenSlideAgentRequest) => void),
 }));
-const browserRuntime = vi.hoisted(() => ({ hosted: false }));
+const browserRuntime = vi.hoisted(() => ({ hosted: false, headless: false }));
 const pdfSlickTestApi = vi.hoisted(() => ({ sources: [] as Array<string | ArrayBuffer> }));
 const tauriCoreApi = vi.hoisted(() => ({ channel: null as { onmessage: ((message: unknown) => void) | null } | null }));
 vi.mock("@tauri-apps/api/core", () => ({
@@ -114,7 +114,7 @@ vi.mock("../telemetry/interface-sounds", () => ({
 }));
 vi.mock("../platform/browser-runtime", () => ({
   isBrowserHosted: () => browserRuntime.hosted,
-  isHeadlessHosted: () => false,
+  isHeadlessHosted: () => browserRuntime.headless,
   browserRuntimeDetached: () => false,
   readBrowserHostAsset: vi.fn(),
 }));
@@ -473,7 +473,7 @@ Element.prototype.getBoundingClientRect = function (this: Element) {
 beforeEach(() => {
   localStorage.clear();
   localStorage.setItem("lattice.tutorial-seen.v1", "1");
-  Object.assign(browserRuntime, { hosted: false });
+  Object.assign(browserRuntime, { hosted: false, headless: false });
   pdfSlickTestApi.sources.length = 0;
   openSlideWorkspaceApi.onMutation = null;
   openSlideWorkspaceApi.onAgentRequest = null;

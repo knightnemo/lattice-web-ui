@@ -45,6 +45,16 @@ describe("project tree and projects", () => {
       expect(windowApi.close).not.toHaveBeenCalled();
     });
 
+    it("omits desktop handoff from the server-hosted title bar and palette", async () => {
+      Object.assign(browserRuntime, { hosted: true, headless: true });
+      openProject();
+      await screen.findByRole("button", { name: "Switch project" });
+      expect(screen.queryByRole("button", { name: "Open in Lattice app" })).toBeNull();
+      fireEvent.keyDown(window, { key: "p", metaKey: true, shiftKey: true });
+      fireEvent.change(await screen.findByRole("searchbox", { name: "Command palette" }), { target: { value: "Open in Lattice app" } });
+      expect(screen.queryByText("Open in Lattice app")).toBeNull();
+    });
+
     it("gives a browser tab's workspace back to the Lattice app, from the title bar or the command palette", async () => {
       browserRuntime.hosted = true;
       openProject();

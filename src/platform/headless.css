@@ -6,6 +6,8 @@
 .headless-project-picker::backdrop { background:rgb(0 0 0 / .5); }
 
 .headless-login input { font-size:var(--type-title-size); }
+.headless-login button[type="submit"] { background:var(--control-active); border-color:var(--control-active); color:var(--control-active-contrast); }
+.headless-login button[type="submit"]:disabled { opacity:.6; }
 .headless-device-code { display:grid; justify-items:center; gap:var(--space-5); text-align:center; }
 .headless-device-code canvas { max-width:100%; height:auto; image-rendering:pixelated; }
 .headless-device-list { list-style:none; padding:0; max-height:25dvh; overflow:auto; }

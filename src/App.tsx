@@ -748,7 +748,7 @@ function App({ surfaces }: { surfaces: AppSurfaces }) {
   });
   const canvasToolbar = useCanvasToolbar({
     documents, tools, commentCount: unresolvedComments, comments: editorComments, inBrowserTab: browserHosted,
-    onMoveWorkspace: () => void moveWorkspace(), hiddenTools: appearance.hiddenTitlebarTools, overleaf,
+    onMoveWorkspace: moveWorkspace, hiddenTools: appearance.hiddenTitlebarTools, overleaf,
     onOverleafSync: syncOverleaf,
   });
   // Shown over the welcome screen and a project alike.
@@ -769,7 +769,7 @@ function App({ surfaces }: { surfaces: AppSurfaces }) {
           setProjectVenue={(venue) => updateCreateForm({ venue })}
           onCreate={createProject}
           onOpen={chooseExisting}
-          onImportZip={() => void importOverleafZip()}
+          onImportZip={importOverleafZip}
           onOpenTutorial={() => void openTutorialProject()}
           recentProjects={recentProjects}
           unopenedProject={unopenedProject}
@@ -818,7 +818,7 @@ function App({ surfaces }: { surfaces: AppSurfaces }) {
           onNew: () => updateCreateForm({ open: true }),
           onOpenOverleaf: () => setOverleafPickerOpen(true),
           onOpenTutorial: () => void openTutorialProject(),
-          onExportZip: () => void exportProjectZip(),
+          onExportZip: exportProjectZip,
           onExportArxiv: () => setArxivExportOpen(true),
           onSettings: (returnFocus) => openSettings(undefined, returnFocus),
         }}

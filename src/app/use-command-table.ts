@@ -316,7 +316,7 @@ export function useCommandTable({
     { id: "format", when: latexSource, label: t`Format document`, keywords: "latexindent", group: "edit", run: formatFocusedDocument },
     ...projectPanelCommands({ inProject, i18n, trellis, requestNewEntry }),
     { id: "history", when: inProject, label: t`Open project history`, group: "project", run: () => tools.open("history") },
-    { id: "export-zip", when: inProject, label: t`Export project ZIP`, keywords: t`Overleaf source pack`, group: "project", run: () => void exportProjectZip() },
+    { id: "export-zip", when: inProject && Boolean(exportProjectZip), label: t`Export project ZIP`, keywords: t`Overleaf source pack`, group: "project", run: () => void exportProjectZip?.() },
     { id: "export-arxiv", when: inProject, label: t`Export for arXiv…`, group: "project", run: () => setArxivExportOpen(true) },
     { id: "new-project", label: t`New project`, group: "project", run: () => updateCreateForm({ open: true }) },
     { id: "open-folder", label: t`Open another folder`, group: "project", key: "o", run: () => void chooseExisting() },
@@ -333,7 +333,7 @@ export function useCommandTable({
       when: !createForm.open && !busyLabel && !settingsOpen && !overleafPickerOpen,
       run: () => void chooseRecentProject(path),
     }))),
-    { id: "import-zip", label: t`Import Overleaf ZIP`, group: "overleaf", run: () => void importOverleafZip() },
+    { id: "import-zip", when: Boolean(importOverleafZip), label: t`Import Overleaf ZIP`, group: "overleaf", run: () => void importOverleafZip?.() },
     { id: "overleaf-open", label: t`Open an Overleaf project`, group: "overleaf", run: () => setOverleafPickerOpen(true) },
     { id: "overleaf-sync", when: inProject && overleafLink !== null && !overleafSyncing, label: t`Sync with Overleaf`, group: "overleaf", run: syncOverleaf },
     { id: "overleaf-web", when: inProject && overleafLink !== null, label: t`Open this project on Overleaf`, group: "overleaf", run: () => void openCurrentOverleafProject() },
@@ -346,7 +346,7 @@ export function useCommandTable({
     { id: "tutorial", label: t`Open guided tutorial`, group: "project", run: () => void openTutorialProject() },
     { id: "doctor", label: t`Run TeX doctor`, group: "project", run: () => openSettings("doctor") },
     {
-      id: "browser", group: "project", run: () => void moveWorkspace(),
+      id: "browser", group: "project", when: Boolean(moveWorkspace), run: () => void moveWorkspace?.(),
       ...(browserHosted
         ? { label: t`Open in Lattice app` }
         : { label: t`Open in browser`, detail: `http://127.0.0.1:${BROWSER_ENTRY_PORT}` }),

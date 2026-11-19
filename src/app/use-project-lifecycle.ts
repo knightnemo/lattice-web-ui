@@ -90,7 +90,8 @@ export function useProjectLifecycle(deps: ProjectLifecycleDeps) {
   const { runBuild, resetForProject } = build;
   // A standalone server binds the selected project to this browser tab. Only
   // a desktop-backed workspace can open a project in a separate native window.
-  const openInNewWindow = Boolean(project?.root) && !isHeadlessHosted();
+  const standaloneServer = isHeadlessHosted();
+  const openInNewWindow = Boolean(project?.root) && !standaloneServer;
   const [busyLabel, setBusyLabel] = useState<string | null>(null);
   /** The workspace is being handed to another surface: its editors stay read-only meanwhile. */
   const [movingWorkspace, setMovingWorkspace] = useState(false);
@@ -512,7 +513,10 @@ export function useProjectLifecycle(deps: ProjectLifecycleDeps) {
   return {
     launching, busyLabel, recentProjects: recents.projects, unopenedProject: recents.unopened, projectMenuOpen, setProjectMenuOpen, createForm, updateCreateForm,
     startProjectTransition, cancelProjectTransition, revealNewProject, chooseExisting, createProject,
-    chooseRecentProject, openTutorialProject, importOverleafZip, exportProjectZip, moveWorkspace,
+    chooseRecentProject, openTutorialProject,
+    importOverleafZip: standaloneServer ? undefined : importOverleafZip,
+    exportProjectZip: standaloneServer ? undefined : exportProjectZip,
+    moveWorkspace: standaloneServer ? undefined : moveWorkspace,
     movingWorkspace,
   };
 }

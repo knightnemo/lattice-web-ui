@@ -23,7 +23,7 @@ export function useCanvasToolbar({
   commentCount: number;
   comments: Pick<EditorComments, "comments">;
   inBrowserTab: boolean;
-  onMoveWorkspace: () => void;
+  onMoveWorkspace?: () => void;
   hiddenTools: AppearanceSettings["hiddenTitlebarTools"];
   overleaf: ReturnType<typeof useOverleafWorkspace>;
   onOverleafSync: () => void;

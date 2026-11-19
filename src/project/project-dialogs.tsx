@@ -51,7 +51,7 @@ export function Welcome(props: {
   setProjectVenue: (value: ProjectVenue) => void;
   onCreate: () => void;
   onOpen: () => void;
-  onImportZip: () => void;
+  onImportZip?: () => void;
   onOpenTutorial: () => void;
   /** Projects to reopen; `unopenedProject` is the one launch could not. */
   recentProjects: RecentProject[];
@@ -119,9 +119,11 @@ export function Welcome(props: {
               <Cloud size={15} /> {t`Open from Overleaf`}
             </button>
           )}
-          <button className="welcome-more-action" onClick={props.onImportZip}>
-            <FileArchive size={15} /> {t`Import ZIP`}
-          </button>
+          {props.onImportZip && (
+            <button className="welcome-more-action" onClick={props.onImportZip}>
+              <FileArchive size={15} /> {t`Import ZIP`}
+            </button>
+          )}
           <button className="welcome-more-action" onClick={props.onInstallTex}>
             <Wrench size={15} /> {t`Install LaTeX tools`}
           </button>
@@ -276,7 +278,7 @@ export function ProjectMenu(props: {
   onOpen: () => void;
   onNew: () => void;
   onOpenTutorial: () => void;
-  onExportZip: () => void;
+  onExportZip?: () => void;
   onExportArxiv: () => void;
   onOpenOverleaf?: () => void;
   onSettings: () => void;
@@ -325,7 +327,7 @@ export function ProjectMenu(props: {
           <Cloud /> {t`Open from Overleaf`}
         </DropdownMenuItem>
       )}
-      <DropdownMenuItem onSelect={props.onExportZip}><FileArchive /> {t`Export ZIP`}</DropdownMenuItem>
+      {props.onExportZip && <DropdownMenuItem onSelect={props.onExportZip}><FileArchive /> {t`Export ZIP`}</DropdownMenuItem>}
       <DropdownMenuItem onSelect={props.onExportArxiv}><PackageCheck /> {t`Export for arXiv…`}</DropdownMenuItem>
       <DropdownMenuSeparator />
       <DropdownMenuItem disabled={busy} onSelect={props.onOpenTutorial}>
