@@ -79,6 +79,9 @@ try {
   const errors = [];
   owner.on("pageerror", (error) => errors.push(error.message));
   await owner.goto(origin);
+  await owner.getByRole("heading", { name: "Open workspace" }).waitFor();
+  assert.equal(await owner.getByLabel("Server access token").isVisible(), false);
+  await owner.getByText("Workspace owner sign-in", { exact: true }).click();
   const token = (await readFile(tokenFile, "utf8")).trim();
   await owner.getByLabel("Server access token").fill(token).catch(() => { throw new Error("Owner sign-in field did not appear."); });
   const login = owner.waitForResponse((response) => response.url() === origin + "/api/session" && response.request().method() === "POST");

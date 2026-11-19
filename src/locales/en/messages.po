@@ -3948,10 +3948,6 @@ msgstr "Connect Google Workspace first."
 msgid "Connect this device"
 msgstr "Connect this device"
 
-#: src/platform/headless-login.ts
-msgid "Connect to Lattice server"
-msgstr "Connect to Lattice server"
-
 #: src/overleaf/overleaf-connect.tsx
 msgid "Connect to Overleaf"
 msgstr "Connect to Overleaf"
@@ -6246,10 +6242,6 @@ msgstr "Footnote {label}"
 #: src/editor/latex/latex-vocabulary.ts
 msgid "Footnote at the cursor"
 msgstr "Footnote at the cursor"
-
-#: src/platform/headless-login.ts
-msgid "For a new device, scan a pairing code from the owner's workspace."
-msgstr "For a new device, scan a pairing code from the owner's workspace."
 
 #: src/editor/latex/latex-vocabulary.ts
 msgid "For all"
@@ -9845,6 +9837,10 @@ msgstr "Omega"
 msgid "On “{0}”"
 msgstr "On “{0}”"
 
+#: src/platform/headless-login.ts
+msgid "On a new device, scan the pairing code from the owner's workspace or open their invitation link."
+msgstr "On a new device, scan the pairing code from the owner's workspace or open their invitation link."
+
 #: src/editor/latex/search-panel.ts
 msgid "on line"
 msgstr "on line"
@@ -10227,6 +10223,10 @@ msgstr "Open this repository on GitHub"
 #: src/app/use-command-table.ts
 msgid "Open web browser"
 msgstr "Open web browser"
+
+#: src/platform/headless-login.ts
+msgid "Open workspace"
+msgstr "Open workspace"
 
 #: src/papers/bibliography-audit.tsx
 #: src/settings/literature-settings.tsx
@@ -16257,6 +16257,10 @@ msgstr "Use letters, numbers, and :_-.+ in the {name}."
 #: src/google-workspace/workspace-operations.tsx
 msgid "Use native API operations below. This panel does not embed Google's full web editors. Writes happen only when you choose Create or Apply update. File listing and PDF export include only files this app can access through Drive."
 msgstr "Use native API operations below. This panel does not embed Google's full web editors. Writes happen only when you choose Create or Apply update. File listing and PDF export include only files this app can access through Drive."
+
+#: src/platform/headless-login.ts
+msgid "Use the access token from the computer hosting this workspace."
+msgstr "Use the access token from the computer hosting this workspace."
 
 #: src/app/use-command-table.ts
 msgid "Use the dark theme"

@@ -104,10 +104,14 @@ export function installMobileWorkspace(controller: TrellisController, ws: Worksp
   };
   nav.append(more);
   const save = button(i18n._(msg`Save`), () => { void controller.bridge?.save(); });
-  button(i18n._(msg`Build`), () => {
+  const build = button(i18n._(msg`Build`), () => {
     const key = controller.app.get().activeKey;
     void controller.bridge?.build(key);
   });
+  const actions = document.createElement("div");
+  actions.className = "mobile-workspace-actions";
+  actions.append(save, build);
+  nav.append(actions);
   // Trellis owns visibility across tab changes, camera navigation and spread layouts.
   const syncSelection = () => {
     const visible = new Set(ws.surfaces().filter(({ view }) => view.visible).map(({ view }) => view.type));

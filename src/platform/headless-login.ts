@@ -2,14 +2,24 @@ import { msg } from "@lingui/core/macro";
 import { i18n } from "../i18n";
 import { serverRequest, type HeadlessSession } from "./headless-runtime";
 
+function signInHeader(heading: string) {
+  const header = document.createElement("header");
+  const address = document.createElement("p");
+  address.className = "headless-workspace-address";
+  address.textContent = window.location.host;
+  const title = document.createElement("h1");
+  title.textContent = heading;
+  header.append(address, title);
+  return header;
+}
+
 /** Keep the access token in the form only; the server issues an HttpOnly session cookie. */
 export function showServerLogin(devicePairing = false, root = document.getElementById("root")!): Promise<HeadlessSession> {
   return new Promise((resolve) => {
     const form = document.createElement("form");
     form.className = "headless-login";
-    const title = document.createElement("h1");
-    title.textContent = i18n._(msg`Connect to Lattice server`);
-    if (devicePairing) title.textContent = i18n._(msg`Workspace owner sign-in`);
+    const landing = root.id === "root";
+    const title = signInHeader(i18n._(msg`Open workspace`));
     const label = document.createElement("label");
     label.textContent = i18n._(msg`Server access token`);
     const input = document.createElement("input");
@@ -24,15 +34,22 @@ export function showServerLogin(devicePairing = false, root = document.getElemen
     const status = document.createElement("p");
     status.setAttribute("role", "status");
     form.append(title);
-    if (devicePairing) {
-      const hint = document.createElement("p");
-      hint.textContent = i18n._(msg`For a new device, scan a pairing code from the owner's workspace.`);
-      form.append(hint);
+    const hint = document.createElement("p");
+    hint.className = "headless-login-hint";
+    if (devicePairing && landing) {
+      hint.textContent = i18n._(msg`On a new device, scan the pairing code from the owner's workspace or open their invitation link.`);
+      const owner = document.createElement("details");
+      const summary = document.createElement("summary");
+      summary.textContent = i18n._(msg`Workspace owner sign-in`);
+      owner.append(summary, label, button, status);
+      form.append(hint, owner);
+    } else {
+      hint.textContent = i18n._(msg`Use the access token from the computer hosting this workspace.`);
+      form.append(hint, label, button, status);
     }
-    form.append(label, button, status);
     root.replaceChildren(form);
-    // A background autosave can expire while the user is still typing in the editor.
-    if (root.id === "root") input.focus();
+    // Keep focus in a recovering editor. A fresh touch session can open its keyboard on demand.
+    if (landing && !devicePairing && window.matchMedia("(pointer: fine)").matches) input.focus();
     form.onsubmit = async (event) => {
       event.preventDefault();
       button.disabled = true;
@@ -67,10 +84,7 @@ export function confirmDevicePairing(code: string): Promise<HeadlessSession> {
     const root = document.getElementById("root")!;
     const form = document.createElement("form");
     form.className = "headless-login";
-    const title = document.createElement("h1");
-    title.textContent = i18n._(msg`Pair this device`);
-    const host = document.createElement("p");
-    host.textContent = window.location.host;
+    const title = signInHeader(i18n._(msg`Pair this device`));
     const label = document.createElement("label");
     label.textContent = i18n._(msg`Device name`);
     const input = document.createElement("input");
@@ -83,7 +97,7 @@ export function confirmDevicePairing(code: string): Promise<HeadlessSession> {
     button.textContent = i18n._(msg`Connect this device`);
     const status = document.createElement("p");
     status.setAttribute("role", "status");
-    form.append(title, host, label, button, status);
+    form.append(title, label, button, status);
     root.replaceChildren(form);
     let redeemed = false;
     form.onsubmit = async (event) => {

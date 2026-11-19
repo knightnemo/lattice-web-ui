@@ -3948,10 +3948,6 @@ msgstr "请先连接 Google Workspace。"
 msgid "Connect this device"
 msgstr "连接此设备"
 
-#: src/platform/headless-login.ts
-msgid "Connect to Lattice server"
-msgstr "连接 Lattice 服务器"
-
 #: src/overleaf/overleaf-connect.tsx
 msgid "Connect to Overleaf"
 msgstr "连接 Overleaf"
@@ -6246,10 +6242,6 @@ msgstr "脚注 {label}"
 #: src/editor/latex/latex-vocabulary.ts
 msgid "Footnote at the cursor"
 msgstr "在光标处插入脚注"
-
-#: src/platform/headless-login.ts
-msgid "For a new device, scan a pairing code from the owner's workspace."
-msgstr "要连接新设备，请扫描工作区所有者生成的配对码。"
 
 #: src/editor/latex/latex-vocabulary.ts
 msgid "For all"
@@ -9845,6 +9837,10 @@ msgstr "欧米伽"
 msgid "On “{0}”"
 msgstr "针对“{0}”"
 
+#: src/platform/headless-login.ts
+msgid "On a new device, scan the pairing code from the owner's workspace or open their invitation link."
+msgstr "在新设备上，请扫描工作区所有者提供的配对码，或打开对方发来的邀请链接。"
+
 #: src/editor/latex/search-panel.ts
 msgid "on line"
 msgstr "位于行"
@@ -10227,6 +10223,10 @@ msgstr "在 GitHub 打开"
 #: src/app/use-command-table.ts
 msgid "Open web browser"
 msgstr "打开内置浏览器"
+
+#: src/platform/headless-login.ts
+msgid "Open workspace"
+msgstr "打开工作区"
 
 #: src/papers/bibliography-audit.tsx
 #: src/settings/literature-settings.tsx
@@ -16257,6 +16257,10 @@ msgstr "{name}只能包含字母、数字和 :_-.+"
 #: src/google-workspace/workspace-operations.tsx
 msgid "Use native API operations below. This panel does not embed Google's full web editors. Writes happen only when you choose Create or Apply update. File listing and PDF export include only files this app can access through Drive."
 msgstr "使用下方的原生 API 操作。此面板未嵌入 Google 的完整网页编辑器，仅在点击“创建”或“应用更新”时写入。文件列表和 PDF 导出仅包括此应用通过 Drive 可访问的文件。"
+
+#: src/platform/headless-login.ts
+msgid "Use the access token from the computer hosting this workspace."
+msgstr "请输入托管此工作区的电脑上的访问令牌。"
 
 #: src/app/use-command-table.ts
 msgid "Use the dark theme"
