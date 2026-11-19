@@ -56,7 +56,7 @@ pub use account::{
 };
 pub use files::{checkpoint_realtime_text, is_conflict_copy, RealtimeCheckpoint};
 pub use link::{
-    adopt_project, clone_project, clone_target, project_link, publish_project, realtime_config,
+    clone_target, open_project_copy, project_link, publish_project, realtime_config,
     record_relocation, set_paused, set_permission, set_realtime_metadata, CloneTarget,
     OverleafLink,
 };

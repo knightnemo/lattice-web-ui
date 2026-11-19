@@ -374,7 +374,11 @@ async fn invoke(
         }
     };
     let is_open = request.command == "open_project";
-    let core = if request.command == "create_project" { state.core.clone() } else { core };
+    let core = match request.command.as_str() {
+        // Imports are siblings of the open project, so all tabs can find the same copy.
+        "create_project" | "overleaf_clone_target" | "overleaf_clone_project" => state.core.clone(),
+        _ => core,
+    };
     let result =
         tokio::task::spawn_blocking(move || core.invoke(&request.command, request.args)).await;
     if matches!(result, Ok(Ok(_))) && is_open {

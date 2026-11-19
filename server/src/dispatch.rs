@@ -52,6 +52,7 @@ pub const COMMANDS: &[&str] = &[
     "overleaf_preview",
     "overleaf_sync",
     "overleaf_publish_project",
+    "overleaf_clone_target",
     "overleaf_clone_project",
     "list_annotations",
     "agent_bibliography_mutation",
@@ -145,6 +146,7 @@ impl Core {
                 | "move_project_entry"
                 | "overleaf_sync"
                 | "overleaf_publish_project"
+                | "overleaf_clone_project"
                 | "create_project"
                 | "set_compile_root"
                 | "update_project_manifest"
@@ -246,9 +248,16 @@ impl Core {
             "overleaf_preview" => value(overleaf::preview(&self.state_dir, root, &Default::default()))?,
             "overleaf_sync" => value(overleaf::sync(&self.state_dir, root, &Default::default(), None))?,
             "overleaf_publish_project" => value(overleaf::publish_project(&self.state_dir, root, string("name")?))?,
-            "overleaf_clone_project" => {
-                // The shared clone implementation validates project names and refuses existing targets.
-                value(overleaf::clone_project(&self.state_dir, string("projectId")?, string("projectName")?, root, opt("accessLevel")))?
+            "overleaf_clone_target" | "overleaf_clone_project" => {
+                let id = string("projectId")?;
+                let name = opt("name").or_else(|| opt("projectName")).ok_or("Missing project name")?;
+                if command == "overleaf_clone_target" {
+                    value(overleaf::clone_target(id, name, root))?
+                } else {
+                    value(overleaf::open_project_copy(
+                        &self.state_dir, id, name, root, opt("accessLevel"), flag("adopt"),
+                    ))?
+                }
             }
             "get_app_locale" => json!("en"),
             "native_theme" => json!(null),

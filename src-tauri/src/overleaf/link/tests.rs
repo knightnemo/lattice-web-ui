@@ -93,7 +93,8 @@ fn a_folder_left_by_unlinking_is_offered_for_relinking_not_duplicated() {
     // Now that it is linked, opening it again just opens it; a different
     // project of the same name is still a separate folder.
     assert_eq!(kind("proj-1").kind, "open");
-    assert_eq!(kind("proj-2").kind, "occupied");
+    assert_eq!(kind("proj-2").kind, "fresh");
+    assert_eq!(kind("proj-2").folder, "Attention Paper (2)");
 }
 
 #[test]

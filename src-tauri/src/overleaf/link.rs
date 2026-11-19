@@ -281,14 +281,28 @@ pub struct CloneTarget {
     pub folder: String,
 }
 
-/// `fresh`, `open` or `occupied`, as in [`CloneTarget::kind`].
+/// Classify the folder, skipping files and folders that belong to another project.
 fn occupancy(root: &Path, project_id: &str) -> &'static str {
-    if !root.exists() || fs::read_dir(root).is_ok_and(|mut entries| entries.next().is_none()) {
-        "fresh"
-    } else if load_state(root).is_ok_and(|state| state.project_id == project_id) {
-        "open"
-    } else {
-        "occupied"
+    match fs::symlink_metadata(root) {
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => return "fresh",
+        Ok(metadata) if metadata.is_dir() => {}
+        _ => return "unavailable",
+    }
+    if fs::read_dir(root).is_ok_and(|mut entries| entries.next().is_none()) {
+        return "fresh";
+    }
+    if fs::symlink_metadata(root.join(STATE_DIR)).is_ok_and(|metadata| !metadata.is_dir()) {
+        return "unavailable";
+    }
+    match fs::symlink_metadata(state_path(root)) {
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => "occupied",
+        Ok(metadata)
+            if metadata.is_file()
+                && load_state(root).is_ok_and(|state| state.project_id == project_id) =>
+        {
+            "open"
+        }
+        _ => "unavailable",
     }
 }
 
@@ -296,10 +310,33 @@ fn occupancy(root: &Path, project_id: &str) -> &'static str {
 pub fn clone_target(
     project_id: &str, project_name: &str, dest_parent: &Path,
 ) -> Result<CloneTarget, String> {
-    let folder = sanitize_project_name(project_name)?;
-    let root = dest_parent.join(&folder);
-    let kind = occupancy(&root, project_id).to_string();
-    Ok(CloneTarget { kind, path: root.to_string_lossy().into_owned(), folder })
+    clone_destination(project_id, project_name, dest_parent, true)
+}
+
+fn clone_destination(
+    project_id: &str, project_name: &str, dest_parent: &Path, offer_adoption: bool,
+) -> Result<CloneTarget, String> {
+    let base = sanitize_project_name(project_name)?;
+    let mut first_available = None;
+    for suffix in 1..100 {
+        let folder = if suffix == 1 { base.clone() } else { format!("{base} ({suffix})") };
+        let root = dest_parent.join(&folder);
+        let kind = occupancy(&root, project_id);
+        let offered = offer_adoption && suffix == 1 && kind == "occupied";
+        if kind == "open" || (first_available.is_none() && (kind == "fresh" || offered)) {
+            let target = CloneTarget {
+                kind: kind.into(),
+                path: root.to_string_lossy().into_owned(),
+                folder,
+            };
+            // Prefer the existing numbered copy when an earlier download used one.
+            if kind == "open" {
+                return Ok(target);
+            }
+            first_available = Some(target);
+        }
+    }
+    first_available.ok_or_else(|| "There is no free folder for this Overleaf project.".into())
 }
 
 /// Fold a project name into a safe folder name, mirroring
@@ -341,6 +378,26 @@ pub fn adopt_project(
     Ok(root.to_path_buf())
 }
 
+/// Honor the picker's explicit relink choice only while the folder is still unlinked.
+pub fn open_project_copy(
+    config_dir: &Path, project_id: &str, name: &str, parent: &Path, access_level: Option<&str>,
+    adopt: bool,
+) -> Result<PathBuf, String> {
+    if adopt {
+        let target = clone_target(project_id, name, parent)?;
+        if target.kind == "occupied" {
+            return adopt_project(
+                config_dir,
+                project_id,
+                name,
+                Path::new(&target.path),
+                access_level,
+            );
+        }
+    }
+    clone_project(config_dir, project_id, name, parent, access_level)
+}
+
 /// Download a project and link it. `access_level` is what the dashboard said
 /// this account may do, so syncing respects it even before the realtime
 /// channel has a chance to confirm.
@@ -355,31 +412,16 @@ pub fn clone_project(
     access_level: Option<&str>,
 ) -> Result<PathBuf, String> {
     let session = load_session(config_dir)?;
-    let folder_name = sanitize_project_name(project_name)?;
-    let candidates = std::iter::once(folder_name.clone())
-        .chain((2..100).map(|suffix| format!("{folder_name} ({suffix})")))
-        .map(|name| dest_parent.join(name));
-    let mut root = dest_parent.join(&folder_name);
-    for candidate in candidates {
-        match occupancy(&candidate, project_id) {
-            "fresh" => {
-                root = candidate;
-                break;
-            }
-            "open" => {
-                // The one thing that can have changed while it sat there: what
-                // this account is now allowed to do with the project. A
-                // missing dashboard role clears an old writable role: unknown
-                // must fail closed until realtime supplies fresh evidence.
-                let mut state = load_state(&candidate)?;
-                if state.permission.as_deref() != access_level {
-                    state.permission = access_level.map(str::to_string);
-                    save_state(&candidate, &state)?;
-                }
-                return Ok(candidate);
-            }
-            _ => {}
+    let target = clone_destination(project_id, project_name, dest_parent, false)?;
+    let root = PathBuf::from(target.path);
+    if target.kind == "open" {
+        let mut state = load_state(&root)?;
+        // An unreported role clears stale write access until realtime confirms it.
+        if state.permission.as_deref() != access_level {
+            state.permission = access_level.map(str::to_string);
+            save_state(&root, &state)?;
         }
+        return Ok(root);
     }
     let client = http_client(120)?;
     // This version was observed before the downloaded snapshot. Recording a

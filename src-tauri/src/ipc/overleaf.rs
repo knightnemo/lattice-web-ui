@@ -329,21 +329,14 @@ pub async fn overleaf_clone_project(
     let config = overleaf_config_dir(&app)?;
     let parent = overleaf_projects_dir(&app)?;
     let downloaded = run_blocking("The Overleaf download", move || {
-        let access_level = access_level.as_deref();
-        if adopt.unwrap_or(false) {
-            let target = overleaf::clone_target(&project_id, &name, &parent)?;
-            if target.kind == "occupied" {
-                let existing = Path::new(&target.path);
-                return overleaf::adopt_project(
-                    &config,
-                    &project_id,
-                    &name,
-                    existing,
-                    access_level,
-                );
-            }
-        }
-        overleaf::clone_project(&config, &project_id, &name, &parent, access_level)
+        overleaf::open_project_copy(
+            &config,
+            &project_id,
+            &name,
+            &parent,
+            access_level.as_deref(),
+            adopt.unwrap_or(false),
+        )
     })
     .await;
     let root = settled(&app, downloaded).await?;

@@ -107,7 +107,14 @@ signed-in browser. The existing domain implementation validates the dashboard
 before replacing any session and writes the cookie atomically with mode 0600.
 `overleaf_status`, `overleaf_list_projects`, `overleaf_clone_project`,
 `overleaf_preview`, `overleaf_sync` and `overleaf_publish_project` reuse the
-desktop sync implementation. The service cannot open a useful default browser
+desktop sync implementation. The browser picker calls `overleaf_clone_target`
+and `overleaf_clone_project` with `projectId` and `name`. It opens the downloaded
+folder in the current tab. Downloads live directly under the configured workspace,
+beside other projects. The CLI uses its `--project` directory as the parent and
+also accepts the older `projectName` argument. When a local folder has unlinked
+files, the picker offers to link that folder or download a separate copy.
+
+The service cannot open a useful default browser
 on a remote machine; embedded/native login commands report unavailable.
 
 Environment credentials: `OPENALEX_API_KEY`, `SEMANTIC_SCHOLAR_API_KEY` (or

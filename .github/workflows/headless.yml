@@ -27,6 +27,10 @@ jobs:
           LATTICE_SERVER_BINARY: ${{ github.workspace }}/server/target/debug/lattice-server
           LATTICE_TEST_LATEX: '1'
         run: env -u DISPLAY -u WAYLAND_DISPLAY python3 server/tests/core_parity.py
+      - name: Open an Overleaf project through the browser API and CLI with a loopback fixture
+        env:
+          LATTICE_SERVER_BINARY: ${{ github.workspace }}/server/target/debug/lattice-server
+        run: python3 server/tests/overleaf_open.py
       - name: Exercise isolated agent supervisor without a display
         env:
           LATTICE_SERVER_BINARY: ${{ github.workspace }}/server/target/debug/lattice-server
