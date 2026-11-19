@@ -1,5 +1,5 @@
 import { BrowserEventRegistry, decodeBridgeValue, encodeBridgeValue, isHeadlessHosted, LOCAL_COMMANDS } from "./browser-runtime";
-import { confirmDevicePairing, showServerLogin, takePairingCode } from "./headless-login";
+import { signInPairedDevice, showServerLogin, takePairingCode } from "./headless-login";
 import { installSessionRecovery, sessionExpired } from "./headless-session-recovery";
 import "./headless.css";
 
@@ -207,8 +207,8 @@ export async function initializeHeadlessRuntime(): Promise<void> {
   const code = takePairingCode();
   let session = await serverRequest<HeadlessSession>("/api/session");
   if (!session.authenticated && session.devicePairing) {
-    if (code) session = await confirmDevicePairing(code);
-    else session = await serverRequest<HeadlessSession>("/api/devices/resume", {}).catch(() => session);
+    if (!code) session = await serverRequest<HeadlessSession>("/api/devices/resume", {}).catch(() => session);
+    if (!session.authenticated) session = await signInPairedDevice(code);
   }
   if (!session.authenticated) session = await showServerLogin(session.devicePairing);
   const dispose = installHeadlessRuntime(session);

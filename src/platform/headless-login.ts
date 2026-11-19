@@ -78,10 +78,43 @@ export function takePairingCode(): string | null {
   return /^[a-f0-9]{64}$/i.test(code) ? code : null;
 }
 
+/** A focus-existing launch has a target URL but deliberately leaves the editor in place. */
+export function watchPairingLaunches(receive: (code: string) => void) {
+  const queue = (window as Window & {
+    launchQueue?: { setConsumer: (consumer: (params: { targetURL?: string }) => void) => void };
+  }).launchQueue;
+  let active = true;
+  queue?.setConsumer(({ targetURL }) => {
+    if (!active || !targetURL) return;
+    const url = new URL(targetURL);
+    if (url.origin === location.origin && url.pathname === "/" && /^#pair=[a-f0-9]{64}$/i.test(url.hash)) {
+      receive(url.hash.slice(6));
+    }
+  });
+  return () => { active = false; };
+}
+
+/** An already-open sign-in screen also accepts a new invitation from the installed app. */
+export async function signInPairedDevice(initialCode: string | null): Promise<HeadlessSession> {
+  let stop: (() => void) | undefined;
+  try {
+    return await new Promise<HeadlessSession>((resolve, reject) => {
+      let latestCode = initialCode;
+      const confirm = () => confirmDevicePairing(() => latestCode!, document.getElementById("root")!);
+      stop = watchPairingLaunches((code) => {
+        const alreadyShowing = Boolean(latestCode);
+        latestCode = code;
+        if (!alreadyShowing) void confirm().then(resolve, reject);
+      });
+      const signIn = initialCode ? confirm() : showServerLogin(true);
+      void signIn.then(resolve, reject);
+    });
+  } finally { stop?.(); }
+}
+
 /** Camera previews can load the link, but only a deliberate submit redeems it. */
-export function confirmDevicePairing(code: string): Promise<HeadlessSession> {
+export function confirmDevicePairing(getCode: () => string, root: HTMLElement): Promise<HeadlessSession> {
   return new Promise((resolve) => {
-    const root = document.getElementById("root")!;
     const form = document.createElement("form");
     form.className = "headless-login";
     const title = signInHeader(i18n._(msg`Pair this device`));
@@ -99,21 +132,22 @@ export function confirmDevicePairing(code: string): Promise<HeadlessSession> {
     status.setAttribute("role", "status");
     form.append(title, label, button, status);
     root.replaceChildren(form);
-    let redeemed = false;
+    let redeemed: string | undefined;
     form.onsubmit = async (event) => {
       event.preventDefault();
       button.disabled = true;
+      const code = getCode();
       try {
         /* eslint-disable lingui/no-unlocalized-strings -- transport routes */
-        if (!redeemed) await serverRequest("/api/devices/pair", { code, label: input.value });
-        redeemed = true;
+        if (redeemed !== code) await serverRequest("/api/devices/pair", { code, label: input.value });
+        redeemed = code;
         const session = await serverRequest<HeadlessSession>("/api/devices/resume", {});
         /* eslint-enable lingui/no-unlocalized-strings */
         if (!session.authenticated) throw new Error();
         root.replaceChildren();
         resolve(session);
       } catch {
-        status.textContent = redeemed
+        status.textContent = redeemed === code
           ? i18n._(msg`Could not start the workspace session. Try again.`)
           : i18n._(msg`Could not pair this device. Check its name or scan a new link.`);
       } finally {

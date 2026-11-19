@@ -1,6 +1,6 @@
 import { msg } from "@lingui/core/macro";
 import { i18n } from "../i18n";
-import { showServerLogin } from "./headless-login";
+import { confirmDevicePairing, showServerLogin, watchPairingLaunches } from "./headless-login";
 import { serverRequest, type HeadlessSession } from "./headless-runtime";
 
 export const sessionExpired = () => i18n._(msg`Server session expired. Keep this tab open, reconnect, then try the action again.`);
@@ -26,18 +26,28 @@ export function installSessionRecovery(
   panel.append(status, controls);
 
   const paired = Boolean(original.devicePairing && !original.canManageDevices);
+  let invite: string | undefined;
+  let editingInvite = false;
+  let checkAgain = false;
   async function reconnect() {
     if (busy || disposed) return;
     busy = true;
+    checkAgain = false;
     retry.disabled = true;
     status.textContent = i18n._(msg`Reconnecting to your workspace…`);
     try {
       // eslint-disable-next-line lingui/no-unlocalized-strings -- HTTP endpoint
       let session = await serverRequest<HeadlessSession>("/api/session");
       if (!session.authenticated && paired && session.devicePairing) {
-        // Only the device cookie can resume this role, including after a restart.
-        // eslint-disable-next-line lingui/no-unlocalized-strings -- HTTP endpoint
-        session = await serverRequest<HeadlessSession>("/api/devices/resume", {});
+        if (invite) {
+          editingInvite = true;
+          session = await confirmDevicePairing(() => invite!, controls);
+          invite = undefined;
+          editingInvite = false;
+        } else {
+          // eslint-disable-next-line lingui/no-unlocalized-strings -- HTTP endpoint
+          session = await serverRequest<HeadlessSession>("/api/devices/resume", {});
+        }
       }
       if (disposed) return;
       if (!session.authenticated && !paired && Boolean(session.devicePairing) === Boolean(original.devicePairing)) {
@@ -50,6 +60,7 @@ export function installSessionRecovery(
       await restore(session);
       if (disposed) return;
       paused = false;
+      invite = undefined;
       panel.remove();
       if (document.activeElement === document.body) previousFocus?.focus({ preventScroll: true });
     } catch {
@@ -61,6 +72,7 @@ export function installSessionRecovery(
     } finally {
       busy = false;
       retry.disabled = false;
+      if (paused && checkAgain) void reconnect();
     }
   }
   retry.onclick = () => { void reconnect(); };
@@ -72,11 +84,27 @@ export function installSessionRecovery(
     document.body.append(panel);
     void reconnect();
   };
+  const stopLaunches = paired ? watchPairingLaunches(async (code) => {
+    // A healthy paired device ignores a new invitation, just as opening the
+    // same URL in a browser tab does. A revoked device can pair over its editor.
+    if (!paused) {
+      // eslint-disable-next-line lingui/no-unlocalized-strings -- HTTP endpoint
+      const current = await serverRequest<HeadlessSession>("/api/session").catch(() => null);
+      if (disposed || !current || current.authenticated || !current.devicePairing) return;
+      invite = code;
+      expired();
+    } else {
+      invite = code;
+      if (busy && !editingInvite) checkAgain = true;
+      else if (!busy) void reconnect();
+    }
+  }) : undefined;
   window.addEventListener("lattice:session-expired", expired);
   return {
     requireConnected() { if (paused) throw new Error(sessionExpired()); },
     dispose() {
       disposed = true;
+      stopLaunches?.();
       window.removeEventListener("lattice:session-expired", expired);
       panel.remove();
     },

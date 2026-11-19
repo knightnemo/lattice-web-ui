@@ -1,3 +1,4 @@
+import { createHash } from "node:crypto";
 import { cpSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
@@ -286,6 +287,20 @@ export default defineConfig(() => ({
     univerHyphenTrimPlugin(),
     webkitPolyfillsModulePlugin(),
     minifyPolyfillsPlugin(),
+    {
+      name: "workspace-web-build",
+      apply: "build",
+      transformIndexHtml: {
+        order: "post",
+        handler(html, context) {
+          if (context.path !== "/index.html") return;
+          // Vite has already written content-hashed JS and CSS URLs. Companion
+          // source kits have no .git directory, and a rebuild may reuse a version.
+          const content = createHash("sha256").update(html).digest("hex").slice(0, 24);
+          return [{ tag: "meta", attrs: { name: "lattice-web-build", content } }];
+        },
+      },
+    },
   ],
 
   resolve: {

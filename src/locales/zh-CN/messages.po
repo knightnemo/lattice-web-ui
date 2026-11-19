@@ -1985,6 +1985,7 @@ msgstr "API 密钥"
 msgid "App"
 msgstr "应用"
 
+#: src/platform/headless-web-update.ts
 #: src/telemetry/app-updater.tsx
 msgid "App updater"
 msgstr "应用更新"
@@ -12766,6 +12767,11 @@ msgstr "保存本地模板…"
 msgid "Save and build"
 msgstr "保存编译"
 
+#: src/platform/headless-web-update.ts
+#: src/settings/settings-dialog.tsx
+msgid "Save and reload"
+msgstr "保存并重新加载"
+
 #: src/canvas/annotation-composer.tsx
 msgid "Save and revise now"
 msgstr "保存并立即修改"
@@ -15563,6 +15569,14 @@ msgstr "这个句子有 {count} 个词。"
 msgid "This source line has no matching position in the PDF."
 msgstr "这一行在 PDF 里找不到对应位置"
 
+#: src/settings/settings-dialog.tsx
+msgid "This tab uses build {loaded}."
+msgstr "此标签页使用构建版本 {loaded}。"
+
+#: src/settings/settings-dialog.tsx
+msgid "This tab uses build {loaded}. The server has build {served}."
+msgstr "此标签页使用构建版本 {loaded}。服务器上的构建版本为 {served}。"
+
 #: src/editor/insert/table-generator-dialog.tsx
 msgid "This table has source edits or unsupported structure. Continue editing it in the source editor."
 msgstr "此表格的源码已被修改，或包含不支持的结构。请继续在源码编辑器中编辑。"
@@ -16723,6 +16737,10 @@ msgstr "工作区所有者登录"
 msgid "Workspace panels"
 msgstr "工作区面板"
 
+#: src/platform/headless-web-update.ts
+msgid "Workspace update available"
+msgstr "工作区有可用更新"
+
 #: src/trellis/trellis-workspace-switch.tsx
 msgid "Workspace: {currentName}"
 msgstr "工作区：{currentName}"
@@ -16889,6 +16907,10 @@ msgstr "你的文件都在，没有丢失"
 #: src/overleaf/overleaf-connect.tsx
 msgid "Your projects"
 msgstr "我的项目"
+
+#: src/platform/headless-web-update.ts
+msgid "Your workspace stayed open. Finish any active edit or sync, then try again."
+msgstr "工作区保持打开。请完成当前的编辑或同步，然后重试。"
 
 #: src/papers/bibliography-audit.tsx
 #: src/papers/linked-library-sheet.tsx

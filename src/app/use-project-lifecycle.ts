@@ -403,7 +403,18 @@ export function useProjectLifecycle(deps: ProjectLifecycleDeps) {
     // Boot once. Depending on `enterProject` re-ran this whenever that callback
     // identity churned (after every build/load), which cleared the PDF and
     // restarted compile → endless “Rendering PDF…”.
-    void invoke<ProjectSnapshot | null>("initial_project")
+    const reloadRoot = standaloneServer && window.history.state?.latticeReloadProject;
+    const initial = async () => {
+      if (typeof reloadRoot === "string") {
+        const state = { ...window.history.state };
+        delete state.latticeReloadProject;
+        window.history.replaceState(state, "");
+        try { return await invoke<ProjectSnapshot>("open_project", { path: reloadRoot }); }
+        catch (reason) { if (active) showError(toMessage(reason)); }
+      }
+      return invoke<ProjectSnapshot | null>("initial_project");
+    };
+    void initial()
       .then(async (snapshot) => {
         initialProjectProbe.resolve(snapshot ? "project" : "empty");
         if (!active || !snapshot) return;
@@ -418,7 +429,7 @@ export function useProjectLifecycle(deps: ProjectLifecycleDeps) {
     };
     // Both are stable (a useState value and a ref) — listed to satisfy the
     // lint without changing the boot-once behavior.
-  }, [enterProjectRef, initialProjectProbe]);
+  }, [enterProjectRef, initialProjectProbe, standaloneServer]);
 
   const importOverleafZip = useCallback(async () => {
     const zipPath = await open({
@@ -475,6 +486,32 @@ export function useProjectLifecycle(deps: ProjectLifecycleDeps) {
     }
     await switchProject(t`Switching project…`, path, () => setRecents((current) => ({ ...current, projects: forgetRecentProject(path) })));
   }, [openInNewWindow, openProjectWindow, project?.root, switchProject, t]);
+
+  // A deployed frontend update is a choice local to this tab. A project
+  // switch, an IME composition, a failed save, or typing during the write
+  // must leave the current editor intact.
+  useEffect(() => {
+    if (!standaloneServer) return;
+    let stopped = false;
+    let stop: (() => void) | undefined;
+    void import("../platform/headless-web-update").then(({ watchWebUpdate }) => {
+      if (stopped) return;
+      stop = watchWebUpdate(async () => {
+        const { documents, projectState, overleafSync } = depsRef.current;
+        const root = projectState.projectRef.current?.root;
+        if (projectState.projectBeforeTransitionRef.current || overleafSync.syncingRef.current) return false;
+        const ownsProject = projectState.captureProjectScope();
+        const saved = await saveEveryEdit({ ...documents, flushWholeFiles: overleafSync.flushWholeFilesRef.current });
+        if (stopped || saved !== "saved" || !ownsProject() || overleafSync.syncingRef.current) return false;
+        // A new page receives its own server client ID. Carry only this
+        // history entry's project across the reload, including a server restart.
+        window.history.replaceState({ ...window.history.state, latticeReloadProject: root }, "");
+        window.location.reload();
+        return true;
+      });
+    });
+    return () => { stopped = true; stop?.(); };
+  }, [standaloneServer, depsRef]);
 
   // ---- Closing, quitting and reloading save first -----------------------------------------------------------------
   useSaveBeforeClose({ browserHosted, flush, save, hasUnsavedEdits });

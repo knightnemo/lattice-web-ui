@@ -1,3 +1,4 @@
+import { isHeadlessHosted } from "../platform/browser-runtime";
 import { useLingui } from "@lingui/react/macro";
 import type { SettingsTab } from "../app-types";
 import { PRODUCT_NAMES } from "../google-workspace/workspace-types";
@@ -71,7 +72,7 @@ export function useSettingsSearchIndex(hasProject: boolean, knownAuthorName: str
     ...(hasProject && livePreview ? [
       { tab: "editor", place: editor, id: "live-preview", label: t`Live preview`, terms: `${builds} LuaLaTeX rtex ${t({ message: "realtime instant", comment: "Search words for the Live preview setting, space-separated" })}` },
     ] satisfies SettingsSearchEntry[] : []),
-    { tab: "editor", place: editor, id: "auto-updates", label: t`Automatic updates` },
+    ...(!isHeadlessHosted() ? [{ tab: "editor", place: editor, id: "auto-updates", label: t`Automatic updates` }] satisfies SettingsSearchEntry[] : []),
     { tab: "editor", place: editor, id: "version", label: t`Version`, terms: t`Check for updates` },
     { tab: "agent-defaults", label: t`Agent defaults`, place: t`Agent` },
     { tab: "agent", label: t`Providers`, place: t`Agent` },

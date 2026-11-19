@@ -34,7 +34,9 @@ features do not silently succeed. PDF byte ranges use the selected project's
 versioned asset endpoint, while compiled PDF replies are decoded as binary.
 
 In the project menu, **Open another folder** selects a server project for the
-current browser tab. Lattice saves outstanding edits before switching. **Save
+current browser tab. Recent projects and projects opened from the Overleaf picker
+also use this tab. Each browser tab and device has its own active project.
+Lattice saves outstanding edits before switching. **Save
 PDF as…** in the PDF toolbar downloads to the device running the browser.
 To transfer a project ZIP, use the host CLI's `import_project_zip` or
 `export_project_zip` command. [Host CLI](headless-server.md#cli)
@@ -48,6 +50,14 @@ reconnection, retry the failed action. The editor keeps its draft and restores
 the same project on the server. If a device was revoked, ask the owner for a
 fresh invite, open it in another tab of the same browser, and select
 **Reconnect** in the original tab.
+
+When the host deploys a new web build, an open editor offers **Save and
+reload**. It checks when the tab becomes visible, when connectivity returns,
+and every five minutes while visible. Dismiss the notice to keep writing. In **Settings → Editor & builds → App
+updates**, you can check again, compare build IDs and reload later.
+Choosing the action saves the open document edits and reopens this tab’s
+project. An unfinished composition, a failed write or an edit made during
+saving keeps the workspace open so you can finish the edit and retry.
 
 ## Phone and foldable layouts
 

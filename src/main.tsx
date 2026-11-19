@@ -61,7 +61,7 @@ async function startApp() {
     <MotionConfig reducedMotion="user">
       <I18nProvider i18n={i18n}>
         <RootErrorBoundary>
-          <UpdaterProvider>
+          <UpdaterProvider autoCheck={!isHeadlessHosted()}>
             <ConfirmActionProvider>
               <TipProvider>
                 <App surfaces={PRODUCTION_SURFACES} />

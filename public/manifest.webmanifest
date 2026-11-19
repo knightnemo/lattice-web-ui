@@ -6,6 +6,7 @@
   "lang": "en",
   "start_url": "./",
   "scope": "./",
+  "launch_handler": { "client_mode": "focus-existing" },
   "display": "standalone",
   "background_color": "#171718",
   "theme_color": "#171718",

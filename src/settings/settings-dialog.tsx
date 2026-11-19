@@ -1,4 +1,4 @@
-import { type FormEvent, type ReactNode, useEffect, useLayoutEffect, useRef, useState } from "react";
+import { type FormEvent, type ReactNode, useEffect, useLayoutEffect, useRef, useState, useSyncExternalStore } from "react";
 import { useLingui } from "@lingui/react/macro";
 import { ChevronLeft, ChevronRight } from "lucide-react";
 import { Button } from "../components/ui/button";
@@ -12,6 +12,8 @@ import { SettingsGroup, SettingsRow } from "../components/ui/settings-row";
 import { SwitchField } from "../components/ui/switch-field";
 import { ModalDialog } from "../components/ui/modal-dialog";
 import { useUpdater, type UpdaterApi } from "../telemetry/app-updater";
+import { isHeadlessHosted } from "../platform/browser-runtime";
+import { subscribeWebUpdate, webUpdateSnapshot } from "../platform/headless-web-update";
 import {
   type Theme,
   type ThemePreference,
@@ -470,6 +472,33 @@ function useUpdateStatus(updater: UpdaterApi): { title: string | undefined; deta
   };
 }
 
+/** The host installs the web build. Any open tab can check and reload its own editor. */
+function WebBuildSettings() {
+  const { t } = useLingui();
+  const update = useSyncExternalStore(subscribeWebUpdate, webUpdateSnapshot);
+  const [busy, setBusy] = useState(false);
+  const [failed, setFailed] = useState(false);
+  const available = update && update.loaded !== update.served;
+  const loaded = update?.loaded.slice(0, 8);
+  const served = update?.served.slice(0, 8);
+  const detail = failed ? t`Couldn’t check for updates`
+    : available ? t`This tab uses build ${loaded}. The server has build ${served}.`
+    : loaded ? t`This tab uses build ${loaded}.` : undefined;
+  return (
+    <SettingsRow data-setting="version" label={t`Version`} description={detail}>
+      <ReloadButton size="compact" busy={busy} disabled={busy || !update} onClick={async () => {
+        if (!update) return;
+        setBusy(true);
+        if (available) { await update.reload(); setFailed(false); }
+        else setFailed(!await update.check());
+        setBusy(false);
+      }}>
+        {available ? t`Save and reload` : busy ? t`Checking…` : t`Check for updates`}
+      </ReloadButton>
+    </SettingsRow>
+  );
+}
+
 function EditorSettingsPane({ projectWordDraft, setProjectWordDraft, ...props }: SettingsDialogProps & {
   projectWordDraft: string;
   setProjectWordDraft: (draft: string) => void;
@@ -609,23 +638,25 @@ function EditorSettingsPane({ projectWordDraft, setProjectWordDraft, ...props }:
         )}
       </SettingsGroup>
       <SettingsGroup title={t`App updates`}>
-        <SelectRow
-          data-setting="auto-updates"
-          label={t`Automatic updates`}
-          description={updateStatus.detail}
-          value={updater.mode}
-          options={{ manual: t`Notify me`, auto: t`Install automatically` }}
-          onChange={updater.setMode}
-        />
-        <SettingsRow data-setting="version" label={t`Version`} description={updateStatus.title}>
-          {updater.phase === "ready" ? (
-            <Button size="compact" onClick={() => void updater.restart()}>{t`Restart now`}</Button>
-          ) : (
-            <ReloadButton size="compact" busy={updateBusy} disabled={updateBusy} onClick={() => void updater.check(false)}>
-              {updater.phase === "checking" ? t`Checking…` : t`Check for updates`}
-            </ReloadButton>
-          )}
-        </SettingsRow>
+        {isHeadlessHosted() ? <WebBuildSettings /> : <>
+          <SelectRow
+            data-setting="auto-updates"
+            label={t`Automatic updates`}
+            description={updateStatus.detail}
+            value={updater.mode}
+            options={{ manual: t`Notify me`, auto: t`Install automatically` }}
+            onChange={updater.setMode}
+          />
+          <SettingsRow data-setting="version" label={t`Version`} description={updateStatus.title}>
+            {updater.phase === "ready" ? (
+              <Button size="compact" onClick={() => void updater.restart()}>{t`Restart now`}</Button>
+            ) : (
+              <ReloadButton size="compact" busy={updateBusy} disabled={updateBusy} onClick={() => void updater.check(false)}>
+                {updater.phase === "checking" ? t`Checking…` : t`Check for updates`}
+              </ReloadButton>
+            )}
+          </SettingsRow>
+        </>}
       </SettingsGroup>
     </div>
   );

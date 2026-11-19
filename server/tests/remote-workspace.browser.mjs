@@ -47,15 +47,23 @@ async function until(check, message) {
 try {
   await until(async () => (await fetch(origin + "/api/session").catch(() => null))?.ok, "server started");
   browser = await engine.launch(engine === chromium ? { channel: "chrome" } : {});
-  const page = await browser.newPage({
+  const browsing = await browser.newContext({
     viewport: { width: 382, height: 580 }, isMobile: true, hasTouch: true, reducedMotion: "reduce",
   });
+  const page = await browsing.newPage();
   const errors = [];
   page.on("pageerror", (error) => errors.push(error.message));
   await page.goto(origin, { waitUntil: "domcontentloaded" });
   await page.getByLabel("Server access token").fill((await readFile(tokenPath, "utf8")).trim());
   await page.getByRole("button", { name: "Connect", exact: true }).click();
 
+  if (engine === chromium) {
+    const devtools = await browsing.newCDPSession(page);
+    const { manifest, errors } = await devtools.send("Page.getAppManifest");
+    assert.deepEqual(errors, []);
+    assert.equal(manifest.launchHandler.clientMode, "kFocusExisting");
+    await devtools.detach();
+  }
   const editor = page.locator(".cm-content").first();
   await editor.waitFor();
   const bounds = async () => editor.evaluate((content) => {
@@ -181,8 +189,55 @@ try {
   await page.getByRole("button", { name: "Switch project" }).click();
   await page.getByRole("menuitem", { name: "Duo Paper" }).click();
   await until(async () => (await editor.innerText()).includes("switch draft"), "the recent project reopens with its saved edit");
+  // Both tabs use the same authenticated session. Explicitly opening a second
+  // tab must not couple its project to this tab's project or update.
+  const secondTab = await page.context().newPage();
+  await secondTab.goto(origin, { waitUntil: "domcontentloaded" });
+  const otherEditor = secondTab.locator(".cm-content").first();
+  await until(async () => (await otherEditor.innerText()).includes("switch draft"), "second tab opened the default project");
+  await page.bringToFront();
+  await page.getByRole("button", { name: "Switch project" }).click();
+  await page.getByRole("menuitem", { name: "Second Paper" }).click();
+  await until(async () => (await editor.innerText()).includes("Another project."), "the recent project opened in this tab");
+  assert.equal(page.context().pages().length, 2);
+  assert.match(await otherEditor.innerText(), /switch draft/);
+
+  // Model a redeploy of the compiled entry while the user is writing. Only the
+  // version probe is substituted; saves, project switching and reload use the server.
+  await page.evaluate(() => {
+    const fetch = window.fetch.bind(window);
+    window.denyUpdateTestSave = true;
+    window.fetch = async (input, init) => {
+      if (new URL(String(input), location.href).pathname === "/index.html") {
+        const response = await fetch(input, init);
+        const html = (await response.text()).replace(/(name="lattice-web-build" content=")[a-f0-9]+/, "$1" + "f".repeat(24));
+        return new Response(html, { headers: { "Content-Type": "text/html" } });
+      }
+      if (input === "/api/invoke" && window.denyUpdateTestSave && JSON.parse(init?.body ?? "null")?.command === "write_project_file") {
+        return Response.json({ error: { message: "Fixture save unavailable" } }, { status: 503 });
+      }
+      return fetch(input, init);
+    };
+    window.dispatchEvent(new Event("online"));
+  });
+  const reload = page.getByRole("button", { name: "Save and reload" });
+  await reload.waitFor();
+  const originalClient = await page.evaluate(() => window.__LATTICE_HEADLESS_CLIENT__);
+  await editor.click();
+  await page.keyboard.type("update draft ");
+  await reload.click();
+  await page.getByText("Your workspace stayed open. Finish any active edit or sync, then try again.").waitFor();
+  assert.equal(await page.evaluate(() => window.__LATTICE_HEADLESS_CLIENT__), originalClient);
+  assert.match(await editor.innerText(), /update draft/);
+  await page.evaluate(() => { window.denyUpdateTestSave = false; });
+  await Promise.all([page.waitForEvent("domcontentloaded"), reload.click()]);
+  await until(async () => (await editor.innerText()).includes("update draft"), "reload restored the edited project");
+  assert.notEqual(await page.evaluate(() => window.__LATTICE_HEADLESS_CLIENT__), originalClient);
+  assert.match(await readFile(join(other, "main.tex"), "utf8"), /update draft/);
+  assert.match(await otherEditor.innerText(), /switch draft/);
+  assert.equal(page.context().pages().length, 2);
   assert.deepEqual(errors, []);
-  console.log(`${engine.name()}: Duo layouts, draft, caret, save, PDF download and server project switching passed.`);
+  console.log(`${engine.name()}: Duo layouts, draft, caret, save, PDF download, independent project navigation and save-before-update reload passed.`);
 } finally {
   await browser?.close();
   if (server.exitCode === null) server.kill("SIGTERM");
