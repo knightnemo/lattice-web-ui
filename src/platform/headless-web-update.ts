@@ -1,5 +1,6 @@
 import { invoke } from "@tauri-apps/api/core";
 import { useEffect, type RefObject } from "react";
+import { beginHeadlessReload } from "./headless-runtime";
 import type { ProjectSnapshot } from "../app-types";
 import { toMessage } from "../app-utils";
 import { showError } from "../app/notify";
@@ -214,6 +215,7 @@ export async function startHostedWorkspace(
     if (signal.aborted || saved !== "saved" || !ownsProject() || overleafSync.syncingRef.current) return false;
     // Reload creates a fresh server client. Only this history entry inherits the project.
     window.history.replaceState({ ...window.history.state, latticeReloadProject: root }, "");
+    beginHeadlessReload();
     window.location.reload();
     return true;
   });

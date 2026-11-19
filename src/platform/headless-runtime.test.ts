@@ -1,7 +1,7 @@
 import { invoke, convertFileSrc, Channel } from "@tauri-apps/api/core";
 import { listen } from "@tauri-apps/api/event";
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { installHeadlessRuntime, serverRequest } from "./headless-runtime";
+import { beginHeadlessReload, installHeadlessRuntime, serverRequest } from "./headless-runtime";
 
 class ServerEvents extends EventTarget {
   static current: ServerEvents;
@@ -45,6 +45,22 @@ describe("the real Tauri consumers on a headless server", () => {
     expect(reconnected).not.toHaveBeenCalled();
     ServerEvents.current.onopen!();
     expect(reconnected).toHaveBeenCalledOnce();
+  });
+  it("cancels pending tab requests and rejects new work before a saved reload reaches pagehide", async () => {
+    const fetch = vi.fn((_path: string, init: RequestInit) => new Promise<Response>((_resolve, reject) => {
+      init.signal!.addEventListener("abort", () => reject(init.signal!.reason), { once: true });
+    }));
+    vi.stubGlobal("fetch", fetch);
+    install();
+    const scan = invoke("refresh_project");
+    beginHeadlessReload();
+    await expect(scan).rejects.toMatchObject({ name: "AbortError" });
+    await expect(invoke("git_status")).rejects.toMatchObject({ name: "AbortError" });
+    await expect(serverRequest("/api/projects")).rejects.toMatchObject({ name: "AbortError" });
+    expect(fetch).toHaveBeenCalledTimes(1);
+    install();
+    fetch.mockResolvedValueOnce(Response.json({ result: [] }));
+    await expect(invoke("refresh_project")).resolves.toEqual([]);
   });
   it("rejects a disposed adapter before it can send an unscoped request or use a replacement client", async () => {
     const fetch = vi.fn();

@@ -12,7 +12,12 @@ declare global {
 /* eslint-disable lingui/no-unlocalized-strings -- transport protocol and diagnostic errors; bootstrap UI lives in headless-login */
 type Callback = (value: unknown) => void;
 type EventPayload = { event?: string; callback?: number; payload: unknown };
-let activeClient: string | undefined;
+let activeClient: { id: string; requests: AbortController } | undefined;
+
+/** The guarded reload has saved the document. Stop its requests before WebKit starts navigation. */
+export function beginHeadlessReload(): void {
+  activeClient?.requests.abort();
+}
 export interface HeadlessSession {
   headless: boolean;
   authenticated: boolean;
@@ -23,14 +28,18 @@ export interface HeadlessSession {
 
 export async function serverRequest<T>(path: string, body?: unknown): Promise<T> {
   const headers: Record<string, string> = body === undefined ? {} : { "Content-Type": "application/json" };
-  if (activeClient) headers["X-Lattice-Client"] = activeClient;
+  const signal = activeClient?.requests.signal;
+  signal?.throwIfAborted();
+  if (activeClient) headers["X-Lattice-Client"] = activeClient.id;
   const response = await fetch(path, {
     method: body === undefined ? "GET" : "POST",
     credentials: "same-origin",
     cache: "no-store",
+    signal,
     headers,
     body: body === undefined ? undefined : JSON.stringify(body),
   });
+  signal?.throwIfAborted();
   if (response.status === 401) {
     window.dispatchEvent(new Event("lattice:session-expired"));
     throw new Error(sessionExpired());
@@ -45,7 +54,8 @@ export async function serverRequest<T>(path: string, body?: unknown): Promise<T>
 /** A Tauri API adapter, with no native host, loopback URLs or credentials in URLs/storage. */
 export function installHeadlessRuntime(session: HeadlessSession): () => void {
   const client = crypto.randomUUID();
-  activeClient = client;
+  const requests = new AbortController();
+  activeClient = { id: client, requests };
   const callbacks = new Map<number, Callback>();
   const listeners = new Map<number, { event: string; callback: number }>();
   let nextId = 1;
@@ -57,7 +67,7 @@ export function installHeadlessRuntime(session: HeadlessSession): () => void {
   let projectRoot: string | undefined;
   let disposed = false;
   const requireLiveClient = () => {
-    if (disposed || activeClient !== client) throw new DOMException("The workspace connection closed.", "AbortError");
+    if (disposed || requests.signal.aborted || activeClient?.id !== client) throw new DOMException("The workspace connection closed.", "AbortError");
   };
   const waitForEvents = () => {
     const stream = eventSource;
@@ -92,11 +102,11 @@ export function installHeadlessRuntime(session: HeadlessSession): () => void {
     };
     stream.onmessage = handleMessage;
     stream.onerror = async () => {
-      if (stream.readyState !== EventSource.CLOSED) return;
+      if (requests.signal.aborted || stream.readyState !== EventSource.CLOSED) return;
       stream.onerror = null;
       // EventSource hides the HTTP status. A proxy or terminal-stream failure must not restart a healthy session.
       try {
-        const probe = await fetch("/api/capabilities", { credentials: "same-origin", cache: "no-store" });
+        const probe = await fetch("/api/capabilities", { credentials: "same-origin", cache: "no-store", signal: requests.signal });
         if (!disposed && eventSource === stream && probe.status === 401) {
           window.dispatchEvent(new Event("lattice:session-expired"));
         }
@@ -212,7 +222,7 @@ export function installHeadlessRuntime(session: HeadlessSession): () => void {
   return () => {
     disposed = true; recovery.dispose();
     closeStream(); listeners.clear(); callbacks.clear();
-    if (activeClient === client) {
+    if (activeClient?.id === client) {
       activeClient = undefined;
       delete window.__LATTICE_HEADLESS_DEVICE_OWNER__;
     }
