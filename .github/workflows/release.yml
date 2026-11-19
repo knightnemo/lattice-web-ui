@@ -165,15 +165,21 @@ jobs:
     permissions:
       contents: write
     steps:
-      - name: Require owner approval from the default branch
+      - name: Require a repository administrator on the default branch
         env:
+          GH_TOKEN: ${{ github.token }}
           DEFAULT_BRANCH: ${{ github.event.repository.default_branch }}
-          OWNER: ${{ github.repository_owner }}
           TRIGGERING_ACTOR: ${{ github.triggering_actor }}
         run: |
-          test "$GITHUB_REF" = "refs/heads/$DEFAULT_BRANCH"
-          test "$GITHUB_ACTOR" = "$OWNER"
-          test "$TRIGGERING_ACTOR" = "$OWNER"
+          if [[ "$GITHUB_REF" != "refs/heads/$DEFAULT_BRANCH" || "$GITHUB_ACTOR" != "$TRIGGERING_ACTOR" ]]; then
+            echo '::error::Run promotion on the default branch and rerun only your own dispatch.'
+            exit 1
+          fi
+          permission="$(gh api "repos/$GITHUB_REPOSITORY/collaborators/$GITHUB_ACTOR/permission" --jq '.permission')"
+          if [[ "$permission" != admin ]]; then
+            echo '::error::Stable promotion requires administrator access to this repository.'
+            exit 1
+          fi
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
         with:
           ref: ${{ github.event.repository.default_branch }}
