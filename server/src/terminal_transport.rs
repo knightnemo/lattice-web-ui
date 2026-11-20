@@ -152,7 +152,7 @@ impl Drop for Subscription {
 #[derive(Default)]
 struct HubState {
     streams: HashMap<String, Arc<TabStream>>,
-    terminals: HashMap<u32, (String, u32)>,
+    terminals: HashMap<u32, (String, u32, Option<std::fs::File>)>,
 }
 #[derive(Default)]
 pub struct TerminalHub {
@@ -180,6 +180,7 @@ impl TerminalHub {
     }
     pub fn invoke(
         &self, owner: &str, root: &Path, command: &str, args: &Value,
+        work: Option<std::fs::File>,
     ) -> Result<Value, String> {
         let number = |key: &str| {
             args.get(key)
@@ -202,7 +203,7 @@ impl TerminalHub {
                 return Err("Connect the terminal event stream before opening a terminal.".into());
             }
             if state.terminals.len() >= MAX_TERMINALS
-                || state.terminals.values().filter(|(tab, _)| tab == owner).count() >= MAX_PER_TAB
+                || state.terminals.values().filter(|(tab, _, _)| tab == owner).count() >= MAX_PER_TAB
             {
                 return Err("Terminal limit reached. Close another terminal first.".into());
             }
@@ -251,15 +252,15 @@ impl TerminalHub {
             };
             let shell = terminal.name().to_string();
             let id = self.registry.insert(terminal);
-            state.terminals.insert(id, (owner.into(), callback));
+            state.terminals.insert(id, (owner.into(), callback, work));
             return Ok(json!({"id":id,"shell":shell}));
         }
         let id = number("id")?;
         let callback = state
             .terminals
             .get(&id)
-            .filter(|(tab, _)| tab == owner)
-            .map(|(_, callback)| *callback)
+            .filter(|(tab, _, _)| tab == owner)
+            .map(|(_, callback, _)| *callback)
             .ok_or("This terminal has closed.")?;
         match command {
             "terminal_write" => {
@@ -289,8 +290,8 @@ impl TerminalHub {
                 Ok(json!(self.registry.with(owner, id, Session::running_command)?))
             }
             "terminal_close" => {
-                state.terminals.remove(&id);
                 self.registry.close(owner, id);
+                state.terminals.remove(&id);
                 Ok(Value::Null)
             }
             _ => Err("Unsupported terminal command.".into()),
@@ -306,7 +307,7 @@ impl TerminalHub {
                 stream.close();
             }
             self.registry.close_window(&owner);
-            state.terminals.retain(|_, (tab, _)| tab != &owner);
+            state.terminals.retain(|_, (tab, _, _)| tab != &owner);
         }
     }
     fn close_owner(&self, owner: &str) {
@@ -315,7 +316,7 @@ impl TerminalHub {
             stream.close();
         }
         self.registry.close_window(owner);
-        state.terminals.retain(|_, (tab, _)| tab != owner);
+        state.terminals.retain(|_, (tab, _, _)| tab != owner);
     }
     pub fn close_client(&self, session: &str, client: &str) {
         if let Ok(owner) = Self::owner(session, client) {

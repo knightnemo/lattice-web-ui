@@ -53,6 +53,7 @@ fn owner(state: &Server, headers: &HeaderMap, client: &str) -> Result<(String, P
 }
 pub async fn invoke(
     state: &Server, headers: &HeaderMap, root: &std::path::Path, command: &str, args: &Value,
+    work: Option<std::fs::File>,
 ) -> Response {
     let client = client_id(headers).unwrap_or("");
     let (owner, selected) = match owner(state, headers, client) {
@@ -71,7 +72,7 @@ pub async fn invoke(
     let root = root.to_path_buf();
     let command = command.to_string();
     let client = client.to_string();
-    match tokio::task::spawn_blocking(move || hub.invoke(&owner, &client, &root, &command)).await {
+    match tokio::task::spawn_blocking(move || hub.invoke(&owner, &client, &root, &command, work)).await {
         Ok(Ok(mut value)) => {
             if let Some(origin) = value.get_mut("origin") {
                 if let Some(path) = origin.as_str() {

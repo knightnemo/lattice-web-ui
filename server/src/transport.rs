@@ -95,6 +95,8 @@ enum Command {
         agent_public_origin: Option<String>,
         #[arg(long, default_value = "127.0.0.1:18583")]
         agent_listen: SocketAddr,
+        #[arg(long)]
+        host_update_dir: Option<PathBuf>,
     },
 }
 #[derive(Clone)]
@@ -119,6 +121,7 @@ pub(crate) struct Server {
     pub(crate) agent_origin: String,
     pub(crate) agents: Arc<crate::agent_runtime::Hub>,
     pub(crate) terminals: Arc<crate::terminal_transport::TerminalHub>,
+    pub(crate) host_updates: Option<Arc<crate::host_update::HostUpdates>>,
 }
 #[derive(Deserialize)]
 struct Invoke {
@@ -155,9 +158,12 @@ pub fn main() {
                 Ok(())
             })()
         }
-        Command::Serve { workspace_root, state_dir, token_file, listen, assets, project, secure_cookies, account_gateway, device_pairing, agent_runtime, public_origin, agent_public_origin, agent_listen } => {
+        Command::Serve { workspace_root, state_dir, token_file, listen, assets, project, secure_cookies, account_gateway, device_pairing, agent_runtime, public_origin, agent_public_origin, agent_listen, host_update_dir } => {
             runtime.block_on(async {
                 if !listen.ip().is_loopback() { return Err("Refusing a non-loopback listener. Use an HTTPS reverse proxy or Tailscale Serve.".into()); }
+                if account_gateway && host_update_dir.is_some() {
+                    return Err("Managed host updates require owner token authentication.".into());
+                }
                 if account_gateway
                     && (!secure_cookies
                         || !public_origin.as_deref().is_some_and(|origin| origin.starts_with("https://"))
@@ -186,8 +192,9 @@ pub fn main() {
                 let agent_listener=if agent_runtime.is_some(){Some(crate::agent_listener::bind(agent_listen).await?)}else{None};
                 let agent_origin=crate::agent_listener::origin(&agent_public_origin.unwrap_or_else(||format!("http://{}",agent_listener.as_ref().and_then(|listener|listener.local_addr().ok()).unwrap_or(agent_listen))))?;
                 if agent_runtime.is_some()&&(public_origin==agent_origin||reqwest::Url::parse(&public_origin).unwrap().scheme()!=reqwest::Url::parse(&agent_origin).unwrap().scheme()||reqwest::Url::parse(&public_origin).unwrap().host_str()!=reqwest::Url::parse(&agent_origin).unwrap().host_str()){return Err("The agent needs a different port with the same hostname and HTTP/HTTPS scheme".into());}
+                let host_updates = host_update_dir.map(|path| crate::host_update::HostUpdates::new(path, &core.root).map(Arc::new)).transpose()?;
                 let agents=Arc::new(crate::agent_runtime::Hub::new(agent_runtime,state_dir.clone())?);
-                let state = Server { public_origin, origin_from_host, agent_origin, agents, core, initial, cores:Default::default(), token:Arc::new(token), sessions:Default::default(), secure_cookies, account_gateway, pairing, terminals:Default::default() };
+                let state = Server { public_origin, origin_from_host, agent_origin, agents, core, initial, cores:Default::default(), token:Arc::new(token), sessions:Default::default(), secure_cookies, account_gateway, pairing, terminals:Default::default(), host_updates };
                 let reaper=state.clone();
                 tokio::spawn(async move {loop {tokio::time::sleep(Duration::from_secs(1)).await;reaper.agents.reap(|session|reaper.sessions.lock().unwrap().get(session).is_some_and(|session|session.expires>Instant::now()));reaper.terminals.reap(|session|reaper.sessions.lock().unwrap().get(session).is_some_and(|session|session.expires>Instant::now()));}});
                 let shutdown_state=state.clone();
@@ -199,11 +206,27 @@ pub fn main() {
                 if state.pairing.is_some() {
                     app = app.merge(device_pairing::routes());
                 }
-                let mut app = app.with_state(state);
+                let host_updates = state.host_updates.clone();
+                let mut app = app.merge(crate::host_update::routes()).with_state(state);
                 if let Some(assets) = assets {
+                    let assets = assets.canonicalize().map_err(|error| error.to_string())?;
                     let index = tokio::fs::read_to_string(assets.join("index.html")).await.map_err(|e|e.to_string())?.replacen("<head>","<head><script>window.__LATTICE_HEADLESS__=true</script>",1);
                     let index_copy=index.clone();
-                    app = app.route("/",get(move || {let index=index.clone();async move { axum::response::Html(index) }})).route("/index.html",get(move || {let index=index_copy.clone();async move { axum::response::Html(index) }})).fallback_service(ServeDir::new(assets).append_index_html_on_directories(true));
+                    // The updater probes "/" during its trial. Browsers polling for a
+                    // reload only see the new entry after the trial is committed.
+                    app = app
+                        .route("/", get(move || { let index = index.clone(); async move { axum::response::Html(index) } }))
+                        .route("/index.html", get(move || {
+                            let index = index_copy.clone();
+                            let host_updates = host_updates.clone();
+                            async move {
+                                if host_updates.is_some_and(|updates| updates.in_trial()) {
+                                    return crate::host_update::switching();
+                                }
+                                axum::response::Html(index).into_response()
+                            }
+                        }))
+                        .fallback_service(ServeDir::new(assets).append_index_html_on_directories(true));
                 }
                 let (agent_stop,mut agent_stopping)=tokio::sync::watch::channel(false);
                 let agent_task=agent_listener.map(|listener|{let router=crate::agent_listener::router(shutdown_state.clone());tokio::spawn(async move{axum::serve(listener,router).with_graceful_shutdown(async move{let _=agent_stopping.wait_for(|stopped|*stopped).await;}).await})});
@@ -254,6 +277,10 @@ async fn invoke(
     if let Err(error) = authorize(&state, &headers) {
         return error;
     }
+    let work = match state.host_updates.as_ref().map(|updates| updates.guard()).transpose() {
+        Ok(work) => work,
+        Err(response) => return response,
+    };
     let id = session_id(&headers);
     let client = client_id(&headers).map(str::to_string);
     let root = match selected_project(&state, &headers, client.as_deref()) {
@@ -273,6 +300,7 @@ async fn invoke(
             &root,
             &request.command,
             &request.args,
+            work,
         )
         .await;
     }
@@ -311,7 +339,7 @@ async fn invoke(
         }
         let terminals = state.terminals.clone();
         return match tokio::task::spawn_blocking(move || {
-            terminals.invoke(&owner, &root, &request.command, &request.args)
+            terminals.invoke(&owner, &root, &request.command, &request.args, work)
         })
         .await
         {
@@ -379,8 +407,11 @@ async fn invoke(
         "create_project" | "overleaf_clone_target" | "overleaf_clone_project" => state.core.clone(),
         _ => core,
     };
-    let result =
-        tokio::task::spawn_blocking(move || core.invoke(&request.command, request.args)).await;
+    let result = tokio::task::spawn_blocking(move || {
+        // A disconnected HTTP client cannot cancel the running Project or Overleaf operation.
+        let _work = work;
+        core.invoke(&request.command, request.args)
+    }).await;
     if matches!(result, Ok(Ok(_))) && is_open {
         if let Some(id) = id {
             if let Some(session) = state.sessions.lock().unwrap().get_mut(&id) {

@@ -18,6 +18,30 @@ spec.loader.exec_module(installer)
 
 
 class DeploymentTests(unittest.TestCase):
+    def test_managed_updates_plans_a_distinct_timer_and_preserves_workspace_boundaries(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory).resolve()
+            arguments = self.fixture(root)
+            base = arguments[1:arguments.index("--tailscale")]
+            for name in installer.UPDATE_FILES:
+                (root / name).write_text("# fixture\n")
+            (root / "release-version.txt").write_text("0.4.8\n")
+            installed = subprocess.run([
+                sys.executable, str(SCRIPT), *base, "--service-name", "test-lattice",
+                "--managed-updates", "--dry-run",
+            ], capture_output=True, text=True, check=True)
+            self.assertIn('"--host-update-dir"', installed.stdout)
+            self.assertIn("test-lattice-updater.timer", installed.stdout)
+            self.assertIn('"--service" "test-lattice.service"', installed.stdout)
+            self.assertIn("OnUnitInactiveSec=25s", installed.stdout)
+            self.assertIn("TimeoutStartSec=60min", installed.stdout)
+            overlapping = subprocess.run([
+                sys.executable, str(SCRIPT), *base, "--data-dir", str(root / "papers/data"),
+                "--managed-updates", "--dry-run",
+            ], capture_output=True, text=True)
+            self.assertEqual(overlapping.returncode, 2)
+            self.assertIn("separate directories", overlapping.stderr)
+
     def fixture(self, root):
         binary = root / "lattice-server"
         binary.write_text("#!/bin/sh\nexit 0\n")

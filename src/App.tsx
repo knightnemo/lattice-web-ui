@@ -5,7 +5,7 @@ import {
 import { useLingui } from "@lingui/react/macro";
 import { invoke } from "@tauri-apps/api/core";
 import { useAppearance } from "./settings/use-appearance";
-import { isBrowserHosted } from "./platform/browser-runtime";
+import { isBrowserHosted, isHeadlessHosted } from "./platform/browser-runtime";
 import { configureInterfaceSounds } from "./telemetry/interface-sounds";
 import { configureToastPosition } from "./telemetry/toast-position";
 import { useProjectSearch } from "./app/use-project-search";
@@ -108,6 +108,7 @@ import "./App.css";
 
 const PaperDropBridge = lazy(() => import("./papers/paper-drop-bridge"));
 const HostedProjectTabs = lazy(() => import("./app/hosted-project-tabs"));
+const HeadlessHostUpdateBanner = lazy(() => import("./platform/headless-host-update-banner"));
 // The workspace, the canvas and the project PDF beside it render behind a
 // ChunkGate, so a project's first frame shows as soon as their chunks are in,
 // with no Suspense reveal to wait out. The file tree and paper library
@@ -754,8 +755,11 @@ function App({ surfaces }: { surfaces: AppSurfaces }) {
   });
   // Shown over the welcome screen and a project alike.
   const appOverlays = <AppOverlays interfaceScale={appearance.interfaceScale} interfaceZoom={interfaceZoom} whatsNew={whatsNew} />;
+  const hostUpdateBanner = isHeadlessHosted() && (
+    <Suspense fallback={null}><HeadlessHostUpdateBanner /></Suspense>
+  );
   if (!project) {
-    return (
+    const welcome = (
       <>
         {/* While launch reopens a project, the window's own background, not a flash of the welcome screen. */}
         {!launching && <Welcome
@@ -786,6 +790,7 @@ function App({ surfaces }: { surfaces: AppSurfaces }) {
         {appOverlays}
       </>
     );
+    return hostUpdateBanner ? <div className="app-shell">{hostUpdateBanner}{welcome}</div> : welcome;
   }
 
   const workspaceLoading = <div className="document-canvas-loading" aria-label={t`Preparing workspace`} />;
@@ -796,6 +801,7 @@ function App({ surfaces }: { surfaces: AppSurfaces }) {
       className={`app-shell trellis-layout ${isFullscreen ? "fullscreen" : ""} ${browserHosted ? "browser-hosted" : ""} ${focusMode ? "focus-mode" : ""}`}
       ref={shellRef}
     >
+      {hostUpdateBanner}
       <Suspense fallback={null}>
         <PaperDropBridge
           library={{ projectRoot: project.root, papers }}

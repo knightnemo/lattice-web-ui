@@ -1,0 +1,55 @@
+.host-update-banner {
+  flex: none;
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: space-between;
+  column-gap: var(--space-8);
+  row-gap: var(--space-1);
+  padding: var(--space-2) var(--space-8);
+  border-bottom: 1px solid var(--control-active-border);
+  background: var(--control-active-soft);
+  color: var(--text-primary);
+}
+
+.host-update-message,
+.host-update-actions {
+  display: flex;
+  align-items: center;
+  gap: var(--space-4);
+}
+
+.host-update-message {
+  flex: 1 1 14rem;
+  min-width: 0;
+  font-size: var(--type-body-compact-size);
+  line-height: var(--type-body-line-height);
+  font-weight: var(--weight-medium);
+}
+
+.host-update-message > svg {
+  flex: none;
+  color: var(--control-active);
+}
+
+.host-update-message > span {
+  overflow-wrap: anywhere;
+}
+
+.host-update-actions {
+  flex-wrap: wrap;
+  margin-inline-start: auto;
+}
+
+.host-update-actions a {
+  text-decoration: none;
+}
+
+.host-update-actions button[aria-disabled="true"] {
+  cursor: default;
+  opacity: .55;
+}
+
+@media (pointer: coarse) {
+  .host-update-actions > .ui-button { min-height: 44px; }
+}

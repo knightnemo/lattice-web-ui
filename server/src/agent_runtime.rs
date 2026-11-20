@@ -26,6 +26,9 @@ pub struct Running {
     home: PathBuf,
     _broker: crate::agent_broker::Broker,
     _metadata: crate::agent_metadata::Broker,
+    // A provider can continue after the browser disconnects. Keep the host
+    // alive for the entire live sidecar, including tools and pending approvals.
+    _work: Option<fs::File>,
 }
 impl Running {
     fn alive(&mut self) -> bool {
@@ -109,6 +112,7 @@ impl Hub {
     }
     pub fn invoke(
         &self, owner: &str, client: &str, root: &Path, command: &str,
+        work: Option<fs::File>,
     ) -> Result<Value, String> {
         if command == "headless_agent_stop" {
             let mut running = self.running.lock().unwrap();
@@ -163,7 +167,7 @@ impl Hub {
                     {
                         return Err("Eight projects already have active agents.".into());
                     }
-                    Arc::new(Mutex::new(start(runtime, &self.state, root)?))
+                    Arc::new(Mutex::new(start(runtime, &self.state, root, work)?))
                 }
             };
             running.insert(owner.into(), agent);
@@ -209,7 +213,7 @@ impl Hub {
     }
 }
 #[cfg(target_os = "linux")]
-fn start(runtime: &Path, state: &Path, root: &Path) -> Result<Running, String> {
+fn start(runtime: &Path, state: &Path, root: &Path, work: Option<fs::File>) -> Result<Running, String> {
     use std::os::unix::fs::PermissionsExt;
     use std::os::unix::process::CommandExt;
     let archive = state.join("agents");
@@ -379,6 +383,7 @@ fn start(runtime: &Path, state: &Path, root: &Path) -> Result<Running, String> {
         home,
         _broker: broker,
         _metadata: metadata,
+        _work: work,
     };
     let client = crate::http::loopback(Duration::from_secs(2))
         .build()
@@ -445,6 +450,6 @@ impl Running {
 }
 
 #[cfg(not(target_os = "linux"))]
-fn start(_runtime: &Path, _state: &Path, _root: &Path) -> Result<Running, String> {
+fn start(_runtime: &Path, _state: &Path, _root: &Path, _work: Option<fs::File>) -> Result<Running, String> {
     Err("Linux Landlock required".into())
 }

@@ -4627,6 +4627,10 @@ msgstr "无法重新打开“{unopenedName}”：{unopenedReason}"
 msgid "Couldn’t reopen “{unopenedName}”. Its folder may have been moved or renamed"
 msgstr "无法重新打开“{unopenedName}”，它的文件夹可能已被移动或重命名"
 
+#: src/platform/headless-host-update-banner.tsx
+msgid "Couldn’t request the host update. Try again."
+msgstr "无法提交主机更新请求，请重试。"
+
 #: src/canvas/status-save-state.tsx
 msgid "Couldn’t save"
 msgstr "无法保存"
@@ -6849,6 +6853,10 @@ msgstr "水平间距"
 msgid "Host release"
 msgstr "主机版本"
 
+#: src/platform/headless-host-update-banner.tsx
+msgid "Host update"
+msgstr "主机更新"
+
 #: src/papers/bib-entry-dialog.tsx
 msgid "How the entry reads"
 msgstr "条目排版预览"
@@ -7953,9 +7961,13 @@ msgstr "更新失败"
 msgid "Lattice workspace"
 msgstr "Lattice 工作区"
 
-#: src/platform/headless-web-update.ts
-msgid "Lattice-web-ui {latestVersion} is available on GitHub"
-msgstr "Lattice-web-ui {latestVersion} 已在 GitHub 上发布"
+#: src/platform/headless-host-update-banner.tsx
+msgid "Lattice-web-ui {latestVersion} is available."
+msgstr "Lattice-web-ui {latestVersion} 已发布。"
+
+#: src/platform/headless-host-update-banner.tsx
+msgid "Lattice-web-ui {latestVersion} is ready to install."
+msgstr "Lattice-web-ui {latestVersion} 已就绪，可以安装。"
 
 #: src/platform/host-errors-setup.ts
 msgid "Lattice's managed {tool} failed user-level verification.\n"
@@ -11099,6 +11111,10 @@ msgstr "正在打开白板…"
 msgid "Preparing HTML preview…"
 msgstr "正在准备预览…"
 
+#: src/platform/headless-host-update-banner.tsx
+msgid "Preparing Lattice-web-ui {latestVersion} in the background…"
+msgstr "正在后台准备 Lattice-web-ui {latestVersion}…"
+
 #: src/canvas/canvas-lazy-editors.tsx
 msgid "Preparing Markdown editor"
 msgstr "正在打开编辑器…"
@@ -12334,6 +12350,10 @@ msgstr "现在重启会中断 {running}。"
 #: src/settings/agent-environment-settings.tsx
 msgid "Restarting the agent stops any running turns."
 msgstr "重启 AI 助手会中断正在进行的对话。"
+
+#: src/platform/headless-host-update-banner.tsx
+msgid "Restarting the host for Lattice-web-ui {latestVersion}…"
+msgstr "正在重启主机以启用 Lattice-web-ui {latestVersion}…"
 
 #: src/settings/settings-dialog.tsx
 #: src/telemetry/app-updater.tsx
@@ -14741,6 +14761,10 @@ msgstr "文件夹不是空的"
 msgid "The full PDF is rebuilding in the background. Page breaks, references and jumps to the source catch up when it finishes."
 msgstr "完整 PDF 正在后台重新编译。完成后，分页、引用和跳转到源码会随之更新。"
 
+#: src/platform/headless-host-update-banner.tsx
+msgid "The host couldn’t install Lattice-web-ui {latestVersion}."
+msgstr "主机无法安装 Lattice-web-ui {latestVersion}。"
+
 #: src/papers/audit-messages.ts
 msgid "The inline reference agrees with the verified record."
 msgstr "这条正文内文献与核实记录一致。"
@@ -16192,6 +16216,14 @@ msgstr "已更新"
 msgid "Update available"
 msgstr "有更新"
 
+#: src/platform/headless-host-update-banner.tsx
+msgid "Update failed. The host is back on {installedVersion}."
+msgstr "更新失败，主机已恢复到 {installedVersion}。"
+
+#: src/platform/headless-host-update-banner.tsx
+msgid "Update host"
+msgstr "更新主机"
+
 #: src/telemetry/app-updater.tsx
 msgid "Update now"
 msgstr "立即更新"
@@ -16505,7 +16537,7 @@ msgstr "查看许可证"
 msgid "View original PDF"
 msgstr "查看原文 PDF"
 
-#: src/platform/headless-web-update.ts
+#: src/platform/headless-host-update-banner.tsx
 #: src/settings/settings-dialog.tsx
 msgid "View release notes"
 msgstr "查看发行说明"
@@ -16561,6 +16593,10 @@ msgstr "正在等待 Google 授权…"
 #: src/google-workspace/workspace-operations.tsx
 msgid "Waiting for Google…"
 msgstr "正在等待 Google…"
+
+#: src/platform/headless-host-update-banner.tsx
+msgid "Waiting for open Agent sessions, terminals, and syncs to finish…"
+msgstr "正在等待 Agent 会话、终端和同步结束…"
 
 #: src/platform/host-errors-overleaf.ts
 msgid "Waiting for Overleaf's live file tree before syncing moved files."

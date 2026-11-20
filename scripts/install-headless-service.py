@@ -2,6 +2,8 @@
 """Install an isolated Linux user service and optionally a private Tailscale Serve handler."""
 
 import argparse
+from contextlib import ExitStack
+import fcntl
 import getpass
 import json
 import os
@@ -16,6 +18,8 @@ import urllib.request
 import urllib.parse
 
 MARKER = "# Managed by Lattice headless installer"
+UPDATE_MARKER = "# Managed by Lattice headless updater"
+UPDATE_FILES = ("check-host-update.py", "manage-host-update.py")
 
 
 def run(*args, check=True):
@@ -50,6 +54,69 @@ def serve_port_state(status, https_port, target):
     raise RuntimeError(
         f"Tailscale Serve port {https_port} already has an unrelated handler; choose another port."
     )
+
+
+def update_units(data, service, port, tool_path):
+    name = service.removesuffix(".service") + "-updater"
+    command = [
+        sys.executable, data / "updates/manage-host-update.py",
+        "--data-dir", data, "--service", service, "--port", port,
+    ]
+    return {
+        name + ".service": "\n".join([
+            UPDATE_MARKER, "[Unit]", "Description=Prepare or apply a Lattice host update",
+            "After=network-online.target", "[Service]", "Type=oneshot",
+            "UMask=0077", "PrivateTmp=true", "NoNewPrivileges=true",
+            f'Environment="PATH={tool_path}"',
+            "ExecStart=:" + " ".join(unit_arg(part) for part in command),
+            "TimeoutStartSec=60min", "",
+        ]),
+        name + ".timer": "\n".join([
+            UPDATE_MARKER, "[Unit]", "Description=Check Lattice host update requests",
+            "[Timer]", "OnActiveSec=20s", "OnUnitInactiveSec=25s", "AccuracySec=1s",
+            "[Install]", "WantedBy=timers.target", "",
+        ]),
+    }
+
+
+def lock_updates(stack, directory):
+    # Keep manual reinstall and automated switch from changing the same pointer.
+    for name in ("worker.lock", "work.lock"):
+        fd = os.open(directory / name, os.O_RDWR | os.O_CREAT | os.O_NOFOLLOW, 0o600)
+        handle = stack.enter_context(os.fdopen(fd, "rb"))
+        try:
+            fcntl.flock(handle, fcntl.LOCK_EX | fcntl.LOCK_NB)
+        except BlockingIOError:
+            raise RuntimeError("The updater or workspace is busy. Finish active sessions and retry.") from None
+    if (directory / "trial.json").exists():
+        raise RuntimeError("Let the updater finish recovering the previous release before reinstalling.")
+
+
+def install_release(config, unit, data, binary, assets, release_version, units):
+    with ExitStack() as locks:
+        if release_version:
+            updates = data / "updates"
+            updates.mkdir(exist_ok=True, mode=0o700)
+            lock_updates(locks, updates)
+            for name in UPDATE_FILES:
+                shutil.copy2(binary.parent / name, updates / name)
+        release = data / "releases" / str(time.time_ns())
+        release.mkdir(parents=True, mode=0o700)
+        shutil.copy2(binary, release / "lattice-server")
+        shutil.copytree(assets, release / "assets")
+        if release_version:
+            (release / "release-version.txt").write_text(release_version + "\n")
+        pending = data / "current.next"
+        pending.unlink(missing_ok=True)
+        pending.symlink_to(release, target_is_directory=True)
+        pending.replace(data / "current")
+        config.parent.mkdir(parents=True, exist_ok=True)
+        config.write_text(unit)
+        for name, contents in units.items():
+            config.with_name(name).write_text(contents)
+        run("systemctl", "--user", "daemon-reload")
+        run("systemctl", "--user", "enable", "--now", config.name)
+        run("systemctl", "--user", "restart", config.name)
 
 
 def main():
@@ -101,6 +168,10 @@ def main():
         "--extra-path",
         default="",
         help="Absolute user tool directories, separated by ':' (for TeX)",
+    )
+    parser.add_argument(
+        "--managed-updates", action="store_true",
+        help="Enable verified, owner-approved host updates from official Web UI releases",
     )
     parser.add_argument("--dry-run", action="store_true")
     args = parser.parse_args()
@@ -183,6 +254,32 @@ def main():
     secure = args.tailscale or args.account_gateway or args.device_pairing or "--secure-cookies" in previous
     if previous and MARKER not in previous:
         raise RuntimeError(f"Refusing to replace an unrelated service at {config}")
+    if '"--host-update-dir"' in previous and not args.managed_updates:
+        parser.error("Repeat --managed-updates for this service.")
+    release_version = None
+    units = {}
+    if args.managed_updates:
+        if sys.version_info < (3, 11):
+            parser.error("Managed host updates require Python 3.11 or newer.")
+        if args.account_gateway:
+            parser.error("Managed updates require owner token sign-in, optionally with device pairing.")
+        if data.is_relative_to(workspace) or workspace.is_relative_to(data):
+            parser.error("Managed updates need --data-dir and workspace root in separate directories.")
+        if any(not path.is_file() or path.is_symlink() for path in (
+            binary.parent / name for name in (*UPDATE_FILES, "release-version.txt")
+        )):
+            parser.error("Use --binary from an extracted Lattice-web-ui host kit with the updater files.")
+        release_version = (binary.parent / "release-version.txt").read_text().strip()
+        if not re.fullmatch(r"(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)", release_version):
+            parser.error("Expected X.Y.Z in the host kit's release-version.txt.")
+        command.extend(["--host-update-dir", data / "updates"])
+        units = update_units(data, service, args.port, tool_path)
+        for name in units:
+            path = config.with_name(name)
+            if path.is_symlink() or (path.exists() and (
+                not path.is_file() or not path.read_text().startswith(UPDATE_MARKER + "\n")
+            )):
+                raise RuntimeError(f"Refusing to replace an unrelated unit at {path}")
     if previous and (
         ('"--account-gateway"' in previous) != args.account_gateway
         or ('"--device-pairing"' in previous) != args.device_pairing
@@ -298,6 +395,8 @@ def main():
     )
     if args.dry_run:
         print(unit)
+        for name, contents in units.items():
+            print(f"# {name}\n{contents}")
         return
     handlers = [(args.https_port, f"http://127.0.0.1:{args.port}")]
     if args.agent_runtime:
@@ -314,19 +413,7 @@ def main():
         ]
     data.mkdir(parents=True, exist_ok=True, mode=0o700)
     data.chmod(0o700)
-    release = data / "releases" / str(time.time_ns())
-    release.mkdir(parents=True, mode=0o700)
-    shutil.copy2(binary, release / "lattice-server")
-    shutil.copytree(assets, release / "assets")
-    pending = data / "current.next"
-    pending.unlink(missing_ok=True)
-    pending.symlink_to(release, target_is_directory=True)
-    pending.replace(data / "current")
-    config.parent.mkdir(parents=True, exist_ok=True)
-    config.write_text(unit)
-    run("systemctl", "--user", "daemon-reload")
-    run("systemctl", "--user", "enable", "--now", service)
-    run("systemctl", "--user", "restart", service)
+    install_release(config, unit, data, binary, assets, release_version, units)
     for attempt in range(30):
         try:
             with urllib.request.urlopen(
@@ -341,6 +428,8 @@ def main():
         raise RuntimeError(
             f"The service did not become healthy; inspect journalctl --user -u {service}"
         )
+    if units:
+        run("systemctl", "--user", "enable", "--now", next(name for name in units if name.endswith(".timer")))
     print(
         f"Service healthy on loopback port {args.port}. Access token file: {data / 'access-token'} (contents not displayed)."
     )

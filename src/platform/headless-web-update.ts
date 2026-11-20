@@ -12,16 +12,26 @@ import { notifyInfo } from "../telemetry/app-notify";
 import { dismissAppToastByDedupeKey } from "../telemetry/app-log-store";
 
 const NOTICE = "headless-web-update";
-const HOST_NOTICE = "headless-host-release";
+const HOST_UPDATE_PATH = "/api/host-update";
 const HOST_STATUS_PATH = "/lattice-host-update.json";
-type HostRelease = { installedVersion: string; latestVersion: string; notesUrl: string };
+const HOST_PHASES = ["current", "available", "preparing", "ready", "waiting", "switching", "rolled_back", "failed"] as const;
+type HostPhase = typeof HOST_PHASES[number];
+type HostRelease = {
+  installedVersion: string;
+  latestVersion: string;
+  notesUrl: string;
+  phase: Exclude<HostPhase, "current"> | null;
+};
 
-// The optional host timer publishes stable release numbers. Accept only its
-// versioned public schema and construct every link from our official repository.
-function hostRelease(value: unknown): HostRelease | null {
-  if (!value || typeof value !== "object" || Object.keys(value).length !== 3 ||
+const isActive = (phase: HostRelease["phase"] | undefined) =>
+  phase === "preparing" || phase === "waiting" || phase === "switching";
+
+function hostRelease(value: unknown, managed: boolean): HostRelease | null {
+  if (!value || typeof value !== "object" || (!managed && Object.keys(value).length !== 3) ||
       !("schema" in value) || value.schema !== 1 || !("installedVersion" in value) || !("latestVersion" in value)) return null;
   const { installedVersion, latestVersion } = value;
+  const phase = managed ? HOST_PHASES.find((phase) => "phase" in value && phase === value.phase) : null;
+  if (phase === undefined || phase === "current") return null;
   const stable = /^(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)$/;
   if (typeof installedVersion !== "string" || typeof latestVersion !== "string") return null;
   const installed = stable.exec(installedVersion);
@@ -33,9 +43,16 @@ function hostRelease(value: unknown): HostRelease | null {
     // each part exactly, including a number larger than a JS safe integer.
     if (latest[i].length < installed[i].length ||
         (latest[i].length === installed[i].length && latest[i] < installed[i])) return null;
-    return { installedVersion, latestVersion, notesUrl: `https://github.com/knightnemo/lattice-web-ui/releases/tag/v${latestVersion}` };
+    return {
+      installedVersion, latestVersion, phase,
+      notesUrl: `https://github.com/lattice-writer/lattice-web-ui/releases/tag/v${latestVersion}`,
+    };
   }
   return null;
+}
+
+export function canRequestHostUpdate(phase: HostRelease["phase"] | undefined): boolean {
+  return phase === "available" || phase === "ready" || phase === "failed" || phase === "rolled_back";
 }
 
 const changes = new EventTarget();
@@ -47,6 +64,9 @@ type WebUpdate = {
   loaded: string;
   served: string;
   release: HostRelease | null;
+  requesting: boolean;
+  requestFailed: boolean;
+  requestHost: () => Promise<void>;
   check: () => Promise<boolean>;
   reload: () => Promise<boolean>;
   showNotice: () => void;
@@ -68,53 +88,83 @@ export function watchWebUpdate(saveAndReload: () => Promise<boolean>): () => voi
   const controller = new AbortController();
   let pendingHost: Promise<void> | undefined;
   let retryMissingHostAfter = 0;
-  const announced = new Set<string>();
-  const fetchStatus = (url: URL | string) => fetch(url, {
-    cache: "no-store", credentials: "same-origin", redirect: "error", signal: controller.signal,
+  let nextHostCheck = 0;
+  const fetchStatus = (url: URL | string, init?: RequestInit) => fetch(url, {
+    cache: "no-store", credentials: "same-origin", redirect: "error", signal: controller.signal, ...init,
   });
 
-  function applyHostRelease(release: HostRelease | null) {
-    if (stopped || !update || (update.release?.latestVersion === release?.latestVersion &&
-        update.release?.installedVersion === release?.installedVersion)) return;
-    update = { ...update, release };
+  function publish(patch: Partial<WebUpdate>) {
+    if (stopped || !update) return;
+    update = { ...update, ...patch };
     changes.dispatchEvent(new Event("change"));
-    if (!release) {
-      dismissAppToastByDedupeKey(HOST_NOTICE);
-      return;
-    }
-    const { latestVersion } = release;
-    if (window.__LATTICE_HEADLESS_DEVICE_OWNER__ === false || announced.has(latestVersion)) return;
-    announced.add(latestVersion);
-    try {
-      const key = `lattice:host-release:${latestVersion}`;
-      if (sessionStorage.getItem(key)) return;
-      sessionStorage.setItem(key, "1");
-    } catch { /* Storage can be unavailable in a private browsing session. */ }
-    notifyInfo(i18n._(msg`App updater`), i18n._(msg`Lattice-web-ui ${latestVersion} is available on GitHub`), {
-      dedupeKey: HOST_NOTICE, timeoutMs: 7000,
-      primaryAction: {
-        label: i18n._(msg`View release notes`),
-        // eslint-disable-next-line lingui/no-unlocalized-strings -- browser target and opener isolation flags
-        onClick: () => { window.open(release.notesUrl, "_blank", "noopener,noreferrer"); },
-      },
-    });
   }
 
+  function applyHostRelease(release: HostRelease | null) {
+    if (update?.release?.latestVersion === release?.latestVersion &&
+        update?.release?.installedVersion === release?.installedVersion &&
+        update?.release?.phase === release?.phase) return;
+    publish({ release, requestFailed: false });
+  }
+
+  const mediaType = (response: Response) => response.headers.get("content-type")?.split(";")[0]?.trim().toLowerCase();
+  const missing = (response: Response) => response.status === 404 || response.status === 410 ||
+    (response.ok && mediaType(response) === "text/html");
+
   async function readHostRelease() {
+    if (window.__LATTICE_HEADLESS_DEVICE_OWNER__ !== false) {
+      const response = await fetchStatus(HOST_UPDATE_PATH);
+      if (response.ok && mediaType(response) === "application/json") {
+        applyHostRelease(hostRelease(await response.json(), true));
+        return;
+      }
+      if (!missing(response) && response.status !== 405) return;
+    }
     const response = await fetchStatus(HOST_STATUS_PATH);
-    const mediaType = response.headers.get("content-type")?.split(";")[0]?.trim().toLowerCase();
-    if (response.status === 404 || response.status === 410 || (response.ok && mediaType === "text/html")) {
-      // Most installations omit the optional timer. Check those quietly once
-      // an hour; an explicit check in Settings can discover a newly enabled timer.
+    if (missing(response)) {
+      // Most installations omit the optional timer. A manual check can find
+      // a newly enabled updater without waiting for the idle polling backoff.
       retryMissingHostAfter = Date.now() + 60 * 60_000;
       applyHostRelease(null);
     } else if (response.ok) {
-      applyHostRelease(mediaType === "application/json" ? hostRelease(await response.json().catch(() => null)) : null);
+      applyHostRelease(mediaType(response) === "application/json" ? hostRelease(await response.json().catch(() => null), false) : null);
     }
   }
+
   function checkHost() {
-    if (!document.hidden && Date.now() >= retryMissingHostAfter) {
-      pendingHost ??= readHostRelease().catch(() => {}).finally(() => { pendingHost = undefined; });
+    if (!document.hidden && Date.now() >= retryMissingHostAfter && !update?.requesting) {
+      pendingHost ??= readHostRelease().catch(() => {}).finally(() => {
+        pendingHost = undefined;
+        nextHostCheck = Date.now() + (isActive(update?.release?.phase) ? 5_000 : 60_000);
+      });
+    }
+  }
+
+  async function requestHost() {
+    const release = update?.release;
+    if (stopped || update?.requesting || !release || !canRequestHostUpdate(release.phase) ||
+        window.__LATTICE_HEADLESS_DEVICE_OWNER__ === false) return;
+    publish({ requesting: true, requestFailed: false });
+    let failed = false;
+    try {
+      await pendingHost;
+      if (stopped || update?.release?.latestVersion !== release.latestVersion ||
+          !canRequestHostUpdate(update?.release?.phase)) return;
+      const response = await fetchStatus(HOST_UPDATE_PATH, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ version: release.latestVersion }),
+      });
+      failed = !response.ok;
+      if (response.ok) {
+        const status = mediaType(response) === "application/json" ? await response.json().catch(() => null) : null;
+        applyHostRelease(hostRelease(status, true) ?? { ...release, phase: "waiting" });
+      }
+    } catch {
+      // Keep the banner available after a failed or interrupted request.
+      failed = true;
+    } finally {
+      publish({ requesting: false, requestFailed: failed });
+      checkHost();
     }
   }
 
@@ -155,7 +205,7 @@ export function watchWebUpdate(saveAndReload: () => Promise<boolean>): () => voi
     pending ??= readBuild().catch(() => false).finally(() => { pending = undefined; });
     return pending;
   }
-  update = { loaded, served: loaded, release: null, check: () => {
+  update = { loaded, served: loaded, release: null, requesting: false, requestFailed: false, requestHost, check: () => {
     retryMissingHostAfter = 0;
     return check();
   }, reload, showNotice: offer };
@@ -167,7 +217,15 @@ export function watchWebUpdate(saveAndReload: () => Promise<boolean>): () => voi
     lastReconnectCheck = Date.now();
     void check();
   }
-  const interval = window.setInterval(check, 5 * 60_000);
+  let nextBuildCheck = Date.now() + 5 * 60_000;
+  const interval = window.setInterval(() => {
+    if (document.hidden) return;
+    const now = Date.now();
+    if (isActive(update?.release?.phase) || now >= nextBuildCheck) {
+      nextBuildCheck = now + 5 * 60_000;
+      void check();
+    } else if (now >= nextHostCheck) checkHost();
+  }, 5_000);
   document.addEventListener("visibilitychange", check);
   window.addEventListener("online", check);
   window.addEventListener("lattice:workspace-reconnected", onReconnect);
@@ -179,7 +237,6 @@ export function watchWebUpdate(saveAndReload: () => Promise<boolean>): () => voi
     window.removeEventListener("online", check);
     window.removeEventListener("lattice:workspace-reconnected", onReconnect);
     dismissAppToastByDedupeKey(NOTICE);
-    if (update?.release) dismissAppToastByDedupeKey(HOST_NOTICE);
     update = null;
     changes.dispatchEvent(new Event("change"));
   };

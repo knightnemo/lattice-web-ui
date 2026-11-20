@@ -104,7 +104,7 @@ pub async fn run(
     let starter = hub.clone();
     let root = core.root.clone();
     tokio::task::spawn_blocking(move || {
-        starter.invoke(OWNER, CLIENT, &root, "synara_ensure_ready")
+        starter.invoke(OWNER, CLIENT, &root, "synara_ensure_ready", None)
     })
     .await
     .map_err(|_| "Could not start agent".to_string())??;
@@ -148,7 +148,7 @@ pub async fn run(
                         _=>{emit(&mut stdout,&agent,&json!({"_tag":"LatticeHostResult","id":control.id,"ok":false,"error":{"code":"unsupported_host_command","message":"Supported host commands: status, apply, stop."}})).await?;continue;}
                     };
                     let owned=hub.clone();let root=core.root.clone();
-                    let result=tokio::task::spawn_blocking(move||owned.invoke(OWNER,CLIENT,&root,command)).await.map_err(|_|"Host command failed".to_string())?;
+                    let result=tokio::task::spawn_blocking(move||owned.invoke(OWNER,CLIENT,&root,command,None)).await.map_err(|_|"Host command failed".to_string())?;
                     let response=match result {
                         Ok(result)=>json!({"_tag":"LatticeHostResult","id":control.id,"command":control.command,"ok":true,"result":result}),
                         Err(_)=>json!({"_tag":"LatticeHostResult","id":control.id,"command":control.command,"ok":false,"error":{"code":"host_command_failed","message":"The checked host operation was refused or could not be completed."}}),

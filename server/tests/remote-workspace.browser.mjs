@@ -60,14 +60,16 @@ try {
   const githubTraffic = [];
   browsing.on("request", (request) => {
     const { hostname, pathname } = new URL(request.url());
-    if (["github.com", "api.github.com"].includes(hostname) && pathname.includes("/knightnemo/lattice-web-ui")) githubTraffic.push(request.url());
+    if (["github.com", "api.github.com"].includes(hostname) && pathname.includes("/lattice-writer/lattice-web-ui")) githubTraffic.push(request.url());
   });
   page.on("pageerror", (error) => errors.push(error.message));
   await page.goto(origin, { waitUntil: "domcontentloaded" });
   await page.getByLabel("Server access token").fill((await readFile(tokenPath, "utf8")).trim());
   await page.getByRole("button", { name: "Connect", exact: true }).click();
 
-  await page.getByText("Lattice-web-ui 0.5.0 is available on GitHub", { exact: true }).waitFor();
+  const hostUpdate = page.getByRole("region", { name: "Host update" });
+  await hostUpdate.getByText("Lattice-web-ui 0.5.0 is available.", { exact: true }).waitFor();
+  assert.equal(await hostUpdate.getByRole("button", { name: "Update host" }).count(), 0);
   assert.equal(await page.getByRole("button", { name: "Save and reload" }).count(), 0);
 
   if (engine === chromium) {
@@ -248,7 +250,7 @@ try {
   await settings.getByRole("button", { name: "Editor & builds" }).click();
   await settings.getByText("This host runs Lattice-web-ui 0.4.3. Version 0.5.0 is available on GitHub.").waitFor();
   assert.equal(await settings.getByRole("link", { name: "View release notes" }).getAttribute("href"),
-    "https://github.com/knightnemo/lattice-web-ui/releases/tag/v0.5.0");
+    "https://github.com/lattice-writer/lattice-web-ui/releases/tag/v0.5.0");
   await settings.getByRole("button", { name: "Save and reload" }).waitFor();
   await page.keyboard.press("Escape");
   await settings.waitFor({ state: "hidden" });

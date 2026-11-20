@@ -19,6 +19,7 @@ mod core_commands;
 mod device_pairing;
 mod dispatch;
 mod git_commands;
+mod host_update;
 mod literature_credentials;
 mod project_locks;
 mod server_session;

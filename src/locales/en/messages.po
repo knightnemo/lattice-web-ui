@@ -4627,6 +4627,10 @@ msgstr "Couldn’t reopen “{unopenedName}”: {unopenedReason}"
 msgid "Couldn’t reopen “{unopenedName}”. Its folder may have been moved or renamed"
 msgstr "Couldn’t reopen “{unopenedName}”. Its folder may have been moved or renamed"
 
+#: src/platform/headless-host-update-banner.tsx
+msgid "Couldn’t request the host update. Try again."
+msgstr "Couldn’t request the host update. Try again."
+
 #: src/canvas/status-save-state.tsx
 msgid "Couldn’t save"
 msgstr "Couldn’t save"
@@ -6849,6 +6853,10 @@ msgstr "Horizontal space"
 msgid "Host release"
 msgstr "Host release"
 
+#: src/platform/headless-host-update-banner.tsx
+msgid "Host update"
+msgstr "Host update"
+
 #: src/papers/bib-entry-dialog.tsx
 msgid "How the entry reads"
 msgstr "How the entry reads"
@@ -7953,9 +7961,13 @@ msgstr "Lattice update failed"
 msgid "Lattice workspace"
 msgstr "Lattice workspace"
 
-#: src/platform/headless-web-update.ts
-msgid "Lattice-web-ui {latestVersion} is available on GitHub"
-msgstr "Lattice-web-ui {latestVersion} is available on GitHub"
+#: src/platform/headless-host-update-banner.tsx
+msgid "Lattice-web-ui {latestVersion} is available."
+msgstr "Lattice-web-ui {latestVersion} is available."
+
+#: src/platform/headless-host-update-banner.tsx
+msgid "Lattice-web-ui {latestVersion} is ready to install."
+msgstr "Lattice-web-ui {latestVersion} is ready to install."
 
 #: src/platform/host-errors-setup.ts
 msgid "Lattice's managed {tool} failed user-level verification.\n"
@@ -11099,6 +11111,10 @@ msgstr "Preparing board editor"
 msgid "Preparing HTML preview…"
 msgstr "Preparing HTML preview…"
 
+#: src/platform/headless-host-update-banner.tsx
+msgid "Preparing Lattice-web-ui {latestVersion} in the background…"
+msgstr "Preparing Lattice-web-ui {latestVersion} in the background…"
+
 #: src/canvas/canvas-lazy-editors.tsx
 msgid "Preparing Markdown editor"
 msgstr "Preparing Markdown editor"
@@ -12334,6 +12350,10 @@ msgstr "Restarting now stops {running}."
 #: src/settings/agent-environment-settings.tsx
 msgid "Restarting the agent stops any running turns."
 msgstr "Restarting the agent stops any running turns."
+
+#: src/platform/headless-host-update-banner.tsx
+msgid "Restarting the host for Lattice-web-ui {latestVersion}…"
+msgstr "Restarting the host for Lattice-web-ui {latestVersion}…"
 
 #: src/settings/settings-dialog.tsx
 #: src/telemetry/app-updater.tsx
@@ -14741,6 +14761,10 @@ msgstr "The folder is not empty."
 msgid "The full PDF is rebuilding in the background. Page breaks, references and jumps to the source catch up when it finishes."
 msgstr "The full PDF is rebuilding in the background. Page breaks, references and jumps to the source catch up when it finishes."
 
+#: src/platform/headless-host-update-banner.tsx
+msgid "The host couldn’t install Lattice-web-ui {latestVersion}."
+msgstr "The host couldn’t install Lattice-web-ui {latestVersion}."
+
 #: src/papers/audit-messages.ts
 msgid "The inline reference agrees with the verified record."
 msgstr "The inline reference agrees with the verified record."
@@ -16192,6 +16216,14 @@ msgstr "Update applied"
 msgid "Update available"
 msgstr "Update available"
 
+#: src/platform/headless-host-update-banner.tsx
+msgid "Update failed. The host is back on {installedVersion}."
+msgstr "Update failed. The host is back on {installedVersion}."
+
+#: src/platform/headless-host-update-banner.tsx
+msgid "Update host"
+msgstr "Update host"
+
 #: src/telemetry/app-updater.tsx
 msgid "Update now"
 msgstr "Update now"
@@ -16505,7 +16537,7 @@ msgstr "View license"
 msgid "View original PDF"
 msgstr "View original PDF"
 
-#: src/platform/headless-web-update.ts
+#: src/platform/headless-host-update-banner.tsx
 #: src/settings/settings-dialog.tsx
 msgid "View release notes"
 msgstr "View release notes"
@@ -16561,6 +16593,10 @@ msgstr "Waiting for Google authorization…"
 #: src/google-workspace/workspace-operations.tsx
 msgid "Waiting for Google…"
 msgstr "Waiting for Google…"
+
+#: src/platform/headless-host-update-banner.tsx
+msgid "Waiting for open Agent sessions, terminals, and syncs to finish…"
+msgstr "Waiting for open Agent sessions, terminals, and syncs to finish…"
 
 #: src/platform/host-errors-overleaf.ts
 msgid "Waiting for Overleaf's live file tree before syncing moved files."
