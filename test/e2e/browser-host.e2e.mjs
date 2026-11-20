@@ -31,6 +31,8 @@ async function context(options = {}) {
 
 async function signInAsOwner(page, next = "/") {
   await page.goto(`${origin}/__gateway/login?next=${encodeURIComponent(next)}`);
+  // Owner sign-in sits in a disclosure, as on the v0.4.x landing page.
+  if (!(await page.locator("details").evaluate((node) => node.open))) await page.locator("summary").click();
   await page.fill("#token", token);
   await page.click("button[type=submit]");
   await page.waitForURL(`${origin}${next}`);
@@ -90,8 +92,10 @@ test("a paired phone reaches Lattice, and revoking it cuts it off", async () => 
   const owner = await context();
   const ownerPage = await owner.newPage();
   await signInAsOwner(ownerPage, "/__gateway/devices");
+  const created = ownerPage.waitForResponse((response) => response.url().endsWith("/__gateway/api/invites"));
   await ownerPage.getByRole("button", { name: "Pair a device" }).click();
-  const link = await ownerPage.locator(".qr input").inputValue();
+  const { url: link } = await (await created).json();
+  await ownerPage.locator(".headless-device-code img").waitFor();
   assert.match(link, new RegExp(`^${origin.replace(/[.]/g, "\\.")}/__gateway/pair#[0-9a-f]{48}$`));
   await shot(ownerPage, "e2e-invite");
 
@@ -113,8 +117,7 @@ test("a paired phone reaches Lattice, and revoking it cuts it off", async () => 
   const closed = new Promise((resolve) => bridge.on("close", resolve));
   await ownerPage.reload();
   const row = ownerPage.locator("li", { hasText: label });
-  await row.getByRole("button").click();
-  await row.getByRole("button").click(); // confirm
+  await row.getByRole("button", { name: "Revoke" }).click();
   await closed;
   const after = await phone.request.get(`${origin}/__lattice_session`);
   assert.equal(after.status(), 401);
