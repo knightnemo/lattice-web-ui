@@ -10,6 +10,9 @@
 // 4. On a phone, Lattice's columns get one panel with every view as a tab.
 // 5. The host's projects folder appears in Lattice's recent projects, so they
 //    open from Lattice's own project menu.
+// 6. Lattice gives a workspace to one tab at a time: a tab opened on another
+//    device takes it over. The tab it left keeps showing the workspace, and
+//    takes it back as soon as it is used again.
 (() => {
   "use strict";
 
@@ -91,6 +94,40 @@
     setTimeout(poll, 1500);
   }
   setTimeout(poll, 1500);
+
+  // Lattice covers a tab that another tab took the workspace from with a
+  // "open in another browser tab" notice. Here that tab instead keeps showing
+  // the workspace as it was, and takes the workspace back (by reloading, which
+  // resumes the same session) when it is shown, focused, tapped or typed in.
+  const REPLACED = new Set([
+    "This Lattice workspace is open in another browser tab.",
+    "此 Lattice 工作区已在另一个浏览器标签页中打开。",
+  ]);
+  let replaced = false;
+  function reclaim(event) {
+    if (!replaced || (event && event.isTrusted === false)) return;
+    if (event?.type === "visibilitychange" && document.visibilityState !== "visible") return;
+    if (event?.type === "focus" && event.target !== window) return;
+    if (event?.cancelable) { event.preventDefault(); event.stopImmediatePropagation(); }
+    replaced = false;
+    location.reload();
+  }
+  function noticeReplaced() {
+    const message = document.getElementById("lattice-browser-runtime-message");
+    if (replaced || !message || !REPLACED.has(message.textContent.trim())) return;
+    replaced = true;
+    const overlay = document.getElementById("lattice-browser-runtime-error");
+    if (overlay) {
+      // Transparent, so the workspace stays in view; it still takes every tap.
+      overlay.style.background = "transparent";
+      overlay.dataset.latticeGatewayReclaim = "";
+      for (const child of overlay.children) child.style.visibility = "hidden";
+    }
+  }
+  new MutationObserver(noticeReplaced).observe(document, { childList: true, subtree: true });
+  for (const type of ["pointerdown", "keydown"]) addEventListener(type, reclaim, { capture: true });
+  addEventListener("focus", reclaim);
+  document.addEventListener("visibilitychange", reclaim);
 
   // Lattice lists up to eight recent projects in its project menu and reads that
   // list once, when it starts. The host's projects are fetched right away and

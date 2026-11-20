@@ -83,8 +83,12 @@ container). Requests that come in over TCP never carry an identity.
 
 Pick a project from Lattice's own project menu, and it opens in the same tab.
 The gateway lists every project in `--projects-root` there, among the recent
-projects. Lattice lets only one tab hold a workspace, so opening the workspace
-on another device moves it to that device.
+projects.
+
+You can keep the workspace open on several devices. Lattice gives it to one
+tab at a time, so the device you use last has it. The others keep showing the
+workspace, and take it back as soon as you switch to them, tap or type. The
+reload that takes it back takes a second or two.
 
 ## Overleaf
 
