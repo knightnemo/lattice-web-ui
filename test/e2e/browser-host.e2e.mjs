@@ -133,6 +133,36 @@ test("a paired phone reaches Lattice, and revoking it cuts it off", async () => 
   await phone.close();
 });
 
+test("two devices share the workspace: the one used last has it", { skip: !project && "set LATTICE_E2E_PROJECT" }, async () => {
+  const notice = "#lattice-browser-runtime-error";
+  const mac = await context();
+  const macPage = await mac.newPage();
+  await signInAsOwner(macPage);
+  await macPage.locator(".cm-content").first().waitFor({ timeout: 40_000 });
+
+  const phone = await context({ viewport: { width: 390, height: 844 }, isMobile: true, hasTouch: true, deviceScaleFactor: 2 });
+  const phonePage = await phone.newPage();
+  await signInAsOwner(phonePage);
+  await phonePage.locator(".cm-content").first().waitFor({ timeout: 40_000 });
+
+  // The Mac's tab lost the workspace, but still shows it, with no notice.
+  await macPage.locator(notice).waitFor({ state: "attached", timeout: 20_000 });
+  assert.equal(await macPage.locator(`${notice} p`).evaluate((node) => getComputedStyle(node).visibility), "hidden");
+  assert.equal(await macPage.locator(notice).evaluate((node) => getComputedStyle(node).backgroundColor), "rgba(0, 0, 0, 0)");
+  await macPage.waitForTimeout(3000);
+  assert.equal(await phonePage.locator(notice).count(), 0, "an unused tab does not take the workspace back by itself");
+
+  // Using the Mac's tab takes it back; the phone's tab is now the one left behind.
+  await macPage.mouse.click(700, 450);
+  await macPage.waitForLoadState("load");
+  await macPage.locator(".cm-content").first().waitFor({ timeout: 40_000 });
+  await phonePage.locator(notice).waitFor({ state: "attached", timeout: 20_000 });
+  assert.equal(await macPage.locator(notice).count(), 0);
+  await shot(phonePage, "e2e-replaced-phone");
+  await mac.close();
+  await phone.close();
+});
+
 test("the Agent loads from its own origin through the gateway", { skip: (!process.env.LATTICE_E2E_AGENT_ORIGIN || !project || !tailnet) && "set LATTICE_E2E_AGENT_ORIGIN, LATTICE_E2E_TAILNET_ORIGIN and LATTICE_E2E_PROJECT" }, async () => {
   const agentOrigin = process.env.LATTICE_E2E_AGENT_ORIGIN;
   const ctx = await context();
