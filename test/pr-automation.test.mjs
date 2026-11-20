@@ -64,12 +64,14 @@ test("packaging uses the exact PR pin and requires its tag, commit and tree", as
     labels: [], changed_files: 1,
   };
   const object = { type: "commit", sha: pin.snapshotCommit };
-  const api = ({ filePin = pin, ref = { object }, tree = pin.tree, filename = "automation/release-source.json" } = {}) =>
+  const api = ({ filePin = pin, ref = { object }, tree = pin.tree, filename = "automation/release-source.json", hostKit = false } = {}) =>
     async (path) => {
       if (path === "/git/ref/heads/main") return { object: { type: "commit", sha: base } };
       if (path === "/pulls/2") return pull;
       if (path === "/pulls/2/files?per_page=100&page=1") return [{ filename }];
+      if (path === `/contents/host/lattice-releases.json?ref=${head}`) return hostKit ? { type: "file" } : null;
       assert.notEqual(filename, "CONTRIBUTING.md", "a docs-only PR should skip the snapshot lookup");
+      assert.equal(hostKit, false, "a host-kit PR has no companion snapshot to look up");
       if (path === `/contents/automation/release-source.json?ref=${head}`) {
         const bytes = Buffer.from(JSON.stringify(filePin));
         return { type: "file", encoding: "base64", size: bytes.length, content: bytes.toString("base64") };
@@ -86,9 +88,11 @@ test("packaging uses the exact PR pin and requires its tag, commit and tree", as
   await assert.rejects(plan(api({ tree: base }), headRequest, env), /wrong tree/);
   await plan(api(), headRequest, env);
   await plan(api({ filename: "CONTRIBUTING.md" }), headRequest, env);
+  await plan(api({ filename: "host/lattice-host.py", hostKit: true }), headRequest, env);
   assert.equal(await readFile(env.GITHUB_OUTPUT, "utf8"),
-    `head=${head}\nnumber=2\npackaging=true\ncompanion_sha=${pin.snapshotCommit}\n` +
-    `head=${head}\nnumber=2\npackaging=false\ncompanion_sha=\n`);
+    `head=${head}\nnumber=2\npackaging=true\ncompanion_sha=${pin.snapshotCommit}\nlayout=companion\n` +
+    `head=${head}\nnumber=2\npackaging=false\ncompanion_sha=\nlayout=companion\n` +
+    `head=${head}\nnumber=2\npackaging=true\ncompanion_sha=\nlayout=host-kit\n`);
 });
 
 test("the required CI result belongs to current main and the exact open PR head", async (t) => {

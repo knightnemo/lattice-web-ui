@@ -31,6 +31,7 @@ jobs:
       number: ${{ steps.plan.outputs.number }}
       packaging: ${{ steps.plan.outputs.packaging }}
       companion_sha: ${{ steps.plan.outputs.companion_sha }}
+      layout: ${{ steps.plan.outputs.layout }}
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
         with:
@@ -70,6 +71,7 @@ jobs:
           path: companion
           persist-credentials: false
       - name: Run portable tests and syntax checks
+        if: needs.plan.outputs.layout != 'host-kit'
         working-directory: proposal
         run: |
           mkdir -p "$RUNNER_TEMP/lattice-pr"
@@ -78,12 +80,39 @@ jobs:
           bash -n scripts/build-linux.sh
           node --test test/*.test.mjs | tee "$RUNNER_TEMP/lattice-pr/tests.tap"
         shell: bash
+      - name: Test the gateway and host kit
+        if: needs.plan.outputs.layout == 'host-kit'
+        working-directory: proposal
+        run: |
+          mkdir -p "$RUNNER_TEMP/lattice-pr"
+          git show --check --format= HEAD
+          bash -n scripts/package.sh
+          cargo fmt --manifest-path gateway/Cargo.toml --check
+          cargo clippy --locked --manifest-path gateway/Cargo.toml --all-targets -- -D warnings
+          cargo test --locked --manifest-path gateway/Cargo.toml
+          cargo build --locked --release --manifest-path gateway/Cargo.toml
+          python3 test/host_kit.py
+          LATTICE_GATEWAY_BINARY="$PWD/gateway/target/release/lattice-gateway" \
+            node --test test/*.test.mjs | tee "$RUNNER_TEMP/lattice-pr/tests.tap"
+        shell: bash
       - name: Check plugin archive
         if: needs.plan.outputs.packaging == 'true'
         working-directory: proposal
         run: |
           node scripts/pack-plugin.mjs plugin "$RUNNER_TEMP/lattice-plugin-pr.zip"
           unzip -t "$RUNNER_TEMP/lattice-plugin-pr.zip"
+      - name: Check Linux host kit
+        if: needs.plan.outputs.layout == 'host-kit' && needs.plan.outputs.packaging == 'true'
+        working-directory: proposal
+        run: |
+          LATTICE_GATEWAY_BINARY="$PWD/gateway/target/release/lattice-gateway" bash scripts/package.sh "$RUNNER_TEMP/lattice-pack"
+          cd "$RUNNER_TEMP/lattice-pack"
+          sha256sum --check SHA256SUMS
+          for archive in lattice-remote-host-*.tar.gz; do
+            tar -tzf "$archive" | sort > "$RUNNER_TEMP/lattice-pr/host-kit-contents.txt"
+            tar -xOzf "$archive" --wildcards '*/bin/lattice-gateway' > "$RUNNER_TEMP/gateway" && chmod +x "$RUNNER_TEMP/gateway"
+            "$RUNNER_TEMP/gateway" --version
+          done
       - name: Check release source kit
         if: needs.plan.outputs.companion_sha != ''
         working-directory: proposal
@@ -98,12 +127,14 @@ jobs:
           HEAD_SHA: ${{ needs.plan.outputs.head }}
           PACKAGING: ${{ needs.plan.outputs.packaging }}
           COMPANION_SHA: ${{ needs.plan.outputs.companion_sha }}
+          LAYOUT: ${{ needs.plan.outputs.layout }}
         run: |
           mkdir -p "$RUNNER_TEMP/lattice-pr"
           {
             printf 'head=%s\n' "$HEAD_SHA"
             printf 'plugin_packaging_selected=%s\n' "$PACKAGING"
             printf 'companion=%s\n' "$COMPANION_SHA"
+            printf 'layout=%s\n' "$LAYOUT"
           } >> "$RUNNER_TEMP/lattice-pr/metadata.txt"
       - name: Upload verification evidence
         if: always()
