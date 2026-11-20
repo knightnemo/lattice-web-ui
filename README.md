@@ -33,11 +33,10 @@ phone / laptop ── HTTPS ── lattice-gateway ── Lattice (browser-host 
 
 ## Watch the film
 
-*One Lattice, Every Screen* (2:13) shows what the plugin is for. A paper is
-edited on a phone and compiled on the host. It shows the two ways in, all of
-Lattice in a browser tab, the one-panel layout on a phone, a second screen
-taking the workspace over, a paired screen revoked, and the host updated with
-one click.
+*One Lattice, Every Screen* (2:13) follows a paper from a phone edit to a
+PDF built on the Linux host. It shows Tailscale access, device pairing and
+revocation, the phone layout, handing the workspace to another screen, and
+updating the host from the browser.
 
 https://github.com/user-attachments/assets/07c4b86b-2a65-447f-a107-54e75da1877e
 
