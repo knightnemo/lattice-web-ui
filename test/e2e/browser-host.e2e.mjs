@@ -36,6 +36,17 @@ async function signInAsOwner(page, next = "/") {
   await page.waitForURL(`${origin}${next}`);
 }
 
+/** Open the e2e project in a workspace of its own. "/" would reuse whichever
+ *  workspace was opened last, and Lattice lets only one tab hold a workspace. */
+async function openProject(page) {
+  await signInAsOwner(page, "/__gateway/projects");
+  const name = project.split("/").filter(Boolean).at(-1);
+  await page.locator("li", { hasText: name }).getByRole("button").click();
+  await page.waitForURL(/\/\?entry=/, { timeout: 40_000 });
+  await page.locator(".cm-content").first().waitFor({ timeout: 40_000 });
+  return name;
+}
+
 async function shot(page, name) {
   if (shots) await page.screenshot({ path: join(shots, `${name}.png`) });
 }
@@ -55,12 +66,8 @@ test("the owner opens a project, edits it, and the edit reaches the disk", { ski
   const page = await ctx.newPage();
   const errors = [];
   page.on("pageerror", (error) => errors.push(error.message));
-  await signInAsOwner(page, "/__gateway/projects");
-  const name = project.split("/").filter(Boolean).at(-1);
-  await page.locator("li", { hasText: name }).getByRole("button").click();
   // Lattice opens the project in a new workspace and the tab follows it.
-  await page.waitForURL(/\/\?entry=/, { timeout: 40_000 });
-  await page.locator(".cm-content").first().waitFor({ timeout: 30_000 });
+  const name = await openProject(page);
   await page.getByText(name, { exact: true }).first().waitFor();
   const marker = `% edited through lattice-gateway ${Date.now()}`;
   await page.locator(".cm-content").first().click();
@@ -115,12 +122,12 @@ test("a paired phone reaches Lattice, and revoking it cuts it off", async () => 
   await phone.close();
 });
 
-test("the Agent loads from its own origin through the gateway", { skip: !process.env.LATTICE_E2E_AGENT_ORIGIN && "set LATTICE_E2E_AGENT_ORIGIN" }, async () => {
+test("the Agent loads from its own origin through the gateway", { skip: (!process.env.LATTICE_E2E_AGENT_ORIGIN || !project) && "set LATTICE_E2E_AGENT_ORIGIN and LATTICE_E2E_PROJECT" }, async () => {
   const agentOrigin = process.env.LATTICE_E2E_AGENT_ORIGIN;
   const ctx = await context();
   const page = await ctx.newPage();
-  await signInAsOwner(page);
-  await page.locator(".cm-content").first().waitFor({ timeout: 40_000 });
+  // The Agent refuses projects in hidden folders: use an ordinary one.
+  await openProject(page);
   await page.evaluate(() => {
     const title = [...document.querySelectorAll('[data-trellis-part="tab-title"]')].find((t) => t.textContent.trim() === "Agent");
     (title?.closest('[data-trellis-part="tab"]') || title?.parentElement)?.click();
@@ -128,10 +135,20 @@ test("the Agent loads from its own origin through the gateway", { skip: !process
   const frame = page.frameLocator(`iframe[src^="${agentOrigin}/"]`);
   await frame.getByRole("textbox").first().waitFor({ timeout: 40_000 });
   if (process.env.LATTICE_E2E_AGENT_TURN) {
-    // Runs one turn with the host's signed-in agent CLI.
-    await frame.getByRole("textbox").first().fill("Reply with exactly the word GATEWAY-OK and nothing else. Do not read or edit any files.");
+    // Runs one turn with the host's signed-in agent CLI. The project's thread
+    // keeps earlier turns, so look for an answer after the newest prompt.
+    const prompt = `Reply with exactly the word GATEWAY-OK and nothing else. Do not read or edit any files. (${Date.now()})`;
+    await frame.getByRole("textbox").first().fill(prompt);
     await page.keyboard.press("Enter");
-    await frame.getByText("GATEWAY-OK", { exact: true }).waitFor({ timeout: 180_000 });
+    await assert.doesNotReject(async () => {
+      for (let i = 0; i < 90; i++) {
+        const lines = (await frame.locator("body").innerText()).split("\n").map((line) => line.trim());
+        const asked = lines.lastIndexOf(prompt);
+        if (asked >= 0 && lines.slice(asked + 1).includes("GATEWAY-OK")) return;
+        await page.waitForTimeout(2000);
+      }
+      throw new Error("the Agent did not answer within three minutes");
+    });
   }
   await shot(page, "e2e-agent");
   await ctx.close();
@@ -175,7 +192,7 @@ test("the owner's terminal runs a shell on the host", async () => {
 test("on a phone, Lattice gets one panel with every view as a tab", { skip: !project && "set LATTICE_E2E_PROJECT" }, async () => {
   const phone = await context({ viewport: { width: 390, height: 844 }, isMobile: true, hasTouch: true, deviceScaleFactor: 2 });
   const page = await phone.newPage();
-  await signInAsOwner(page);
+  await openProject(page);
   // The layout switch reloads the page once.
   await page.waitForTimeout(12_000);
   await page.locator(".cm-content").first().waitFor({ timeout: 30_000 });
@@ -186,7 +203,7 @@ test("on a phone, Lattice gets one panel with every view as a tab", { skip: !pro
   // The desktop gets its own layout back.
   const desk = await context();
   const deskPage = await desk.newPage();
-  await signInAsOwner(deskPage);
+  await openProject(deskPage);
   await deskPage.waitForTimeout(12_000);
   const panels = await deskPage.evaluate(() => {
     const key = Object.keys(localStorage).find((k) => k.startsWith("lattice.trellis-layout.v1:"));

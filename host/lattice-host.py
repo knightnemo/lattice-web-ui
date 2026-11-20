@@ -178,6 +178,15 @@ def find_xdotool(root: Path) -> tuple[str | None, str | None]:
     return None, None
 
 
+def hidden_under_home(path: Path, home: Path) -> bool:
+    """True for a path below a dot-folder of HOME, where Lattice's Agent will not run."""
+    try:
+        relative = path.expanduser().resolve().relative_to(home.resolve())
+    except ValueError:
+        return False
+    return any(part.startswith(".") for part in relative.parts)
+
+
 def find_tlmgr(home: Path) -> str | None:
     """tlmgr of a TeX tree the host user can write to (TinyTeX, or TeX Live in user mode)."""
     candidates = [shutil.which("tlmgr")] + sorted(glob.glob(str(home / ".TinyTeX/bin/*/tlmgr")))
@@ -505,6 +514,9 @@ def cmd_install(args: argparse.Namespace) -> None:
         "terminal": args.enable_terminal,
         "shell": os.environ.get("SHELL") or "/bin/bash",
     }
+    if config["projects_root"] and hidden_under_home(Path(config["projects_root"]), home):
+        say("the projects folder is inside a hidden folder of your home. Lattice's Agent refuses projects there "
+            "(it cannot protect their .bib files); move them to an ordinary folder such as ~/lattice-projects.")
     config["xdotool"], config["xdotool_library_path"] = find_xdotool(root)
     config["tlmgr"] = find_tlmgr(home)
     if not config["tlmgr"]:

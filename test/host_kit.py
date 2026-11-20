@@ -111,6 +111,12 @@ class HostKitTest(unittest.TestCase):
         self.assertIn(f"--terminal --terminal-shell", unit)
         self.assertIn(f"--terminal-cwd {Path('~/papers').expanduser()}", unit)
 
+    def test_warns_about_projects_in_hidden_folders(self):
+        home = Path(self.temp.name) / "home"
+        self.assertTrue(self.tool.hidden_under_home(home / ".local/share/x/projects", home))
+        self.assertFalse(self.tool.hidden_under_home(home / "lattice-projects", home))
+        self.assertFalse(self.tool.hidden_under_home(Path("/srv/papers"), home))
+
     def test_refuses_a_file_whose_checksum_does_not_match(self):
         self.releases[0]["sha256"] = "0" * 64
         self.manifest.write_text(json.dumps({"default": "0.18.0", "releases": self.releases}))
