@@ -14,8 +14,9 @@ browser ── HTTPS ── Tailscale Serve or Caddy ── lattice-gateway ─�
 
 - Linux on x86-64 with systemd user services. Run `loginctl enable-linger "$USER"`
   once so the services keep running after you log out.
-- Xvfb (`sudo apt install xvfb`). Without sudo, `--fetch-xvfb` unpacks Ubuntu's
-  package into the host directory instead.
+- Xvfb and xdotool (`sudo apt install xvfb xdotool`). Without sudo,
+  `--fetch-xvfb` unpacks Ubuntu's packages into the host directory instead.
+- bubblewrap (`bwrap`) for Lattice's Agent.
 - `dbus-run-session` (package `dbus`) and the WebKitGTK 4.1 runtime that Lattice's
   AppImage uses (`libwebkit2gtk-4.1-0`).
 - TeX with `latexmk` if you compile on this machine. Agent CLIs such as Claude
@@ -92,6 +93,50 @@ When you open a recent project from Lattice's title menu, Lattice tries to
 open the new workspace in "the default browser". On the host, that request
 goes to the gateway, and the tab you were just using follows it.
 
+## Use the Agent
+
+Lattice 0.19 runs its Agent on Linux, inside bubblewrap (`bwrap` must be
+installed and able to create namespaces). The Agent's UI has an origin of its
+own. Give it a second HTTPS port on the same host:
+
+```sh
+./lattice-host install --public-origin https://workspace.example.ts.net:10443 \
+  --agent-origin https://workspace.example.ts.net:10444
+tailscale serve --bg --https=10444 http://127.0.0.1:18491
+```
+
+The gateway serves the Agent there with the same sign-in as the workspace.
+It forwards only to a port that a process of the installed Lattice listens
+on. The agent CLIs (Claude Code, Codex) use their sign-in under `HOME`.
+
+## Native windows on the host
+
+Some Lattice features open a native window, such as Overleaf sign-in. On the
+host, those windows land on the hidden display. When one opens, the owner
+sees a banner at the top of the workspace. **Host windows**
+(`/__gateway/screen`) then shows that window: click it, type into it, and
+use the Enter, Tab and Esc keys. This needs `xdotool`, which `--fetch-xvfb`
+unpacks along with Xvfb. Only the owner can use this page.
+
+GTK's folder picker is unreliable on a display without a desktop, so open
+projects from the Projects page instead.
+
+## TeX packages
+
+Lattice has no one-click package install on Linux yet. If the host's TeX is
+writable by this user (TinyTeX, or TeX Live in user mode), the gateway steps
+in for the owner:
+
+- Lattice's own **Install** button, shown after a build reports a missing
+  `.sty`, installs the package with `tlmgr` on the host.
+- The **TeX packages** page (`/__gateway/tex`) does the same for any file or
+  package name.
+
+The gateway resolves file names with `tlmgr search --global --file`. If
+`tlmgr` is too old to install anything, it updates itself first with
+`tlmgr update --self`. With a system-wide TeX Live, install packages with
+your distribution instead.
+
 ## How the page reaches you
 
 Lattice 0.18's browser host only starts at `http://127.0.0.1:18452`. The
@@ -119,21 +164,17 @@ releases, paired devices and the token.
 
 ## Known limits
 
-These come from Lattice 0.18 itself on Linux and from its browser host. They
-are tracked in [leo1oel/lattice#1190](https://github.com/leo1oel/lattice/issues/1190).
+These come from Lattice itself and are tracked in
+[leo1oel/lattice#1190](https://github.com/leo1oel/lattice/issues/1190).
 
-- **Not on Linux yet:** the Agent, one-click TeX package installs, and the
-  terminal in browser tabs. Install missing TeX packages on the host with
-  `tlmgr` or your distribution.
-- **Native windows:** these open on the hidden display and cannot be used.
-  This covers "Open folder…" (use the Projects page instead) and Overleaf
-  sign-in.
-- **One tab per workspace:** a second tab or device on the same workspace
+- **No terminal in browser tabs.** Lattice allows the terminal only in its own
+  native window. That is a deliberate security decision.
+- **One tab per workspace.** A second tab or device on the same workspace
   takes it over. The first tab then says the workspace is open elsewhere.
   Reload it to get a workspace of its own.
-- **Phone layout:** at phone width the editor is hard to reach. Reading the
+- **Phone layout.** At phone width the editor is hard to reach. Reading the
   PDF works.
-- **Unsaved text:** if Lattice restarts, text typed in the last second before
-  the restart is lost. Autosave keeps the rest.
-- **Memory:** every open workspace keeps a hidden WebKit view on the host,
+- **Unsaved text.** If Lattice restarts, text typed in the last second before
+  the restart is lost. Autosave keeps everything else.
+- **Memory.** Every open workspace keeps a hidden WebKit view on the host,
   about 200 MB each.

@@ -1,7 +1,20 @@
 {
   "comment": "Lattice releases this host kit is tested with. Each sha256 was computed from the published AppImage and reviewed in a pull request; lattice-host refuses any file that does not match. frontendRewrite lists how many loopback-only expressions lattice-gateway rewrites in that release's page; lattice-host refuses a release whose page differs.",
-  "default": "0.18.0",
+  "default": "0.19.0",
   "releases": [
+    {
+      "version": "0.19.0",
+      "url": "https://github.com/leo1oel/lattice/releases/download/v0.19.0/Lattice_0.19.0_amd64.AppImage",
+      "sha256": "8f41b31926092a2b5c443f201590857e42cd2f7187b7fa0ef1306224b11c19f7",
+      "size": 209144312,
+      "frontendRewrite": {
+        "http": 4,
+        "ws": 2,
+        "protocol": 1,
+        "hostname": 2,
+        "port": 1
+      }
+    },
     {
       "version": "0.18.0",
       "url": "https://github.com/leo1oel/lattice/releases/download/v0.18.0/Lattice_0.18.0_amd64.AppImage",

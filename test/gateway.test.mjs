@@ -193,3 +193,16 @@ test("hands the address Lattice asked to open to one signed-in tab, once", { ski
   assert.deepEqual(projects.projects.map((p) => [p.name, p.hasTex]), [["paper", true]]);
   assert.equal((await fetch(`${base}/__gateway/api/projects`)).status, 401);
 });
+
+test("optional host features stay off until configured, and the Agent entrance only serves Lattice", { skip }, async () => {
+  const owner = cookieOf(await post("/__gateway/api/login", { token }));
+  const config = await (await fetch(`${base}/__gateway/api/config`, { headers: { Cookie: owner } })).json();
+  assert.deepEqual(config, { agentOrigin: null, tex: false, screen: false });
+  assert.equal((await fetch(`${base}/__gateway/api/config`)).status, 401);
+  assert.equal((await post("/__gateway/api/agent-port", { port: 1 }, owner)).status, 404);
+  assert.equal((await post("/__gateway/api/tex-install", { name: "lipsum" }, owner)).status, 404);
+  assert.equal((await fetch(`${base}/__gateway/api/screen.png`, { headers: { Cookie: owner } })).status, 404);
+  assert.equal((await post("/__gateway/api/screen/input", { type: "key", key: "Return" }, owner)).status, 404);
+  const state = await (await fetch(`${base}/__gateway/api/screen/state`, { headers: { Cookie: owner } })).json();
+  assert.deepEqual(state, { shared: false, windows: false });
+});

@@ -114,3 +114,40 @@ test("a paired phone reaches Lattice, and revoking it cuts it off", async () => 
   await owner.close();
   await phone.close();
 });
+
+test("the Agent loads from its own origin through the gateway", { skip: !process.env.LATTICE_E2E_AGENT_ORIGIN && "set LATTICE_E2E_AGENT_ORIGIN" }, async () => {
+  const agentOrigin = process.env.LATTICE_E2E_AGENT_ORIGIN;
+  const ctx = await context();
+  const page = await ctx.newPage();
+  await signInAsOwner(page);
+  await page.locator(".cm-content").first().waitFor({ timeout: 40_000 });
+  await page.evaluate(() => {
+    const title = [...document.querySelectorAll('[data-trellis-part="tab-title"]')].find((t) => t.textContent.trim() === "Agent");
+    (title?.closest('[data-trellis-part="tab"]') || title?.parentElement)?.click();
+  });
+  const frame = page.frameLocator(`iframe[src^="${agentOrigin}/"]`);
+  await frame.getByRole("textbox").first().waitFor({ timeout: 40_000 });
+  if (process.env.LATTICE_E2E_AGENT_TURN) {
+    // Runs one turn with the host's signed-in agent CLI.
+    await frame.getByRole("textbox").first().fill("Reply with exactly the word GATEWAY-OK and nothing else. Do not read or edit any files.");
+    await page.keyboard.press("Enter");
+    await frame.getByText("GATEWAY-OK", { exact: true }).waitFor({ timeout: 180_000 });
+  }
+  await shot(page, "e2e-agent");
+  await ctx.close();
+});
+
+test("host windows and TeX installs are for the owner only", async () => {
+  const ctx = await context();
+  const page = await ctx.newPage();
+  await signInAsOwner(page);
+  const owner = await ctx.request.get(`${origin}/__gateway/api/screen/state`);
+  assert.equal(owner.status(), 200);
+  const stranger = await context();
+  assert.equal((await stranger.request.get(`${origin}/__gateway/api/screen.png`)).status(), 401);
+  assert.equal((await stranger.request.post(`${origin}/__gateway/api/tex-install`, { data: { name: "lipsum" }, headers: { Origin: origin } })).status(), 401);
+  const bad = await ctx.request.post(`${origin}/__gateway/api/tex-install`, { data: { name: "a;rm -rf" }, headers: { Origin: origin } });
+  assert.ok([400, 404].includes(bad.status()), "a malformed package name is refused before tlmgr runs");
+  await stranger.close();
+  await ctx.close();
+});
