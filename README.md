@@ -24,6 +24,9 @@ phone / laptop ── HTTPS ── lattice-gateway ── Lattice (browser-host 
   without anyone porting code.
 - **One window, nothing added.** Every project opens in the same Lattice
   window. Apart from sign-in, there is no page or control that is not Lattice.
+- **Updates from the workspace.** A new release shows up as a Lattice
+  notification for the owner. Select **Update**, and the host updates itself,
+  and goes back if the new version does not start.
 - **Sign-in as in v0.4.x.** On your tailnet, Tailscale vouches for you and
   Lattice opens directly. From the internet, the owner signs in with the access
   token and phones pair by scanning a QR code.

@@ -130,6 +130,24 @@ into the host directory if it is not installed.
 
 ## Update and roll back
 
+**From the browser.** When a newer stable lattice-web-ui release is out, the
+owner sees it in the workspace as a Lattice notification: **Lattice-web-ui
+0.9.1 is available**, with **Update** and **Later**.
+
+- **Checking.** The host checks GitHub's latest release every six hours, using
+  the `lattice-update-check.timer` unit.
+- **Update.** The host downloads the release, checks its SHA-256 and installs
+  it. The workspace reconnects, and the page reloads when it is done.
+- **If it fails.** When the new gateway does not answer within 90 seconds, the
+  host goes back to the kit it had, and the notification says why.
+- **Later.** Hides the notification until a newer release comes out.
+
+Paired devices see none of this. Only a host installed from a release kit
+updates itself this way. The kit it runs is kept in
+`~/.local/share/lattice-host/kits`.
+
+**From a shell:**
+
 ```sh
 ./lattice-host status
 ./lattice-host update --to 0.19.0   # a version pinned in lattice-releases.json

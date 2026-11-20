@@ -16,6 +16,7 @@ mod bridge;
 mod proxy;
 mod store;
 mod tex;
+mod update;
 
 use clap::Parser;
 use std::net::SocketAddr;
@@ -62,6 +63,10 @@ pub struct Args {
     /// Folder whose subfolders the Projects page offers to open in Lattice.
     #[arg(long)]
     pub projects_root: Option<PathBuf>,
+    /// Directory lattice-host and the gateway share for the owner's update
+    /// prompt: what lattice-host found, and the owner's Update or Later.
+    #[arg(long)]
+    pub update_dir: Option<PathBuf>,
     /// Second entrance that serves Lattice's Agent UI (Synara) on an origin of its own.
     #[arg(long)]
     pub agent_listen: Option<SocketAddr>,
