@@ -526,7 +526,14 @@ async fn handle(app: Arc<App>, entrance: Entrance, req: Request<Incoming>) -> Re
                 );
             }
             let projects = list_projects(app.projects_root.as_deref());
-            return json_response(StatusCode::OK, json!({ "projects": projects }));
+            let root = app
+                .projects_root
+                .as_deref()
+                .map(|root| root.to_string_lossy().into_owned());
+            return json_response(
+                StatusCode::OK,
+                json!({ "root": root, "projects": projects }),
+            );
         }
         (&Method::GET, "/__gateway/vendor/inter-latin-wght-normal.woff2") => {
             return asset("font/woff2", INTER_LATIN)
