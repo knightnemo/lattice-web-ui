@@ -16,6 +16,8 @@
 // 7. The owner sees a new lattice-web-ui release as one of Lattice's own
 //    notifications, and can update the host from it. Lattice's own "new Linux
 //    version" notice is answered with nothing: lattice-web-ui pins Lattice.
+// 8. The workspace carries lattice-web-ui's name and icon: in the browser tab,
+//    on a phone's home screen, and on Lattice's welcome screen.
 (() => {
   "use strict";
 
@@ -129,7 +131,38 @@
       for (const child of overlay.children) child.style.visibility = "hidden";
     }
   }
-  new MutationObserver(noticeReplaced).observe(document, { childList: true, subtree: true });
+  // When the gateway restarts (an update), Lattice loses its connection and
+  // shows "disconnected" with a Reload button. Lattice keeps the workspace for
+  // five seconds, so reload as soon as the gateway answers again: the tab
+  // resumes its own workspace instead of starting a new one.
+  const DISCONNECTED = new Set([
+    "The local Lattice app disconnected.",
+    "与本地 Lattice 应用的连接已断开。",
+  ]);
+  let reconnecting = false;
+  function noticeDisconnected() {
+    const message = document.getElementById("lattice-browser-runtime-message");
+    if (reconnecting || !message || !DISCONNECTED.has(message.textContent.trim())) return;
+    const STAMP = "lattice-gateway.reconnected-at";
+    let last = 0;
+    try { last = Number(sessionStorage.getItem(STAMP) || 0); } catch { /* storage unavailable */ }
+    if (Date.now() - last < 15000) return; // reloaded a moment ago: leave the Reload button to the person
+    reconnecting = true;
+    const deadline = Date.now() + 120000;
+    const poll = async () => {
+      try {
+        const health = await (await fetch("/__gateway/health", { cache: "no-store" })).json();
+        if (health.lattice) {
+          try { sessionStorage.setItem(STAMP, String(Date.now())); } catch { /* storage unavailable */ }
+          location.reload();
+          return;
+        }
+      } catch { /* still restarting */ }
+      if (Date.now() < deadline) setTimeout(poll, 400);
+    };
+    poll();
+  }
+  new MutationObserver(() => { noticeReplaced(); noticeDisconnected(); }).observe(document, { childList: true, subtree: true });
   for (const type of ["pointerdown", "keydown"]) addEventListener(type, reclaim, { capture: true });
   addEventListener("focus", reclaim);
   document.addEventListener("visibilitychange", reclaim);
@@ -473,6 +506,66 @@
         setInterval(check, 30 * 60 * 1000);
       })
       .catch(() => {});
+  })();
+
+  // lattice-web-ui's name and icon. Lattice's own links are later in the page
+  // than this script, so they are swapped once the page is parsed.
+  (() => {
+    const NAME = "Lattice-web-ui";
+    const LINKS = [
+      ["icon", "/__gateway/brand/logo.svg", "image/svg+xml"],
+      ["icon", "/__gateway/brand/favicon-32.png", "image/png"],
+      ["apple-touch-icon", "/__gateway/brand/apple-touch-icon.png"],
+      ["manifest", "/__gateway/brand/manifest.webmanifest"],
+    ];
+    function brandHead() {
+      for (const node of document.querySelectorAll('link[rel~="icon"], link[rel="apple-touch-icon"], link[rel="manifest"]')) {
+        if (!node.dataset.latticeGateway) node.remove();
+      }
+      if (document.querySelector("link[data-lattice-gateway]")) return;
+      for (const [rel, href, type] of LINKS) {
+        const link = document.createElement("link");
+        link.rel = rel;
+        link.href = href;
+        if (type) link.type = type;
+        link.dataset.latticeGateway = "brand";
+        document.head.append(link);
+      }
+      const meta = document.createElement("meta");
+      meta.name = "apple-mobile-web-app-title";
+      meta.content = NAME;
+      meta.dataset.latticeGateway = "brand";
+      document.head.append(meta);
+    }
+    // "Lattice" alone, or after a separator, is the app's name; a project's own name is left alone.
+    const renamed = (title) => title === "Lattice" ? NAME : title.replace(/(\s[—–-]\s)Lattice$/, `$1${NAME}`);
+    function brandTitle() {
+      const next = renamed(document.title);
+      if (next !== document.title) document.title = next;
+    }
+    // On the welcome screen, the mark and the heading.
+    const style = document.createElement("style");
+    style.dataset.latticeGateway = "brand";
+    style.textContent = `
+      .welcome-content > .brand-mark { background: url("/__gateway/brand/logo.svg") center / 100% 100% no-repeat; border: 0; box-shadow: none; }
+      .welcome-content > .brand-mark > svg { visibility: hidden; }
+    `;
+    function brandWelcome() {
+      const heading = document.querySelector(".welcome-content > h1");
+      const text = heading?.firstChild;
+      // The text node itself, so React keeps its own node and never redraws it.
+      if (text && text.nodeType === Node.TEXT_NODE && text.nodeValue === "Lattice") text.nodeValue = NAME;
+    }
+    const start = () => {
+      document.head.append(style);
+      brandHead();
+      brandTitle();
+      brandWelcome();
+      new MutationObserver(() => { brandTitle(); brandWelcome(); })
+        .observe(document.documentElement, { childList: true, subtree: true, characterData: true });
+    };
+    if (document.readyState === "loading") document.addEventListener("DOMContentLoaded", start, { once: true });
+    else start();
   })();
 
 })();

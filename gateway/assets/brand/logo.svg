@@ -1,0 +1,17 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="192" height="192" viewBox="0 0 192 192" fill="none">
+  <!-- lattice-web-ui: Lattice's woven mark inside a browser window. -->
+  <rect x="8" y="8" width="176" height="176" rx="40" fill="#f7f2e8"/>
+  <rect x="8.5" y="8.5" width="175" height="175" rx="39.5" fill="none" stroke="#23211e" stroke-opacity="0.12"/>
+  <rect x="32.5" y="37.5" width="127" height="119" rx="20" fill="#fdf9ef" stroke="#424d23" stroke-width="7"/>
+  <path d="M32.5 64.5H159.5" stroke="#424d23" stroke-width="5"/>
+  <circle cx="49" cy="51.5" r="4" fill="#4e5c1d"/>
+  <circle cx="62" cy="51.5" r="4" fill="#89984c"/>
+  <g>
+    <path d="M85.75 83.07L123.93 121.25" stroke="#52622b" stroke-width="12.5" stroke-linecap="round"/>
+    <path d="M68.07 100.75L106.25 138.93" stroke="#52622b" stroke-width="12.5" stroke-linecap="round"/>
+    <path d="M106.25 83.07L68.07 121.25" stroke="#89984c" stroke-width="12.5" stroke-linecap="round"/>
+    <path d="M123.93 100.75L85.75 138.93" stroke="#89984c" stroke-width="12.5" stroke-linecap="round"/>
+    <path d="M89.81 87.14L102.19 99.51" stroke="#52622b" stroke-width="12.5" stroke-linecap="butt"/>
+    <path d="M89.81 122.49L102.19 134.86" stroke="#52622b" stroke-width="12.5" stroke-linecap="butt"/>
+  </g>
+</svg>

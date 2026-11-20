@@ -1,5 +1,5 @@
 <div align="center">
-  <img src="docs/assets/lattice-web-ui.png" alt="" width="96" height="96">
+  <img src="gateway/assets/brand/logo.svg" alt="" width="96" height="96">
   <h1>Lattice-web-ui</h1>
   <p>Use the Lattice on your Linux machine from your phone, tablet or another computer.</p>
   <p>

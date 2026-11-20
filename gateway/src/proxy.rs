@@ -242,6 +242,7 @@ pub async fn forward(
     principal: String,
     revocations: broadcast::Receiver<String>,
     bridge: &Bridge,
+    hold: Option<Box<dyn std::any::Any + Send>>,
 ) -> Response<Body> {
     let path = req
         .uri()
@@ -285,6 +286,7 @@ pub async fn forward(
             public_origin,
             principal,
             revocations,
+            hold,
         )
         .await;
     }
@@ -346,6 +348,7 @@ async fn tunnel(
     public_origin: &str,
     principal: String,
     mut revocations: broadcast::Receiver<String>,
+    hold: Option<Box<dyn std::any::Any + Send>>,
 ) -> Response<Body> {
     let Ok(stream) = TcpStream::connect(upstream.addr).await else {
         return bad_gateway();
@@ -370,6 +373,8 @@ async fn tunnel(
     }
     let upstream_upgrade = hyper::upgrade::on(&mut response);
     tokio::spawn(async move {
+        // Whatever the caller ties to this connection lives as long as it does.
+        let _hold = hold;
         let (Ok(client), Ok(server)) = tokio::join!(client_upgrade, upstream_upgrade) else {
             return;
         };
