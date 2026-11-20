@@ -1,17 +1,15 @@
 // Loaded by lattice-gateway before Lattice's own scripts on the workspace page.
-// 1. When Lattice opens another project, it hands the new address to the host's
-//    opener instead of this tab. The gateway keeps that address for a minute;
-//    the tab the person was just using claims it and follows it.
-// 2. A project picked on the gateway's Projects page is opened through Lattice's
-//    own "open project in a new window" command once the page is connected.
-// 3. Lattice's Agent runs on its own loopback port. The gateway serves it on a
+// It adds nothing to the page; it only adapts Lattice to running on a remote host:
+// 1. Lattice's "open in a browser" requests (a new workspace, the plugin's
+//    Remote devices command) reach the host's opener; the gateway keeps them
+//    for a minute and the tab the person was just using follows them.
+// 2. Lattice's Agent runs on its own loopback port. The gateway serves it on a
 //    second public origin; the address Lattice reports is swapped for that one.
-// 4. Lattice has no one-click TeX package install on Linux. For the owner, its
+// 3. Lattice has no one-click TeX package install on Linux. For the owner, its
 //    install command is answered by the gateway, which runs tlmgr on the host.
-// 5. On a phone, Lattice's three-column layout leaves each column an icon wide.
-//    Narrow screens get one panel with every view as a tab; the wide layout is
-//    kept aside and comes back on a wide screen. Each switch reloads once.
-// 6. A small link to the gateway's Projects and Devices pages.
+// 4. On a phone, Lattice's columns get one panel with every view as a tab.
+// 5. The host's projects folder appears in Lattice's recent projects, so they
+//    open from Lattice's own project menu.
 (() => {
   "use strict";
 
@@ -82,7 +80,7 @@
         });
         if (response.status === 200) {
           const { url } = await response.json();
-          if (typeof url === "string" && /^\/\?entry=[\w-]+$/.test(url)) {
+          if (typeof url === "string" && (/^\/\?entry=[\w-]+$/.test(url) || url === "/__gateway/devices")) {
             try { sessionStorage.removeItem(FOLLOW); } catch { /* storage unavailable */ }
             location.assign(url);
             return;
@@ -94,44 +92,31 @@
   }
   setTimeout(poll, 1500);
 
-  const PENDING = "lattice-gateway.open-project";
-  // Opened after the layout check below, which may reload the page first: the
-  // request stays in sessionStorage until then.
-  async function openPendingProject() {
-    let pending = null;
-    try {
-      const value = JSON.parse(sessionStorage.getItem(PENDING) || "null");
-      pending = value && typeof value.path === "string" ? value : null;
-      sessionStorage.removeItem(PENDING);
-      if (pending) sessionStorage.setItem(FOLLOW, String(Date.now() + 30000));
-    } catch { return; }
-    if (!pending) return;
-    // Drop addresses left from earlier opens, so this tab follows only its own.
-    for (let i = 0; i < 10; i++) {
-      const stale = await fetch("/__gateway/api/open-request", {
-        method: "POST", credentials: "same-origin", cache: "no-store",
-        headers: { "Content-Type": "application/json" }, body: "{}",
-      }).catch(() => null);
-      if (!stale || stale.status !== 200) break;
-    }
-    lastInput = Date.now();
-    try {
-      await window.__TAURI_INTERNALS__.invoke("open_project_window", { path: pending.path });
-    } catch (error) {
-      console.warn("lattice-gateway: could not open", pending.path, error);
-    }
+  // Lattice lists up to eight recent projects in its project menu and reads that
+  // list once, when it starts. The host's projects are fetched right away and
+  // merged into what Lattice reads, so each can be opened from its own menu.
+  const RECENT = "lattice.recent-projects.v1";
+  let hostProjects = [];
+  fetch("/__gateway/api/projects", { credentials: "same-origin", cache: "no-store" })
+    .then((response) => (response.ok ? response.json() : { projects: [] }))
+    .then(({ projects }) => { hostProjects = projects.filter((project) => project.hasTex); })
+    .catch(() => {});
+  function withHostProjects(stored) {
+    if (!hostProjects.length) return stored;
+    let recent = [];
+    try { recent = JSON.parse(stored || "[]"); } catch { return stored; }
+    if (!Array.isArray(recent)) return stored;
+    const available = new Set(hostProjects.map((project) => project.path));
+    const kept = recent.filter((item) => item && typeof item.path === "string" && available.has(item.path));
+    const known = new Set(kept.map((item) => item.path));
+    const added = hostProjects.filter((project) => !known.has(project.path)).map(({ name, path }) => ({ name, path }));
+    return JSON.stringify([...kept, ...added].slice(0, 8));
   }
-
-  // The owner learns when Lattice opens a native window on the host, and can go use it.
-  async function watchHostWindows(banner) {
-    try {
-      const response = await fetch("/__gateway/api/screen/state", { credentials: "same-origin", cache: "no-store" });
-      if (response.status === 401 || response.status === 404) return; // not the owner, or not shared
-      const { windows } = await response.json();
-      banner.hidden = !windows;
-    } catch { /* retry */ }
-    setTimeout(() => watchHostWindows(banner), document.visibilityState === "visible" ? 2500 : 8000);
-  }
+  const getItem = Storage.prototype.getItem;
+  Storage.prototype.getItem = function (key) {
+    const value = getItem.call(this, key);
+    return this === localStorage && key === RECENT ? withHostProjects(value) : value;
+  };
 
   const LAYOUT = "lattice.trellis-layout.v1:";
   const WIDE = "lattice-gateway.wide-layout:";
@@ -199,45 +184,7 @@
       setTimeout(() => location.reload(), 800);
       return;
     }
-    await openPendingProject();
+
   })();
 
-  // Both use Lattice's own CSS variables, so they look like its toasts and icon buttons.
-  addEventListener("DOMContentLoaded", () => {
-    let zh = /^zh\b/i.test(navigator.language || "");
-    try {
-      const saved = JSON.parse(localStorage.getItem("lattice.appearance.v5") || "{}").interfaceLanguage;
-      if (saved === "zh-CN" || saved === "en") zh = saved === "zh-CN";
-    } catch { /* browser language */ }
-    const banner = document.createElement("a");
-    banner.href = "/__gateway/screen";
-    banner.hidden = true;
-    banner.textContent = zh ? "Lattice 在主机上打开了一个窗口，点此使用" : "Lattice opened a window on the host. Use it here";
-    banner.setAttribute("data-lattice-gateway", "");
-    banner.style.cssText = [
-      "position:fixed", "z-index:calc(var(--z-toast, 10000) + 1)", "left:50%", "transform:translateX(-50%)",
-      "top:max(12px, env(safe-area-inset-top))", "padding:8px 14px", "border-radius:var(--radius-panel, 10px)",
-      "font:500 var(--type-body-size, 13px)/20px var(--ui-font, system-ui, sans-serif)",
-      "background:var(--surface-panel-raised, #fff)", "color:var(--text-primary, #242426)",
-      "border:1px solid var(--border-subtle, #1c1c1f17)", "box-shadow:var(--shadow-popover, 0 4px 12px #0000001a)",
-      "text-decoration:none",
-    ].join(";");
-    document.body.append(banner);
-    watchHostWindows(banner);
-    const link = document.createElement("a");
-    link.href = "/__gateway/projects";
-    link.title = zh ? "项目与设备" : "Projects and devices";
-    link.setAttribute("aria-label", link.title);
-    link.setAttribute("data-lattice-gateway", "");
-    link.innerHTML = '<svg viewBox="0 0 16 16" width="14" height="14" aria-hidden="true"><path fill="none" stroke="currentColor" stroke-width="1.4" d="M2.5 2.5h4v4h-4zM9.5 2.5h4v4h-4zM2.5 9.5h4v4h-4zM9.5 9.5h4v4h-4z"/></svg>';
-    link.style.cssText = [
-      "position:fixed", "z-index:var(--z-toast, 10000)", "display:grid", "place-items:center",
-      "left:max(8px, env(safe-area-inset-left))", "bottom:max(36px, calc(env(safe-area-inset-bottom) + 36px))",
-      "width:var(--control-height-compact, 28px)", "height:var(--control-height-compact, 28px)",
-      "border-radius:var(--radius-control, 6px)", "text-decoration:none",
-      "background:var(--surface-panel-raised, #fff)", "color:var(--text-secondary, #5f5f64)",
-      "border:1px solid var(--border-subtle, #1c1c1f17)", "box-shadow:var(--shadow-popover, none)",
-    ].join(";");
-    document.body.append(link);
-  });
 })();

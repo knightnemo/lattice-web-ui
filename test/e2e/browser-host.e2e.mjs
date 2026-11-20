@@ -1,11 +1,11 @@
-// End-to-end check of an installed host kit, through a real HTTPS entrance.
+// End-to-end check of an installed host kit with real Lattice behind lattice-gateway.
 //
-// Needs: `lattice-host install --public-origin https://127.0.0.1:18491 --projects-root <dir>`
-// with a project folder in <dir> that has main.tex, test/e2e/tls-front.mjs running on 18491,
-// and playwright-core with a Chromium build. Run:
-//
-//   PLAYWRIGHT_CORE=/path/to/node_modules/playwright-core LATTICE_E2E_PROJECT=<dir>/<project> \
-//     node --test test/e2e/browser-host.e2e.mjs
+//   LATTICE_E2E_ORIGIN         a gateway reached from outside the tailnet (sign-in and pairing),
+//                              e.g. a second gateway on the same Lattice behind test/e2e/tls-front.mjs
+//   LATTICE_E2E_TAILNET_ORIGIN the Tailscale Serve/Funnel origin, reached from the owner's tailnet login
+//   LATTICE_E2E_AGENT_ORIGIN   the Agent origin that goes with LATTICE_E2E_TAILNET_ORIGIN
+//   LATTICE_E2E_PROJECT        a scratch project folder in the host's projects folder (edited by the test)
+//   PLAYWRIGHT_CORE            path to playwright-core
 import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
 import { createRequire } from "node:module";
@@ -17,6 +17,7 @@ const require = createRequire(import.meta.url);
 const { chromium } = require(process.env.PLAYWRIGHT_CORE || "playwright-core");
 const origin = process.env.LATTICE_E2E_ORIGIN || "https://127.0.0.1:18491";
 const project = process.env.LATTICE_E2E_PROJECT;
+const tailnet = process.env.LATTICE_E2E_TAILNET_ORIGIN;
 const root = process.env.LATTICE_HOST_ROOT || join(homedir(), ".local/share/lattice-host");
 const token = readFileSync(join(root, "access-token"), "utf8").trim();
 const shots = process.env.LATTICE_E2E_SHOTS;
@@ -38,14 +39,21 @@ async function signInAsOwner(page, next = "/") {
   await page.waitForURL(`${origin}${next}`);
 }
 
-/** Open the e2e project in a workspace of its own. "/" would reuse whichever
- *  workspace was opened last, and Lattice lets only one tab hold a workspace. */
-async function openProject(page) {
-  await signInAsOwner(page, "/__gateway/projects");
+/** Open the e2e project from Lattice's own project menu: the gateway lists the
+ *  host's projects there. The tab stays the same one. */
+async function openProject(page, at = origin) {
   const name = project.split("/").filter(Boolean).at(-1);
-  await page.locator("li", { hasText: name }).getByRole("button").click();
-  await page.waitForURL(/\/\?entry=/, { timeout: 40_000 });
+  if (new URL(page.url()).origin !== at) await page.goto(`${at}/`);
   await page.locator(".cm-content").first().waitFor({ timeout: 40_000 });
+  await page.waitForTimeout(2500); // the gateway adds the projects to Lattice's recent list
+  const title = () => page.evaluate(() => document.body.innerText.split("\n")[0].trim());
+  if ((await title()) !== name) {
+    await page.locator("button", { hasText: await title() }).first().click();
+    await page.getByText(name, { exact: true }).first().click();
+    for (let i = 0; i < 80 && (await title()) !== name; i++) await page.waitForTimeout(250);
+    await page.locator(".cm-content").first().waitFor({ timeout: 40_000 });
+  }
+  assert.equal(await title(), name);
   return name;
 }
 
@@ -68,7 +76,7 @@ test("the owner opens a project, edits it, and the edit reaches the disk", { ski
   const page = await ctx.newPage();
   const errors = [];
   page.on("pageerror", (error) => errors.push(error.message));
-  // Lattice opens the project in a new workspace and the tab follows it.
+  await signInAsOwner(page);
   const name = await openProject(page);
   await page.getByText(name, { exact: true }).first().waitFor();
   const marker = `% edited through lattice-gateway ${Date.now()}`;
@@ -125,12 +133,12 @@ test("a paired phone reaches Lattice, and revoking it cuts it off", async () => 
   await phone.close();
 });
 
-test("the Agent loads from its own origin through the gateway", { skip: (!process.env.LATTICE_E2E_AGENT_ORIGIN || !project) && "set LATTICE_E2E_AGENT_ORIGIN and LATTICE_E2E_PROJECT" }, async () => {
+test("the Agent loads from its own origin through the gateway", { skip: (!process.env.LATTICE_E2E_AGENT_ORIGIN || !project || !tailnet) && "set LATTICE_E2E_AGENT_ORIGIN, LATTICE_E2E_TAILNET_ORIGIN and LATTICE_E2E_PROJECT" }, async () => {
   const agentOrigin = process.env.LATTICE_E2E_AGENT_ORIGIN;
   const ctx = await context();
   const page = await ctx.newPage();
-  // The Agent refuses projects in hidden folders: use an ordinary one.
-  await openProject(page);
+  // On the tailnet the owner needs no sign-in. The Agent refuses projects in hidden folders.
+  await openProject(page, tailnet);
   await page.evaluate(() => {
     const title = [...document.querySelectorAll('[data-trellis-part="tab-title"]')].find((t) => t.textContent.trim() === "Agent");
     (title?.closest('[data-trellis-part="tab"]') || title?.parentElement)?.click();
@@ -157,44 +165,22 @@ test("the Agent loads from its own origin through the gateway", { skip: (!proces
   await ctx.close();
 });
 
-test("host windows and TeX installs are for the owner only", async () => {
+test("TeX installs are for the owner only", async () => {
+  const stranger = await context();
+  assert.equal((await stranger.request.post(`${origin}/__gateway/api/tex-install`, { data: { name: "lipsum" }, headers: { Origin: origin } })).status(), 401);
+  await stranger.close();
   const ctx = await context();
   const page = await ctx.newPage();
   await signInAsOwner(page);
-  const owner = await ctx.request.get(`${origin}/__gateway/api/screen/state`);
-  assert.equal(owner.status(), 200);
-  const stranger = await context();
-  assert.equal((await stranger.request.get(`${origin}/__gateway/api/screen.png`)).status(), 401);
-  assert.equal((await stranger.request.post(`${origin}/__gateway/api/tex-install`, { data: { name: "lipsum" }, headers: { Origin: origin } })).status(), 401);
   const bad = await ctx.request.post(`${origin}/__gateway/api/tex-install`, { data: { name: "a;rm -rf" }, headers: { Origin: origin } });
   assert.ok([400, 404].includes(bad.status()), "a malformed package name is refused before tlmgr runs");
-  await stranger.close();
-  await ctx.close();
-});
-
-test("the owner's terminal runs a shell on the host", async () => {
-  const ctx = await context();
-  const page = await ctx.newPage();
-  await signInAsOwner(page);
-  const config = await (await ctx.request.get(`${origin}/__gateway/api/config`)).json();
-  if (!config.terminal) return; // not enabled on this host
-  await page.goto(`${origin}/__gateway/terminal`);
-  await page.locator(".xterm").waitFor({ timeout: 20_000 });
-  await page.waitForTimeout(1500);
-  await page.locator(".xterm").click();
-  await page.keyboard.type("echo gateway-$((6*7))");
-  await page.keyboard.press("Enter");
-  await page.locator(".xterm-rows", { hasText: "gateway-42" }).waitFor({ timeout: 15_000 });
-  await shot(page, "e2e-terminal");
-  const stranger = await context();
-  assert.equal((await stranger.request.get(`${origin}/__gateway/api/terminal`)).status(), 401);
-  await stranger.close();
   await ctx.close();
 });
 
 test("on a phone, Lattice gets one panel with every view as a tab", { skip: !project && "set LATTICE_E2E_PROJECT" }, async () => {
   const phone = await context({ viewport: { width: 390, height: 844 }, isMobile: true, hasTouch: true, deviceScaleFactor: 2 });
   const page = await phone.newPage();
+  await signInAsOwner(page);
   await openProject(page);
   // The layout switch reloads the page once.
   await page.waitForTimeout(12_000);
@@ -206,6 +192,7 @@ test("on a phone, Lattice gets one panel with every view as a tab", { skip: !pro
   // The desktop gets its own layout back.
   const desk = await context();
   const deskPage = await desk.newPage();
+  await signInAsOwner(deskPage);
   await openProject(deskPage);
   await deskPage.waitForTimeout(12_000);
   const panels = await deskPage.evaluate(() => {
@@ -214,4 +201,15 @@ test("on a phone, Lattice gets one panel with every view as a tab", { skip: !pro
   });
   assert.notEqual(panels, "panel", "the wide layout is restored on a wide screen");
   await desk.close();
+});
+
+test("on the tailnet the owner gets Lattice with no sign-in and no extra controls", { skip: !tailnet && "set LATTICE_E2E_TAILNET_ORIGIN" }, async () => {
+  const ctx = await context();
+  const page = await ctx.newPage();
+  await page.goto(`${tailnet}/`);
+  assert.equal(new URL(page.url()).pathname, "/");
+  await page.locator(".cm-content").first().waitFor({ timeout: 40_000 });
+  assert.equal(await page.locator("[data-lattice-gateway]").count(), 0, "the gateway adds nothing to Lattice's page");
+  await shot(page, "e2e-tailnet");
+  await ctx.close();
 });
