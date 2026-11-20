@@ -8,7 +8,10 @@
 //    second public origin; the address Lattice reports is swapped for that one.
 // 4. Lattice has no one-click TeX package install on Linux. For the owner, its
 //    install command is answered by the gateway, which runs tlmgr on the host.
-// 5. A small link to the gateway's Projects and Devices pages.
+// 5. On a phone, Lattice's three-column layout leaves each column an icon wide.
+//    Narrow screens get one panel with every view as a tab; the wide layout is
+//    kept aside and comes back on a wide screen. Each switch reloads once.
+// 6. A small link to the gateway's Projects and Devices pages.
 (() => {
   "use strict";
 
@@ -121,6 +124,73 @@
     } catch { /* retry */ }
     setTimeout(() => watchHostWindows(banner), document.visibilityState === "visible" ? 2500 : 8000);
   }
+
+  const LAYOUT = "lattice.trellis-layout.v1:";
+  const WIDE = "lattice-gateway.wide-layout:";
+  const PHONE_PANEL = "panel-phone";
+  function panelViews(node, out = []) {
+    if (!node) return out;
+    if (node.kind === "panel") out.push(...node.views);
+    else (node.children || []).forEach((child) => panelViews(child, out));
+    return out;
+  }
+  function adaptLayouts() {
+    const narrow = matchMedia("(max-width: 700px)").matches;
+    const wide = matchMedia("(min-width: 900px)").matches;
+    let changed = false;
+    for (const key of Object.keys(localStorage).filter((k) => k.startsWith(LAYOUT))) {
+      let saved;
+      try { saved = JSON.parse(localStorage.getItem(key)); } catch { continue; }
+      const root = saved?.document?.root;
+      if (!root) continue;
+      const isPhone = root.kind === "panel" && root.id === PHONE_PANEL;
+      if (narrow && !isPhone) {
+        const views = panelViews(root);
+        const files = views.filter((v) => v.startsWith("file-"));
+        const order = [...files, ...views.filter((v) => v === "pdf"), ...views.filter((v) => !files.includes(v) && v !== "pdf")];
+        if (!order.length) continue;
+        localStorage.setItem(WIDE + key, JSON.stringify(root));
+        saved.document.root = { kind: "panel", id: PHONE_PANEL, views: order, selected: files[0] || order[0] };
+        saved.savedAt = Date.now();
+        localStorage.setItem(key, JSON.stringify(saved));
+        changed = true;
+      } else if (wide && isPhone) {
+        let previous = null;
+        try { previous = JSON.parse(localStorage.getItem(WIDE + key) || "null"); } catch { previous = null; }
+        if (!previous) continue;
+        // Views opened on the phone stay: they are added to the panel that had the first file.
+        const known = new Set(panelViews(previous));
+        const added = root.views.filter((v) => !known.has(v));
+        if (added.length) {
+          (function addTo(node) {
+            if (node.kind === "panel") { if (node.views.some((v) => v.startsWith("file-")) || !added.length) { node.views.push(...added); added.length = 0; } return; }
+            (node.children || []).forEach(addTo);
+          })(previous);
+        }
+        saved.document.root = previous;
+        saved.savedAt = Date.now();
+        localStorage.setItem(key, JSON.stringify(saved));
+        localStorage.removeItem(WIDE + key);
+        changed = true;
+      }
+    }
+    return changed;
+  }
+  (async () => {
+    const deadline = Date.now() + 30000;
+    while (!window.__LATTICE_BROWSER_RUNTIME__) {
+      if (Date.now() > deadline) return;
+      await new Promise((resolve) => setTimeout(resolve, 200));
+    }
+    // After the host's copy of localStorage has arrived.
+    await new Promise((resolve) => setTimeout(resolve, 1500));
+    const marker = "lattice-gateway.layout-reloaded";
+    if (adaptLayouts() && sessionStorage.getItem(marker) !== String(innerWidth < 800)) {
+      sessionStorage.setItem(marker, String(innerWidth < 800));
+      // Give the change a moment to reach the host before the page reads it again.
+      setTimeout(() => location.reload(), 800);
+    }
+  })();
 
   addEventListener("DOMContentLoaded", () => {
     const zhBanner = /^zh\b/i.test(navigator.language || "");

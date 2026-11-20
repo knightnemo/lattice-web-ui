@@ -90,7 +90,7 @@ class HostKitTest(unittest.TestCase):
 
     def test_lattice_opener_forwards_only_entry_addresses(self):
         import subprocess
-        self.assertEqual(self.install("--projects-root", "~/papers", "--agent-origin", "https://w.example.ts.net:8444"), 0)
+        self.assertEqual(self.install("--projects-root", "~/papers", "--agent-origin", "https://w.example.ts.net:8444", "--enable-terminal"), 0)
         spool = self.root / "state/open-requests"
         self.assertEqual(stat.S_IMODE(spool.stat().st_mode), 0o700)
         bundled = self.root / "releases/0.18.0/squashfs-root/usr/bin/xdg-open"
@@ -108,6 +108,8 @@ class HostKitTest(unittest.TestCase):
         self.assertIn(f"--projects-root {Path('~/papers').expanduser()}", unit)
         self.assertIn("--agent-listen 127.0.0.1:18491 --agent-origin https://w.example.ts.net:8444", unit)
         self.assertIn(f"--agent-process-marker {self.root / 'releases'}", unit)
+        self.assertIn(f"--terminal --terminal-shell", unit)
+        self.assertIn(f"--terminal-cwd {Path('~/papers').expanduser()}", unit)
 
     def test_refuses_a_file_whose_checksum_does_not_match(self):
         self.releases[0]["sha256"] = "0" * 64

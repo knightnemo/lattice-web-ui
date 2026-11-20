@@ -137,6 +137,22 @@ The gateway resolves file names with `tlmgr search --global --file`. If
 `tlmgr update --self`. With a system-wide TeX Live, install packages with
 your distribution instead.
 
+## Terminal
+
+Lattice allows its own terminal only in its native window, by design. If you
+pass `--enable-terminal` to `install`, the gateway gives the owner a separate
+terminal at `/__gateway/terminal`. It is a login shell as the host user, in
+the projects folder, shown with xterm.js. Paired devices cannot open it.
+Closing the page hangs up the shell.
+
+## On a phone
+
+Lattice's three-column layout leaves each column one icon wide on a phone.
+On screens narrower than 700 px, the gateway's page script gives each
+project's layout a single panel, with the editor, PDF, files, Agent and
+papers as tabs. It keeps the wide layout aside and puts it back on a screen
+at least 900 px wide. Each switch reloads the page once.
+
 ## How the page reaches you
 
 Lattice 0.18's browser host only starts at `http://127.0.0.1:18452`. The
@@ -167,13 +183,11 @@ releases, paired devices and the token.
 These come from Lattice itself and are tracked in
 [leo1oel/lattice#1190](https://github.com/leo1oel/lattice/issues/1190).
 
-- **No terminal in browser tabs.** Lattice allows the terminal only in its own
-  native window. That is a deliberate security decision.
 - **One tab per workspace.** A second tab or device on the same workspace
   takes it over. The first tab then says the workspace is open elsewhere.
   Reload it to get a workspace of its own.
-- **Phone layout.** At phone width the editor is hard to reach. Reading the
-  PDF works.
+- **Lattice's own terminal panel** still points to the native window. Use the
+  gateway's terminal instead.
 - **Unsaved text.** If Lattice restarts, text typed in the last second before
   the restart is lost. Autosave keeps everything else.
 - **Memory.** Every open workspace keeps a hidden WebKit view on the host,
