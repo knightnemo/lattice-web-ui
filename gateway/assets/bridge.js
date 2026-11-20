@@ -295,6 +295,7 @@
       notBack: (v) => `也没能回到 ${v}，请在服务器上运行 lattice-host status 查看。`,
       reason: "原因：",
       startFailed: "没能开始更新。",
+      chip: (v) => `更新到 ${v}`,
     } : {
       available: (v) => `Lattice-web-ui ${v} is available`,
       brings: (l) => `Includes Lattice ${l}. `,
@@ -307,6 +308,7 @@
       notBack: (v) => `Going back to ${v} failed too. Run lattice-host status on the host.`,
       reason: "Reason: ",
       startFailed: "Could not start the update.",
+      chip: (v) => `Update to ${v}`,
     };
     const svg = (paths, size) => `<svg xmlns="http://www.w3.org/2000/svg" width="${size}" height="${size}" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">${paths}</svg>`;
     const ICON = {
@@ -414,9 +416,9 @@
       new ResizeObserver(fit).observe(content);
     }
 
-    function offer(state) {
+    function offer(state, asked = false) {
       const title = T.available(state.latest);
-      if (hiddenFor === title) return;
+      if (hiddenFor === title && !asked) return;
       const lattice = state.lattice && state.lattice.latest && state.lattice.latest !== state.lattice.current
         ? T.brings(state.lattice.latest) : "";
       show({
@@ -428,7 +430,74 @@
       });
     }
 
+    // The chip stays while an update is on offer, whatever happened to the card:
+    // in the title bar, or on a narrow screen as a round button in the corner.
+    let chip = null;
+    let chipWired = false;
+    function placeChip() {
+      if (!chip) return;
+      const narrow = innerWidth < 700;
+      const anchor = narrow ? null
+        : document.querySelector(".titlebar .canvas-actions") || document.querySelector(".welcome-titlebar .icon-button");
+      const bar = anchor?.closest(".titlebar, .welcome-titlebar");
+      chip.dataset.compact = anchor ? "false" : "true";
+      if (anchor && bar) {
+        const a = anchor.getBoundingClientRect();
+        const b = bar.getBoundingClientRect();
+        chip.style.top = `${Math.round(b.top + (b.height - 24) / 2)}px`;
+        chip.style.right = `${Math.round(innerWidth - a.left + 8)}px`;
+        chip.style.bottom = "";
+      } else {
+        chip.style.top = "";
+        chip.style.right = "max(12px, env(safe-area-inset-right))";
+        chip.style.bottom = "calc(max(12px, env(safe-area-inset-bottom)) + 52px)";
+      }
+    }
+    function showChip(state) {
+      if (!chip) {
+        chip = document.createElement("button");
+        chip.type = "button";
+        chip.dataset.latticeGateway = "update-chip";
+        chip.addEventListener("click", () => offer(chip.state, true));
+        document.body.append(chip);
+      }
+      if (!chipWired) {
+        chipWired = true;
+        const style = document.createElement("style");
+        style.dataset.latticeGateway = "update-chip-style";
+        style.textContent = `
+          [data-lattice-gateway="update-chip"] { position: fixed; z-index: 2147483000; display: flex; align-items: center; justify-content: center; gap: 6px;
+            height: 24px; padding: 0 10px; border-radius: 999px; border: 1px solid var(--border-subtle, #1c1c1f17);
+            background: var(--surface-panel-raised, #fff); color: var(--text-primary, #242426); box-shadow: var(--elevation-floating);
+            font: var(--weight-medium, 500) var(--type-caption-size, 12px)/1 var(--ui-font, system-ui, sans-serif); white-space: nowrap; cursor: pointer; }
+          [data-lattice-gateway="update-chip"]:hover { background: var(--chrome-hover-surface, #f0f0ef); }
+          [data-lattice-gateway="update-chip"]::before { content: ""; width: 6px; height: 6px; border-radius: 50%; background: var(--status-info, #3b6fd8); flex: none; }
+          [data-lattice-gateway="update-chip"] > svg { display: none; }
+          [data-lattice-gateway="update-chip"][data-compact="true"] { width: 40px; height: 40px; padding: 0; }
+          [data-lattice-gateway="update-chip"][data-compact="true"]::before { display: none; }
+          [data-lattice-gateway="update-chip"][data-compact="true"] > span { display: none; }
+          [data-lattice-gateway="update-chip"][data-compact="true"] > svg { display: block; color: var(--status-info, #3b6fd8); }
+        `;
+        document.head.append(style);
+        addEventListener("resize", placeChip);
+        new MutationObserver(() => requestAnimationFrame(placeChip)).observe(document.body, { childList: true, subtree: true });
+      }
+      chip.state = state;
+      const label = document.createElement("span");
+      label.textContent = T.chip(state.latest);
+      chip.replaceChildren(label);
+      chip.insertAdjacentHTML("beforeend", svg('<circle cx="12" cy="12" r="10"></circle><path d="m16 12-4-4-4 4"></path><path d="M12 16V8"></path>', 20));
+      chip.setAttribute("aria-label", T.available(state.latest));
+      chip.title = T.available(state.latest);
+      placeChip();
+    }
+    function hideChip() {
+      chip?.remove();
+      chip = null;
+    }
+
     async function start(version) {
+      hideChip();
       showRunning(version, "requested");
       try {
         const response = await api("/__gateway/api/update/start", { version });
@@ -494,8 +563,15 @@
         const response = await api("/__gateway/api/update");
         if (!response.ok) return;
         const state = await response.json();
-        if (state.running) follow(state.status?.target || state.latest);
-        else if (state.available && !state.dismissed) offer(state);
+        if (state.running) {
+          hideChip();
+          follow(state.status?.target || state.latest);
+        } else if (state.available) {
+          showChip(state);
+          if (!state.dismissed) offer(state);
+        } else {
+          hideChip();
+        }
       } catch { /* the next check retries */ }
     }
     fetch("/__gateway/api/whoami", { credentials: "same-origin", cache: "no-store" })

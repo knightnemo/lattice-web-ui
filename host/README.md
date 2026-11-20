@@ -141,6 +141,10 @@ owner sees it in the workspace as a Lattice notification: **Lattice-web-ui
 - **If it fails.** When the new gateway does not answer within 90 seconds, the
   host goes back to the kit it had, and the notification says why.
 - **Later.** Hides the notification until a newer release comes out.
+- **The chip stays.** While an update is on offer, the title bar shows
+  **Update to 0.9.1** beside Lattice's own buttons, whatever happened to the
+  notification. Select it to bring the notification back. On a phone it is a
+  round button in the bottom corner.
 
 Paired devices see none of this. Only a host installed from a release kit
 updates itself this way. The kit it runs is kept in
