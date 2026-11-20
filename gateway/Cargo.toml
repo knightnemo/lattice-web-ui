@@ -1,6 +1,6 @@
 [package]
 name = "lattice-gateway"
-version = "0.7.1"
+version = "0.7.2"
 edition = "2021"
 license = "MIT"
 description = "Access gateway that puts device pairing and owner sign-in in front of Lattice's browser host"

@@ -49,7 +49,7 @@ test("the Linux host kit ships the gateway, lattice-host and the pinned releases
   const files = [
     "scripts/package.sh", "scripts/pack-plugin.mjs", "automation/release-package.mjs",
     "host/lattice-host.py", "host/lattice-releases.json", "host/README.md", "host/examples/Caddyfile",
-    "gateway/assets/vendor/LICENSE-xterm",
+    "gateway/assets/vendor/LICENSE-xterm", "gateway/assets/vendor/LICENSE-inter",
     ...pluginFiles.map((name) => `plugin/${name}`),
   ];
   for (const file of files) {
@@ -69,7 +69,7 @@ test("the Linux host kit ships the gateway, lattice-host and the pinned releases
   const archive = join(out, `${kit}-linux-x86_64.tar.gz`);
   const listed = run("tar", ["-tzf", archive]).trim().split("\n").filter((path) => !path.endsWith("/")).sort();
   assert.deepEqual(listed, [
-    "LICENSE", "LICENSE-xterm", "README.md", "bin/lattice-gateway", "examples/Caddyfile", "lattice-host", "lattice-releases.json", "release-version.txt",
+    "LICENSE", "LICENSE-inter", "LICENSE-xterm", "README.md", "bin/lattice-gateway", "examples/Caddyfile", "lattice-host", "lattice-releases.json", "release-version.txt",
   ].map((name) => `${kit}/${name}`));
   assert.equal(run("tar", ["-xOzf", archive, `${kit}/release-version.txt`]).trim(), version);
   assert.equal(run("tar", ["-xOzf", archive, `${kit}/lattice-host`]), readFileSync(join(repo, "host/lattice-host.py"), "utf8"));

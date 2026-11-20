@@ -202,39 +202,42 @@
     await openPendingProject();
   })();
 
+  // Both use Lattice's own CSS variables, so they look like its toasts and icon buttons.
   addEventListener("DOMContentLoaded", () => {
-    const zhBanner = /^zh\b/i.test(navigator.language || "");
+    let zh = /^zh\b/i.test(navigator.language || "");
+    try {
+      const saved = JSON.parse(localStorage.getItem("lattice.appearance.v5") || "{}").interfaceLanguage;
+      if (saved === "zh-CN" || saved === "en") zh = saved === "zh-CN";
+    } catch { /* browser language */ }
     const banner = document.createElement("a");
     banner.href = "/__gateway/screen";
     banner.hidden = true;
-    banner.textContent = zhBanner ? "Lattice 在主机上打开了一个窗口，点这里使用它" : "Lattice opened a window on the host. Use it here";
+    banner.textContent = zh ? "Lattice 在主机上打开了一个窗口，点此使用" : "Lattice opened a window on the host. Use it here";
     banner.setAttribute("data-lattice-gateway", "");
     banner.style.cssText = [
-      "position:fixed", "z-index:2147483001", "left:50%", "transform:translateX(-50%)",
-      "top:max(8px, env(safe-area-inset-top))", "padding:8px 14px", "border-radius:999px",
-      "font:600 13px/1.2 -apple-system, BlinkMacSystemFont, 'Segoe UI', system-ui, sans-serif",
-      "background:#556324", "color:#fff", "text-decoration:none", "box-shadow:0 2px 8px rgba(0,0,0,.25)",
+      "position:fixed", "z-index:calc(var(--z-toast, 10000) + 1)", "left:50%", "transform:translateX(-50%)",
+      "top:max(12px, env(safe-area-inset-top))", "padding:8px 14px", "border-radius:var(--radius-panel, 10px)",
+      "font:500 var(--type-body-size, 13px)/20px var(--ui-font, system-ui, sans-serif)",
+      "background:var(--surface-panel-raised, #fff)", "color:var(--text-primary, #242426)",
+      "border:1px solid var(--border-subtle, #1c1c1f17)", "box-shadow:var(--shadow-popover, 0 4px 12px #0000001a)",
+      "text-decoration:none",
     ].join(";");
     document.body.append(banner);
     watchHostWindows(banner);
-    const zh = /^zh\b/i.test(navigator.language || "");
     const link = document.createElement("a");
     link.href = "/__gateway/projects";
     link.title = zh ? "项目与设备" : "Projects and devices";
     link.setAttribute("aria-label", link.title);
     link.setAttribute("data-lattice-gateway", "");
-    link.innerHTML = '<svg viewBox="0 0 24 24" width="14" height="14" aria-hidden="true"><path fill="none" stroke="currentColor" stroke-width="2" d="M4 4h16v16H4zM4 12h16M12 4v16"/></svg>';
+    link.innerHTML = '<svg viewBox="0 0 16 16" width="14" height="14" aria-hidden="true"><path fill="none" stroke="currentColor" stroke-width="1.4" d="M2.5 2.5h4v4h-4zM9.5 2.5h4v4h-4zM2.5 9.5h4v4h-4zM9.5 9.5h4v4h-4z"/></svg>';
     link.style.cssText = [
-      "position:fixed", "z-index:2147483000", "display:grid", "place-items:center",
-      "left:max(6px, env(safe-area-inset-left))", "bottom:max(34px, calc(env(safe-area-inset-bottom) + 34px))",
-      "width:26px", "height:26px", "border-radius:999px", "text-decoration:none",
-      "background:rgba(85,99,36,.92)", "color:#fff", "opacity:.45", "transition:opacity .15s",
-      "box-shadow:0 1px 3px rgba(0,0,0,.25)",
+      "position:fixed", "z-index:var(--z-toast, 10000)", "display:grid", "place-items:center",
+      "left:max(8px, env(safe-area-inset-left))", "bottom:max(36px, calc(env(safe-area-inset-bottom) + 36px))",
+      "width:var(--control-height-compact, 28px)", "height:var(--control-height-compact, 28px)",
+      "border-radius:var(--radius-control, 6px)", "text-decoration:none",
+      "background:var(--surface-panel-raised, #fff)", "color:var(--text-secondary, #5f5f64)",
+      "border:1px solid var(--border-subtle, #1c1c1f17)", "box-shadow:var(--shadow-popover, none)",
     ].join(";");
-    link.addEventListener("mouseenter", () => { link.style.opacity = "1"; });
-    link.addEventListener("mouseleave", () => { link.style.opacity = ".45"; });
-    link.addEventListener("focus", () => { link.style.opacity = "1"; });
-    link.addEventListener("blur", () => { link.style.opacity = ".45"; });
     document.body.append(link);
   });
 })();

@@ -98,5 +98,7 @@ rebuilt.
 
 Everything in this repository is MIT-licensed ([plugin/LICENSE](plugin/LICENSE)).
 lattice-gateway embeds [xterm.js](https://github.com/xtermjs/xterm.js) 6.0.0 and its fit add-on, which are also MIT
-([gateway/assets/vendor/LICENSE-xterm](gateway/assets/vendor/LICENSE-xterm)).
+([gateway/assets/vendor/LICENSE-xterm](gateway/assets/vendor/LICENSE-xterm)), and the
+[Inter](https://github.com/rsms/inter) typeface, under the SIL Open Font License 1.1
+([gateway/assets/vendor/LICENSE-inter](gateway/assets/vendor/LICENSE-inter)).
 Lattice, which the host kit downloads at install time, keeps its own license.

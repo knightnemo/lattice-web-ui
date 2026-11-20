@@ -36,6 +36,8 @@ install -m 644 "$root/host/examples/Caddyfile" "$kit/examples/Caddyfile"
 install -m 644 "$root/plugin/LICENSE" "$kit/LICENSE"
 # lattice-gateway embeds xterm.js for the owner's terminal.
 install -m 644 "$root/gateway/assets/vendor/LICENSE-xterm" "$kit/LICENSE-xterm"
+# ...and the Inter Variable font (SIL OFL 1.1) for its own pages.
+install -m 644 "$root/gateway/assets/vendor/LICENSE-inter" "$kit/LICENSE-inter"
 printf '%s\n' "$version" > "$kit/release-version.txt"
 tar --owner=0 --group=0 --numeric-owner -czf "$out/$name-linux-$arch.tar.gz" -C "$stage" "$name"
 

@@ -33,11 +33,13 @@ const BRIDGE_JS: &str = include_str!("../assets/bridge.js");
 const XTERM_JS: &str = include_str!("../assets/vendor/xterm.js");
 const XTERM_FIT_JS: &str = include_str!("../assets/vendor/addon-fit.js");
 const XTERM_CSS: &str = include_str!("../assets/vendor/xterm.css");
+const INTER_LATIN: &[u8] = include_bytes!("../assets/vendor/inter-latin-wght-normal.woff2");
+const INTER_LATIN_EXT: &[u8] = include_bytes!("../assets/vendor/inter-latin-ext-wght-normal.woff2");
 /// xterm.js sets styles on the elements it creates.
 const TERMINAL_CSP: &str = "default-src 'none'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data:; connect-src 'self'; font-src 'self' data:; base-uri 'none'; form-action 'none'; frame-ancestors 'none'";
 /// How long an address Lattice asked to open waits for a tab to claim it.
 const OPEN_REQUEST_TTL: Duration = Duration::from_secs(60);
-const CSP: &str = "default-src 'none'; script-src 'self'; style-src 'self'; img-src 'self' data: blob:; connect-src 'self'; base-uri 'none'; form-action 'none'; frame-ancestors 'none'";
+const CSP: &str = "default-src 'none'; script-src 'self'; style-src 'self'; img-src 'self' data: blob:; font-src 'self'; connect-src 'self'; base-uri 'none'; form-action 'none'; frame-ancestors 'none'";
 
 #[derive(Clone, Copy, PartialEq, Debug)]
 enum Entrance {
@@ -364,7 +366,7 @@ fn page(name: &str, origin: &str) -> Response<Body> {
     response
 }
 
-fn asset(content_type: &'static str, body: &'static str) -> Response<Body> {
+fn asset(content_type: &'static str, body: impl Into<bytes::Bytes>) -> Response<Body> {
     let mut response = Response::new(full(body));
     response
         .headers_mut()
@@ -552,6 +554,12 @@ async fn handle(app: Arc<App>, entrance: Entrance, req: Request<Incoming>) -> Re
         }
         (&Method::GET, "/__gateway/vendor/addon-fit.js") => {
             return asset("text/javascript; charset=utf-8", XTERM_FIT_JS)
+        }
+        (&Method::GET, "/__gateway/vendor/inter-latin-wght-normal.woff2") => {
+            return asset("font/woff2", INTER_LATIN)
+        }
+        (&Method::GET, "/__gateway/vendor/inter-latin-ext-wght-normal.woff2") => {
+            return asset("font/woff2", INTER_LATIN_EXT)
         }
         (&Method::GET, "/__gateway/vendor/xterm.css") => {
             return asset("text/css; charset=utf-8", XTERM_CSS)
