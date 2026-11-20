@@ -134,19 +134,28 @@
   // merged into what Lattice reads, so each can be opened from its own menu.
   const RECENT = "lattice.recent-projects.v1";
   let hostProjects = [];
+  let hostFolder = null;
+  let hostPaths = new Set();
   fetch("/__gateway/api/projects", { credentials: "same-origin", cache: "no-store" })
     .then((response) => (response.ok ? response.json() : { projects: [] }))
-    .then(({ projects }) => { hostProjects = projects.filter((project) => project.hasTex); })
+    .then(({ root, projects }) => {
+      hostFolder = typeof root === "string" ? root.replace(/\/+$/, "") + "/" : null;
+      hostPaths = new Set(projects.map((project) => project.path));
+      hostProjects = projects.filter((project) => project.hasTex);
+    })
     .catch(() => {});
   function withHostProjects(stored) {
-    if (!hostProjects.length) return stored;
+    if (hostFolder === null) return stored;
     let recent = [];
     try { recent = JSON.parse(stored || "[]"); } catch { return stored; }
     if (!Array.isArray(recent)) return stored;
     // Lattice's own list comes first, in its order, with projects outside the
     // projects folder too (an Overleaf project, say): its first entry is the
     // project a new workspace opens.
-    const kept = recent.filter((item) => item && typeof item.path === "string");
+    // A project deleted from the projects folder leaves the list; one outside
+    // that folder stays, since only Lattice knows whether it still exists.
+    const gone = (path) => hostFolder !== null && path.startsWith(hostFolder) && !hostPaths.has(path);
+    const kept = recent.filter((item) => item && typeof item.path === "string" && !gone(item.path));
     const known = new Set(kept.map((item) => item.path));
     const added = hostProjects.filter((project) => !known.has(project.path)).map(({ name, path }) => ({ name, path }));
     return JSON.stringify([...kept, ...added].slice(0, 8));

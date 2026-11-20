@@ -191,6 +191,9 @@ test("hands the address Lattice asked to open to one signed-in tab, once", { ski
   assert.equal((await post("/__gateway/api/open-request", {}, owner)).status, 204);
   const projects = await (await fetch(`${base}/__gateway/api/projects`, { headers: { Cookie: owner } })).json();
   assert.deepEqual(projects.projects.map((p) => [p.name, p.hasTex]), [["paper", true]]);
+  // The page script needs the folder to tell a deleted project from one elsewhere.
+  assert.equal(typeof projects.root, "string");
+  assert.ok(projects.projects.every((p) => p.path.startsWith(`${projects.root.replace(/\/+$/, "")}/`)));
   assert.equal((await fetch(`${base}/__gateway/api/projects`)).status, 401);
 });
 
