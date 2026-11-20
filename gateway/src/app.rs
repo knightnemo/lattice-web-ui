@@ -32,12 +32,19 @@ const PAGE_JS: &str = include_str!("../assets/gateway.js");
 const BRIDGE_JS: &str = include_str!("../assets/bridge.js");
 const INTER_LATIN: &[u8] = include_bytes!("../assets/vendor/inter-latin-wght-normal.woff2");
 const INTER_LATIN_EXT: &[u8] = include_bytes!("../assets/vendor/inter-latin-ext-wght-normal.woff2");
+// lattice-web-ui's own icon: the browser tab, a phone's home screen, Lattice's welcome screen.
+const BRAND_LOGO: &str = include_str!("../assets/brand/logo.svg");
+const BRAND_ICON_192: &[u8] = include_bytes!("../assets/brand/icon-192.png");
+const BRAND_ICON_512: &[u8] = include_bytes!("../assets/brand/icon-512.png");
+const BRAND_TOUCH: &[u8] = include_bytes!("../assets/brand/apple-touch-icon.png");
+const BRAND_FAVICON: &[u8] = include_bytes!("../assets/brand/favicon-32.png");
+const BRAND_MANIFEST: &str = include_str!("../assets/brand/manifest.webmanifest");
 /// How long an address Lattice asked to open waits for a tab to claim it.
 const OPEN_REQUEST_TTL: Duration = Duration::from_secs(60);
 /// Set by the gateway on requests that tailscaled delivered over its socket;
 /// stripped from everything else, so only Tailscale can vouch for a login.
 const TAILNET_MARK: &str = "x-lattice-gateway-tailnet";
-const CSP: &str = "default-src 'none'; script-src 'self'; style-src 'self'; img-src 'self' data: blob:; font-src 'self'; connect-src 'self'; base-uri 'none'; form-action 'none'; frame-ancestors 'none'";
+const CSP: &str = "default-src 'none'; script-src 'self'; style-src 'self'; img-src 'self' data: blob:; font-src 'self'; connect-src 'self'; base-uri 'none'; form-action 'none'; frame-ancestors 'none'; manifest-src 'self'";
 
 #[derive(Clone, Copy, PartialEq, Debug)]
 enum Entrance {
@@ -86,16 +93,52 @@ pub struct App {
     updates: Option<crate::update::Updates>,
 }
 
-/// The Lattice session token of the workspace a browser tab attached to last.
-#[derive(Default)]
-struct LastWorkspace(Mutex<Option<String>>);
+/// The Lattice workspaces browser tabs hold through the gateway.
+///
+/// Lattice gives a tab with no session of its own the first workspace "/"
+/// opened, and a new workspace once that one is gone, which then fails to
+/// open a project another workspace still holds. The gateway sees every tab's
+/// bridge connection, so it sends such a tab to the workspace attached to last
+/// that is still alive: one a tab holds now, or held within Lattice's
+/// five-second reconnect grace.
+#[derive(Default, Clone)]
+struct LastWorkspace(Arc<Mutex<HashMap<String, Attachment>>>);
+
+#[derive(Clone, Copy)]
+struct Attachment {
+    attached: Instant,
+    open: u32,
+    closed: Option<Instant>,
+}
+
+/// Lattice keeps a workspace this long after its last tab leaves (RECONNECT_GRACE).
+const WORKSPACE_GRACE: Duration = Duration::from_secs(5);
+
+/// Held for as long as a tab's bridge connection is open.
+struct Attached {
+    workspaces: LastWorkspace,
+    token: String,
+}
+
+impl Drop for Attached {
+    fn drop(&mut self) {
+        let mut map = self.workspaces.0.lock().unwrap_or_else(|p| p.into_inner());
+        if let Some(entry) = map.get_mut(&self.token) {
+            entry.open = entry.open.saturating_sub(1);
+            if entry.open == 0 {
+                entry.closed = Some(Instant::now());
+            }
+        }
+    }
+}
 
 impl LastWorkspace {
-    /// Remember the workspace a browser tab attaches to, and send a tab with
-    /// no session of its own (a new device, a new tab, a restarted browser)
-    /// to that workspace. Lattice ignores a token it no longer knows and then
-    /// picks a workspace as before.
-    fn follow(&self, uri: &mut hyper::Uri) {
+    /// Note a tab attaching to its workspace, and send a tab with no session
+    /// of its own (a new device, a new tab, a restarted browser) to the live
+    /// workspace attached to last. Lattice ignores a token it no longer knows
+    /// and then picks a workspace as before. The returned guard is held for
+    /// the life of a bridge connection.
+    fn follow(&self, uri: &mut hyper::Uri) -> Option<Attached> {
         let path = uri.path();
         let query = uri.query().unwrap_or("");
         let param = |name: &str| {
@@ -106,19 +149,38 @@ impl LastWorkspace {
                 .map(|(_, value)| value.to_string())
         };
         if path == "/__lattice_bridge" {
-            if param("role").as_deref() == Some("browser") {
-                if let Some(token) = param("token").filter(|t| valid_session_token(t)) {
-                    *self.0.lock().unwrap() = Some(token);
-                }
+            if param("role").as_deref() != Some("browser") {
+                return None;
             }
-            return;
+            let token = param("token").filter(|t| valid_session_token(t))?;
+            let mut map = self.0.lock().unwrap_or_else(|p| p.into_inner());
+            let now = Instant::now();
+            // Forget workspaces Lattice has let go of.
+            map.retain(|_, a| a.open > 0 || a.closed.is_none_or(|c| now - c < WORKSPACE_GRACE * 4));
+            let entry = map.entry(token.clone()).or_insert(Attachment {
+                attached: now,
+                open: 0,
+                closed: None,
+            });
+            entry.attached = now;
+            entry.open += 1;
+            entry.closed = None;
+            return Some(Attached {
+                workspaces: self.clone(),
+                token,
+            });
         }
         if path != "/__lattice_session" || param("token").is_some() || param("entry").is_some() {
-            return;
+            return None;
         }
-        let Some(token) = self.0.lock().unwrap().clone() else {
-            return;
-        };
+        let token = {
+            let map = self.0.lock().unwrap_or_else(|p| p.into_inner());
+            let now = Instant::now();
+            map.iter()
+                .filter(|(_, a)| a.open > 0 || a.closed.is_some_and(|c| now - c < WORKSPACE_GRACE))
+                .max_by_key(|(_, a)| a.attached)
+                .map(|(token, _)| token.clone())
+        }?;
         let joined = if query.is_empty() {
             format!("{path}?token={token}")
         } else {
@@ -127,6 +189,7 @@ impl LastWorkspace {
         if let Ok(resumed) = joined.parse() {
             *uri = resumed;
         }
+        None
     }
 }
 
@@ -491,6 +554,24 @@ async fn handle(app: Arc<App>, entrance: Entrance, req: Request<Incoming>) -> Re
         (_, &Method::GET, "/__gateway/bridge.js") => {
             return asset("text/javascript; charset=utf-8", BRIDGE_JS)
         }
+        (_, &Method::GET, "/__gateway/brand/logo.svg") => {
+            return asset("image/svg+xml", BRAND_LOGO)
+        }
+        (_, &Method::GET, "/__gateway/brand/icon-192.png") => {
+            return asset("image/png", BRAND_ICON_192)
+        }
+        (_, &Method::GET, "/__gateway/brand/icon-512.png") => {
+            return asset("image/png", BRAND_ICON_512)
+        }
+        (_, &Method::GET, "/__gateway/brand/apple-touch-icon.png") => {
+            return asset("image/png", BRAND_TOUCH)
+        }
+        (_, &Method::GET, "/__gateway/brand/favicon-32.png") => {
+            return asset("image/png", BRAND_FAVICON)
+        }
+        (_, &Method::GET, "/__gateway/brand/manifest.webmanifest") => {
+            return asset("application/manifest+json", BRAND_MANIFEST)
+        }
         (_, &Method::GET, "/__gateway/health") => {
             let up = app.upstream.reachable().await;
             let status = if up {
@@ -655,7 +736,7 @@ async fn handle(app: Arc<App>, entrance: Entrance, req: Request<Incoming>) -> Re
         }
     }
     let mut req = req;
-    app.last_workspace.follow(req.uri_mut());
+    let attached = app.last_workspace.follow(req.uri_mut());
     proxy::forward(
         req,
         &app.upstream,
@@ -663,6 +744,7 @@ async fn handle(app: Arc<App>, entrance: Entrance, req: Request<Incoming>) -> Re
         principal.name(),
         app.revocations.subscribe(),
         &app.bridge,
+        attached.map(|a| Box::new(a) as Box<dyn std::any::Any + Send>),
     )
     .await
 }
@@ -716,6 +798,7 @@ async fn agent_request(
         principal.name(),
         app.revocations.subscribe(),
         &app.agent_bridge,
+        None,
     )
     .await
 }
@@ -1239,39 +1322,69 @@ mod tests {
     use super::*;
 
     #[test]
-    fn a_tab_without_a_session_resumes_the_workspace_used_last() {
+    fn a_tab_without_a_session_resumes_the_live_workspace_attached_to_last() {
+        const A: &str = "0123456789abcdef0123456789abcdef";
+        const B: &str = "fedcba9876543210fedcba9876543210";
         let last = LastWorkspace::default();
         let follow = |uri: &str| {
             let mut uri: hyper::Uri = uri.parse().unwrap();
-            last.follow(&mut uri);
-            uri.to_string()
+            let held = last.follow(&mut uri);
+            (uri.to_string(), held)
         };
-        // Nothing remembered yet: Lattice picks as before.
-        assert_eq!(follow("/__lattice_session"), "/__lattice_session");
+        let session = |uri: &str| follow(uri).0;
+        // Nothing attached yet: Lattice picks as before.
+        assert_eq!(session("/__lattice_session"), "/__lattice_session");
         // The host's own role and malformed tokens are not remembered.
-        follow("/__lattice_bridge?token=0123456789abcdef0123456789abcdef&role=host");
-        follow("/__lattice_bridge?token=bad%20token&role=browser");
-        assert_eq!(follow("/__lattice_session"), "/__lattice_session");
-        follow("/__lattice_bridge?token=0123456789abcdef0123456789abcdef&role=browser");
+        assert!(follow(&format!("/__lattice_bridge?token={A}&role=host"))
+            .1
+            .is_none());
+        assert!(follow("/__lattice_bridge?token=bad%20token&role=browser")
+            .1
+            .is_none());
+        assert_eq!(session("/__lattice_session"), "/__lattice_session");
+
+        let tab_a = follow(&format!("/__lattice_bridge?token={A}&role=browser"))
+            .1
+            .unwrap();
         assert_eq!(
-            follow("/__lattice_session"),
-            "/__lattice_session?token=0123456789abcdef0123456789abcdef"
+            session("/__lattice_session"),
+            format!("/__lattice_session?token={A}")
         );
         // A tab's own session, and an explicit entry, are left alone.
         assert_eq!(
-            follow("/__lattice_session?token=mine"),
+            session("/__lattice_session?token=mine"),
             "/__lattice_session?token=mine"
         );
         assert_eq!(
-            follow("/__lattice_session?entry=n"),
+            session("/__lattice_session?entry=n"),
             "/__lattice_session?entry=n"
         );
-        // A later tab moves it.
-        follow("/__lattice_bridge?role=browser&token=fedcba9876543210fedcba9876543210");
+
+        // A later tab moves it; when that tab's workspace is gone, A is still held.
+        let tab_b = follow(&format!("/__lattice_bridge?role=browser&token={B}"))
+            .1
+            .unwrap();
         assert_eq!(
-            follow("/__lattice_session"),
-            "/__lattice_session?token=fedcba9876543210fedcba9876543210"
+            session("/__lattice_session"),
+            format!("/__lattice_session?token={B}")
         );
+        drop(tab_b);
+        assert_eq!(
+            session("/__lattice_session"),
+            format!("/__lattice_session?token={B}"),
+            "within Lattice's grace"
+        );
+        last.0.lock().unwrap().get_mut(B).unwrap().closed = Some(Instant::now() - WORKSPACE_GRACE);
+        assert_eq!(
+            session("/__lattice_session"),
+            format!("/__lattice_session?token={A}"),
+            "past it"
+        );
+
+        // No live workspace: Lattice picks, rather than being sent to a dead one.
+        drop(tab_a);
+        last.0.lock().unwrap().get_mut(A).unwrap().closed = Some(Instant::now() - WORKSPACE_GRACE);
+        assert_eq!(session("/__lattice_session"), "/__lattice_session");
     }
 
     #[test]
