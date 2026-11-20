@@ -290,6 +290,19 @@ WantedBy=default.target
         (UNIT_DIR / name).write_text(text)
 
 
+def install_gateway(root: Path, source: Path) -> bool:
+    """Put the gateway binary in place atomically, so a running one is never overwritten. True if it changed."""
+    target = root / "bin/lattice-gateway"
+    if target.exists() and sha256_file(target) == sha256_file(source):
+        return False
+    target.parent.mkdir(parents=True, exist_ok=True)
+    temp = target.with_name(f".lattice-gateway.{os.getpid()}")
+    shutil.copy2(source, temp)
+    temp.chmod(0o755)
+    temp.replace(target)
+    return True
+
+
 def shell_quote(value: str) -> str:
     if value and all(c.isalnum() or c in "/._-:=@+," for c in value):
         return value
@@ -427,8 +440,7 @@ def cmd_install(args: argparse.Namespace) -> None:
     if not gateway.is_file():
         raise HostError(f"{gateway} is missing. Build it with `cargo build --release --manifest-path gateway/Cargo.toml` or use the host kit from a release.")
     xvfb = fetch_xvfb(root) if args.fetch_xvfb else find_xvfb(root, args.xvfb)
-    (root / "bin").mkdir(exist_ok=True)
-    shutil.copy2(gateway, root / "bin/lattice-gateway")
+    install_gateway(root, gateway)
     if args.owner_login:
         logins = root / "owner-logins"
         logins.write_text("".join(f"{login}\n" for login in args.owner_login))
@@ -458,6 +470,8 @@ def cmd_install(args: argparse.Namespace) -> None:
         return
     systemctl("daemon-reload")
     systemctl("enable", "--now", *UNITS)
+    # Re-running install changes settings: the gateway picks them up on restart.
+    systemctl("restart", "lattice-gateway.service")
     if not lattice_healthy():
         raise HostError("Lattice did not start. See `journalctl --user -u lattice-browser-host`.")
     verify_page(manifest["releases"][version])
@@ -471,7 +485,19 @@ def cmd_install(args: argparse.Namespace) -> None:
 def cmd_update(args: argparse.Namespace) -> None:
     root: Path = args.root
     config = read_config(root)
-    manifest = load_manifest(Path(args.manifest or config["manifest"]))
+    # A newer kit brings its own pins and gateway; prefer them over the installed ones.
+    manifest_path = Path(args.manifest) if args.manifest else KIT / "lattice-releases.json"
+    if not manifest_path.exists():
+        manifest_path = Path(config["manifest"])
+    manifest = load_manifest(manifest_path)
+    if str(manifest_path.resolve()) != config["manifest"]:
+        config["manifest"] = str(manifest_path.resolve())
+        save_config(root, config)
+    kit_gateway = Path(args.gateway_binary) if args.gateway_binary else KIT / "bin/lattice-gateway"
+    if kit_gateway.is_file() and install_gateway(root, kit_gateway):
+        say("installed this kit's lattice-gateway.")
+        if not args.no_start:
+            systemctl("restart", "lattice-gateway.service")
     version = args.to or manifest["default"]
     if version not in manifest["releases"]:
         raise HostError(f"Lattice {version} is not pinned in the manifest.")
@@ -542,6 +568,7 @@ def parser() -> argparse.ArgumentParser:
     update = sub.add_parser("update", help="move to another pinned Lattice release; rolls back if it fails to start")
     update.add_argument("--to")
     update.add_argument("--manifest")
+    update.add_argument("--gateway-binary")
     update.add_argument("--no-start", action="store_true")
     update.set_defaults(func=cmd_update)
 

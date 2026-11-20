@@ -116,7 +116,9 @@ class HostKitTest(unittest.TestCase):
 
     def test_update_and_rollback_move_the_current_link(self):
         self.assertEqual(self.install(), 0)
-        self.assertEqual(self.run_tool("update", "--to", "0.19.0", "--no-start"), 0)
+        self.gateway.write_text("#!/bin/sh\necho newer gateway\n")
+        self.assertEqual(self.run_tool("update", "--to", "0.19.0", "--no-start", "--manifest", str(self.manifest), "--gateway-binary", str(self.gateway)), 0)
+        self.assertEqual((self.root / "bin/lattice-gateway").read_text(), "#!/bin/sh\necho newer gateway\n", "update installs the kit's gateway")
         self.assertEqual(os.readlink(self.root / "current"), "releases/0.19.0")
         self.assertEqual(os.readlink(self.root / "previous"), "releases/0.18.0")
         self.assertIn("0.19.0", (self.config_home / "systemd/user/lattice-browser-host.service").read_text())
@@ -124,7 +126,7 @@ class HostKitTest(unittest.TestCase):
                          "a release that pins no rewrites gets none")
         self.assertEqual(self.run_tool("rollback", "--no-start"), 0)
         self.assertEqual(os.readlink(self.root / "current"), "releases/0.18.0")
-        self.assertEqual(self.run_tool("update", "--to", "9.9.9", "--no-start"), 1)
+        self.assertEqual(self.run_tool("update", "--to", "9.9.9", "--no-start", "--manifest", str(self.manifest)), 1)
 
     def test_owner_page_needs_a_login(self):
         self.assertEqual(self.install("--owner-origin", "https://h.example.ts.net:9443"), 1)
