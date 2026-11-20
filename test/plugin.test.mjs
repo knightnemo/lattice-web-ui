@@ -78,3 +78,11 @@ test("rejects unconfigured, insecure, and credential-bearing links without overw
   await writeFile(location, "file:///etc/passwd");
   assert.equal((await command(data, "open")).error.code, -32000);
 });
+
+test("opens the gateway's device page for the saved workspace", { timeout: 10000 }, async (t) => {
+  const data = await fixture(t);
+  assert.match((await command(data, "devices")).error.message, /Set workspace address/);
+  await command(data, "configure", origin);
+  const reply = await command(data, "devices");
+  assert.deepEqual(reply.result.items[0].actions, [{ type: "openUrl", url: `${origin}/__gateway/devices` }]);
+});

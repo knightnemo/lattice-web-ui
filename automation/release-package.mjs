@@ -1,12 +1,8 @@
-import { execFileSync } from "node:child_process";
 import { createHash } from "node:crypto";
 import { createReadStream } from "node:fs";
 import { readFile, rename, writeFile } from "node:fs/promises";
 import { join, resolve } from "node:path";
 import { pathToFileURL } from "node:url";
-import { parseCompanionPin } from "./companion-source.mjs";
-
-const pin = parseCompanionPin(await readFile(new URL("./release-source.json", import.meta.url), "utf8"));
 const versionPattern = "(?:0|[1-9]\\d*)\\.(?:0|[1-9]\\d*)\\.(?:0|[1-9]\\d*)";
 const versionRegex = new RegExp(`^${versionPattern}$`);
 const tagRegex = new RegExp(`^v(${versionPattern})$`);
@@ -25,41 +21,22 @@ export function releaseNames(tag) {
   const version = tagRegex.exec(tag)?.[1];
   if (!version) throw new Error("Release tags must use vX.Y.Z.");
   return {
-    packageFiles: [`remote-workspace-${version}.zip`, `lattice-remote-source-${version}.tar.gz`],
+    packageFiles: [`remote-workspace-${version}.zip`, `lattice-remote-host-${version}-linux-x86_64.tar.gz`],
     checksums: `SHA256SUMS-${tag}.txt`,
     manifest: `release-${tag}.json`,
   };
 }
 
-function git(checkout, ...args) {
-  return execFileSync("git", ["-C", checkout, ...args], { encoding: "utf8", stdio: ["ignore", "pipe", "ignore"] }).trim();
-}
-
-export function pinnedSource(checkout) {
-  for (const revision of [pin.snapshotCommit, pin.originalCommit]) {
-    let tree;
-    try {
-      tree = git(checkout, "rev-parse", "--verify", `${revision}^{tree}`);
-    } catch {
-      continue;
-    }
-    if (tree !== pin.tree) throw new Error(`Companion commit ${revision} has the wrong tree.`);
-    return { revision, originalCommit: pin.originalCommit, tree };
+/** The Lattice releases the host kit is pinned to, recorded in the release manifest. */
+export function pinnedLattice(text) {
+  const manifest = JSON.parse(text);
+  const releases = Array.isArray(manifest.releases) ? manifest.releases : [];
+  if (!releases.length || !releases.some((entry) => entry.version === manifest.default) ||
+      releases.some((entry) => !versionRegex.test(entry.version ?? "") || !digestRegex.test(entry.sha256 ?? "") ||
+        !/^https:\/\/github\.com\/leo1oel\/lattice\/releases\/download\//.test(entry.url ?? ""))) {
+    throw new Error("host/lattice-releases.json must pin Lattice releases by version, GitHub release URL and SHA-256.");
   }
-  throw new Error("Missing the pinned companion snapshot and the original source commit.");
-}
-
-function verifySnapshotTag(checkout) {
-  let revision;
-  try {
-    revision = git(checkout, "show-ref", "--verify", "--hash", `refs/tags/${pin.snapshotTag}`);
-  } catch {
-    throw new Error(`Missing pinned companion tag ${pin.snapshotTag}.`);
-  }
-  if (revision !== pin.snapshotCommit || git(checkout, "cat-file", "-t", revision) !== "commit") {
-    throw new Error(`Companion tag ${pin.snapshotTag} does not point directly to the pinned commit.`);
-  }
-  pinnedSource(checkout);
+  return { default: manifest.default, releases: releases.map(({ version, sha256 }) => ({ version, sha256 })) };
 }
 
 async function sha256(path) {
@@ -75,17 +52,18 @@ async function verifiedChecksums(directory, checksumName, packageFiles) {
   return Object.fromEntries(expected.map((line, i) => [packageFiles[i], line.slice(0, 64)]));
 }
 
-export async function sealRelease(directory, tag, commit) {
+export async function sealRelease(directory, tag, commit, latticeManifest = new URL("../host/lattice-releases.json", import.meta.url)) {
   if (!commitRegex.test(commit)) throw new Error("Release commit must be a full Git SHA.");
+  const lattice = pinnedLattice(await readFile(latticeManifest, "utf8"));
   const names = releaseNames(tag);
   const assets = await verifiedChecksums(directory, "SHA256SUMS", names.packageFiles);
   await rename(join(directory, "SHA256SUMS"), join(directory, names.checksums));
   assets[names.checksums] = await sha256(join(directory, names.checksums));
   const metadata = {
-    schema: 1,
+    schema: 2,
     tag,
     commit,
-    companion: { originalCommit: pin.originalCommit, snapshotCommit: pin.snapshotCommit, tree: pin.tree },
+    lattice,
     assets,
   };
   await writeFile(join(directory, names.manifest), `${JSON.stringify(metadata, null, 2)}\n`, { flag: "wx" });
@@ -99,12 +77,10 @@ export async function verifyRelease(directory, tag, commit, expectedDigest) {
     throw new Error("Release artifact does not match the build job's manifest.");
   }
   const metadata = JSON.parse(await readFile(manifest, "utf8"));
-  if (metadata.schema !== 1 || metadata.tag !== tag || metadata.commit !== commit || !commitRegex.test(commit)) {
+  if (metadata.schema !== 2 || metadata.tag !== tag || metadata.commit !== commit || !commitRegex.test(commit)) {
     throw new Error("Release manifest does not match the exact tag and commit.");
   }
-  for (const key of ["originalCommit", "snapshotCommit", "tree"]) {
-    if (!commitRegex.test(metadata.companion?.[key] ?? "")) throw new Error("Invalid companion source provenance.");
-  }
+  if (!versionRegex.test(metadata.lattice?.default ?? "")) throw new Error("The release manifest names no pinned Lattice release.");
   const assets = await verifiedChecksums(directory, names.checksums, names.packageFiles);
   assets[names.checksums] = await sha256(join(directory, names.checksums));
   if (Object.keys(metadata.assets ?? {}).length !== Object.keys(assets).length ||
@@ -119,15 +95,6 @@ async function run([operation, ...args]) {
     case "version":
       console.log(packageVersion(await readFile(args[0], "utf8")));
       break;
-    case "source": {
-      const source = pinnedSource(args[0]);
-      console.log(source.revision);
-      console.log(source.originalCommit);
-      break;
-    }
-    case "verify-snapshot":
-      verifySnapshotTag(args[0]);
-      break;
     case "seal":
       console.log(await sealRelease(...args));
       break;
@@ -135,7 +102,7 @@ async function run([operation, ...args]) {
       console.log((await verifyRelease(...args)).join("\n"));
       break;
     default:
-      throw new Error("Use version, source, verify-snapshot, seal, or verify.");
+      throw new Error("Use version, seal, or verify.");
   }
 }
 
