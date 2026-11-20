@@ -68,8 +68,13 @@
     addEventListener(type, () => { lastInput = Date.now(); }, { capture: true, passive: true });
   }
 
+  // A project open this tab asked for may answer after a reload: follow it until then.
+  const FOLLOW = "lattice-gateway.follow-until";
+  const following = () => {
+    try { return Number(sessionStorage.getItem(FOLLOW) || 0) > Date.now(); } catch { return false; }
+  };
   async function poll() {
-    if (document.visibilityState === "visible" && Date.now() - lastInput < 20000) {
+    if (document.visibilityState === "visible" && (Date.now() - lastInput < 20000 || following())) {
       try {
         const response = await fetch("/__gateway/api/open-request", {
           method: "POST", credentials: "same-origin", cache: "no-store",
@@ -78,6 +83,7 @@
         if (response.status === 200) {
           const { url } = await response.json();
           if (typeof url === "string" && /^\/\?entry=[\w-]+$/.test(url)) {
+            try { sessionStorage.removeItem(FOLLOW); } catch { /* storage unavailable */ }
             location.assign(url);
             return;
           }
@@ -89,29 +95,31 @@
   setTimeout(poll, 1500);
 
   const PENDING = "lattice-gateway.open-project";
-  const pending = (() => {
+  // Opened after the layout check below, which may reload the page first: the
+  // request stays in sessionStorage until then.
+  async function openPendingProject() {
+    let pending = null;
     try {
       const value = JSON.parse(sessionStorage.getItem(PENDING) || "null");
+      pending = value && typeof value.path === "string" ? value : null;
       sessionStorage.removeItem(PENDING);
-      return value && typeof value.path === "string" ? value : null;
-    } catch { return null; }
-  })();
-  if (pending) {
-    (async () => {
-      const deadline = Date.now() + 30000;
-      while (!(window.__LATTICE_BROWSER_RUNTIME__ && window.__TAURI_INTERNALS__)) {
-        if (Date.now() > deadline) return;
-        await new Promise((resolve) => setTimeout(resolve, 200));
-      }
-      // Let the host's copy of localStorage arrive before Lattice opens anything.
-      await new Promise((resolve) => setTimeout(resolve, 1500));
-      lastInput = Date.now();
-      try {
-        await window.__TAURI_INTERNALS__.invoke("open_project_window", { path: pending.path });
-      } catch (error) {
-        console.warn("lattice-gateway: could not open", pending.path, error);
-      }
-    })();
+      if (pending) sessionStorage.setItem(FOLLOW, String(Date.now() + 30000));
+    } catch { return; }
+    if (!pending) return;
+    // Drop addresses left from earlier opens, so this tab follows only its own.
+    for (let i = 0; i < 10; i++) {
+      const stale = await fetch("/__gateway/api/open-request", {
+        method: "POST", credentials: "same-origin", cache: "no-store",
+        headers: { "Content-Type": "application/json" }, body: "{}",
+      }).catch(() => null);
+      if (!stale || stale.status !== 200) break;
+    }
+    lastInput = Date.now();
+    try {
+      await window.__TAURI_INTERNALS__.invoke("open_project_window", { path: pending.path });
+    } catch (error) {
+      console.warn("lattice-gateway: could not open", pending.path, error);
+    }
   }
 
   // The owner learns when Lattice opens a native window on the host, and can go use it.
@@ -189,7 +197,9 @@
       sessionStorage.setItem(marker, String(innerWidth < 800));
       // Give the change a moment to reach the host before the page reads it again.
       setTimeout(() => location.reload(), 800);
+      return;
     }
+    await openPendingProject();
   })();
 
   addEventListener("DOMContentLoaded", () => {

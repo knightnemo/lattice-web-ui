@@ -83,7 +83,10 @@ host account as exposed: Lattice's terminal and agent run as that user.
 Lattice's own "Open folder…" dialog appears on the host's hidden display,
 where nobody can use it. Use the gateway's **Projects** page instead:
 
-1. Pass `--projects-root ~/papers` (any folder) to `install`.
+1. Pass `--projects-root ~/papers` to `install`. Use an ordinary folder.
+   Lattice's Agent refuses projects inside hidden folders of your home,
+   such as `~/.local/share`, because it cannot protect their `.bib` files
+   there.
 2. Open `/__gateway/projects`, or tap the small round button at the lower
    left of the workspace.
 3. Pick a project. Lattice opens it with its own "open project" command, and
