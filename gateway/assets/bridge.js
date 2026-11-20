@@ -842,6 +842,35 @@
     }
     new MutationObserver(liftAboveCover).observe(document.documentElement, { childList: true, subtree: true, attributes: true, attributeFilter: ["inert"] });
 
+    // Where the owner looks for it: Lattice's Settings, as one more item in its
+    // sidebar, under a Lattice-web-ui group, made like Lattice's own items.
+    function addToSettings() {
+      const navStyle = document.createElement("style");
+      navStyle.dataset.latticeGateway = "settings-style";
+      navStyle.textContent = `
+        .settings-nav:has(.settings-search-results) [data-lattice-gateway="settings-group"] { display: none; }
+      `;
+      document.head.append(navStyle);
+      const icon = (paths, size, cls, width = 2) => `<svg xmlns="http://www.w3.org/2000/svg" width="${size}" height="${size}" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="${width}" stroke-linecap="round" stroke-linejoin="round" class="${cls}" aria-hidden="true">${paths}</svg>`;
+      const place = () => {
+        const nav = document.querySelector(".settings-modal .settings-nav");
+        if (!nav) return;
+        let item = nav.querySelector('[data-lattice-gateway="settings-group"]');
+        if (!item) {
+          item = el("div", { class: "settings-nav-group", role: "group", "aria-label": "Lattice-web-ui", "data-lattice-gateway": "settings-group" },
+            el("div", { class: "settings-nav-group-label" }, "Lattice-web-ui"),
+            el("button", { type: "button", "data-lattice-gateway": "settings-item", onclick: () => show(),
+              html: icon('<rect width="14" height="20" x="5" y="2" rx="2" ry="2"></rect><path d="M12 18h.01"></path>', 15, "animated-product-icon")
+                + '<span title="Phone and app">Phone and app</span>'
+                + icon('<path d="m9 18 6-6-6-6"></path>', 14, "settings-nav-chevron", 1.6) }));
+        }
+        // After Lattice's own groups, which it may redraw after a search.
+        if (nav.lastElementChild !== item) nav.append(item);
+      };
+      new MutationObserver(place).observe(document.body, { childList: true, subtree: true });
+      place();
+    }
+
     openPhoneGuide = show;
     // The plugin's command, the devices address and old links land here.
     const params = new URLSearchParams(location.search);
@@ -854,6 +883,7 @@
       .then((response) => response.json())
       .then(async (me) => {
         if (me.kind !== "owner") return;
+        addToSettings();
         if (asked) { setTimeout(show, 1500); return; }
         // Once, on a computer, and not inside the installed app: point the owner at the phone setup.
         const standalone = matchMedia("(display-mode: standalone)").matches || navigator.standalone === true;

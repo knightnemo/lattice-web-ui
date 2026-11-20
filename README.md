@@ -79,7 +79,7 @@ tailscale funnel --bg --https=10000 unix:$HOME/.local/share/lattice-host/agent.s
 
 On your tailnet the address opens Lattice directly. From anywhere else, sign
 in with the token from `~/.local/share/lattice-host/access-token`, or pair a
-phone from **Phone and app**. The [host guide](host/README.md) covers Funnel
+phone from **Phone and app** in Lattice's Settings. The [host guide](host/README.md) covers Funnel
 and Serve, Overleaf, Caddy without Tailscale, updates and rollback.
 
 ## Contribute
