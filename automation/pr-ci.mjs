@@ -7,7 +7,7 @@ export const checkName = "Lattice CI passed";
 const trustedRepository = "lattice-writer/lattice-web-ui";
 const trustedBranch = "main";
 const trustedRef = `refs/heads/${trustedBranch}`;
-const packagePaths = /^(?:plugin\/|scripts\/|account-gateway\/|device-pairing\/|tailscale-owner\/|automation\/|test\/|\.github\/|companion(?:\/|\.)|docs\/assets\/|docs\/releases\.md$|README\.md$)/;
+const packagePaths = /^(?:plugin\/|scripts\/|gateway\/|host\/|account-gateway\/|device-pairing\/|tailscale-owner\/|automation\/|test\/|\.github\/|companion(?:\/|\.)|docs\/assets\/|docs\/releases\.md$|README\.md$|rust-toolchain\.toml$)/;
 
 export function needsPackaging(files, labels, complete) {
   return !complete || labels.some(({ name }) => name === "full-ci") ||
@@ -30,6 +30,12 @@ async function isCurrentMain(api, env) {
 async function currentGatePull(api, request) {
   const pull = await currentPull(api, request, trustedBranch);
   return pull?.base.repo?.full_name === trustedRepository ? pull : null;
+}
+
+/** A PR head that carries host/lattice-releases.json ships the browser-host kit, not a companion snapshot. */
+async function hostKitLayout(api, head) {
+  const file = await api(`/contents/host/lattice-releases.json?ref=${head}`, { allowMissing: true });
+  return file?.type === "file";
 }
 
 async function companionSnapshot(api, head) {
@@ -59,18 +65,22 @@ export async function plan(api, request, env) {
     throw new Error("PR changed while planning.");
   }
   const packaging = needsPackaging(files, pull.labels, complete);
-  const companionSha = packaging ? await companionSnapshot(api, request.head) : "";
+  const layout = await hostKitLayout(api, request.head) ? "host-kit" : "companion";
+  const companionSha = packaging && layout === "companion" ? await companionSnapshot(api, request.head) : "";
 
   await appendFile(env.GITHUB_OUTPUT, [
     `head=${request.head}`,
     `number=${request.number}`,
     `packaging=${packaging}`,
     `companion_sha=${companionSha}`,
+    `layout=${layout}`,
     "",
   ].join("\n"));
-  const summary = packaging
-    ? `Plugin archive and full source-kit packaging selected. Companion \`${companionSha}\`.`
-    : "Fast verification selected. No release inputs changed.";
+  const summary = !packaging
+    ? "Fast verification selected. No release inputs changed."
+    : layout === "host-kit"
+      ? "Plugin archive and Linux host kit packaging selected."
+      : `Plugin archive and full source-kit packaging selected. Companion \`${companionSha}\`.`;
   await appendFile(env.GITHUB_STEP_SUMMARY, `### Test plan\n\n${summary}\n`);
 }
 
