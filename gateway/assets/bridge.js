@@ -18,6 +18,9 @@
 //    version" notice is answered with nothing: lattice-web-ui pins Lattice.
 // 8. The workspace carries lattice-web-ui's name and icon: in the browser tab,
 //    on a phone's home screen, and on Lattice's welcome screen.
+// 9. "Phone and app": how to open the workspace on a phone, install it as an
+//    app, and manage paired devices, as a dialog built from Lattice's own
+//    Settings parts.
 (() => {
   "use strict";
 
@@ -90,7 +93,10 @@
         });
         if (response.status === 200) {
           const { url } = await response.json();
-          if (typeof url === "string" && (/^\/\?entry=[\w-]+$/.test(url) || url === "/__gateway/devices")) {
+          if (url === "/__gateway/devices") {
+            // The plugin's Phone and app command: a dialog in this tab, no page change.
+            openPhoneGuide();
+          } else if (typeof url === "string" && /^\/\?entry=[\w-]+$/.test(url)) {
             try { sessionStorage.removeItem(FOLLOW); } catch { /* storage unavailable */ }
             location.assign(url);
             return;
@@ -113,6 +119,8 @@
   let replaced = false;
   function reclaim(event) {
     if (!replaced || (event && event.isTrusted === false)) return;
+    // Phone and app talks to the gateway only; using it leaves the workspace where it is.
+    if (event?.target?.closest?.('[data-lattice-gateway="phone"], [data-lattice-gateway="phone-backdrop"]')) return;
     if (event?.type === "visibilitychange" && document.visibilityState !== "visible") return;
     if (event?.type === "focus" && event.target !== window) return;
     if (event?.cancelable) { event.preventDefault(); event.stopImmediatePropagation(); }
@@ -273,6 +281,10 @@
 
   })();
 
+  // Lattice-style notifications, shared by the update prompt and the phone hint.
+  const toastApi = { show: () => {}, close: () => {}, busy: () => false };
+  let openPhoneGuide = () => {};
+
   // The owner's update prompt, built from the markup and classes of Lattice's
   // own notifications (src/telemetry/toast-stack.tsx), so it looks like one.
   (() => {
@@ -326,7 +338,7 @@
     let viewport = null;
     let hiddenFor = null;
     function close() { viewport?.remove(); viewport = null; }
-    function show({ level, icon, title, detail, actions = [], progress = false, closable = true }) {
+    function show({ level, icon, title, detail, actions = [], progress = false, closable = true, onClose }) {
       close();
       viewport = document.createElement("div");
       viewport.className = "app-toast-viewport";
@@ -392,7 +404,7 @@
         x.dataset.tone = "neutral";
         x.setAttribute("aria-label", T.dismiss);
         x.innerHTML = ICON.close;
-        x.addEventListener("click", () => { hiddenFor = title; close(); });
+        x.addEventListener("click", () => { hiddenFor = title; close(); onClose?.(); });
         content.append(x);
       } else {
         content.append(document.createElement("span"));
@@ -415,6 +427,11 @@
       requestAnimationFrame(fit);
       new ResizeObserver(fit).observe(content);
     }
+
+    // The phone dialog's first-visit hint is one of these notifications too.
+    toastApi.show = (options) => show({ level: "info", icon: ICON.info, ...options });
+    toastApi.close = close;
+    toastApi.busy = () => Boolean(viewport) || following;
 
     function offer(state, asked = false) {
       const title = T.available(state.latest);
@@ -642,6 +659,222 @@
     };
     if (document.readyState === "loading") document.addEventListener("DOMContentLoaded", start, { once: true });
     else start();
+  })();
+
+  // "Phone and app", for the owner. It uses Lattice's own modal, Settings
+  // header, groups and rows (dialogs.css, components/ui/chrome.css), so it
+  // looks and behaves like a page of Lattice's Settings.
+  (() => {
+    const svg = (paths, size) => `<svg xmlns="http://www.w3.org/2000/svg" width="${size}" height="${size}" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">${paths}</svg>`;
+    const api = (path, body) => fetch(path, {
+      method: body === undefined ? "GET" : "POST", credentials: "same-origin", cache: "no-store",
+      headers: body === undefined ? {} : { "Content-Type": "application/json" },
+      body: body === undefined ? undefined : JSON.stringify(body),
+    }).then(async (response) => {
+      const value = await response.json().catch(() => ({}));
+      if (!response.ok) throw new Error(value?.error?.message || "The request failed.");
+      return value;
+    });
+    const el = (tag, props = {}, ...children) => {
+      const node = document.createElement(tag);
+      for (const [key, value] of Object.entries(props)) {
+        if (key === "class") node.className = value;
+        else if (key === "html") node.innerHTML = value;
+        else if (key.startsWith("on")) node.addEventListener(key.slice(2), value);
+        else if (value !== undefined && value !== null && value !== false) node.setAttribute(key, value === true ? "" : value);
+      }
+      for (const child of children.flat()) if (child !== null && child !== undefined && child !== false) node.append(child);
+      return node;
+    };
+    const button = (label, variant, onclick) =>
+      el("button", { type: "button", class: `ui-button ui-button--${variant}`, "data-slot": "button", onclick }, label);
+    const row = (label, description, ...control) => el("div", { class: "ui-settings-row ui-row", "data-slot": "settings-row" },
+      el("div", { class: "ui-settings-row-copy" },
+        el("span", { class: "ui-settings-row-label" }, label),
+        description ? el("p", { class: "ui-settings-row-description" }, description) : null),
+      control.length ? el("div", { class: "ui-settings-row-control" }, ...control) : null);
+    const group = (title, ...rows) => el("section", { class: "ui-settings-group", "data-slot": "settings-group" },
+      el("h3", { class: "ui-settings-group-title" }, title),
+      el("div", { class: "ui-settings-group-body" }, ...rows));
+
+    function platform() {
+      const ua = navigator.userAgent;
+      if (/iPhone|iPad/.test(ua) || (/Macintosh/.test(ua) && navigator.maxTouchPoints > 1)) return "ios";
+      if (/Android/.test(ua)) return "android";
+      if (/Macintosh/.test(ua)) return "mac";
+      return "desktop";
+    }
+    let installPrompt = null;
+    addEventListener("beforeinstallprompt", (event) => { event.preventDefault(); installPrompt = event; });
+
+    const style = document.createElement("style");
+    style.dataset.latticeGateway = "phone-style";
+    style.textContent = `
+      [data-lattice-gateway="phone"] .settings-modal { width: min(640px, calc(100vw - 32px)); height: auto; max-height: min(760px, calc(100dvh - 48px)); display: flex; flex-direction: column; background: var(--surface-panel); }
+      [data-lattice-gateway="phone"] { outline: none; }
+      [data-lattice-gateway="phone"], [data-lattice-gateway="phone-backdrop"] { z-index: 2147483647; }
+      [data-lattice-gateway="phone"] .settings-content { overflow-y: auto; overscroll-behavior: contain; }
+      [data-lattice-gateway="phone"] .settings-section { max-width: none; }
+      [data-lattice-gateway="phone"] .phone-qr { width: 104px; height: 104px; padding: 6px; border-radius: var(--radius-control); background: #fff; image-rendering: pixelated; }
+      [data-lattice-gateway="phone"] .phone-qr.large { width: 168px; height: 168px; }
+      [data-lattice-gateway="phone"] .phone-address { font-family: var(--mono-font, ui-monospace, monospace); overflow-wrap: anywhere; }
+      [data-lattice-gateway="phone"] .phone-badge { margin-inline-start: var(--space-3); padding: 1px 6px; border-radius: 999px; background: var(--control-active-soft); color: var(--control-active); font-size: var(--type-micro-size, 11px); font-weight: var(--weight-semibold, 600); vertical-align: 1px; }
+      [data-lattice-gateway="phone"] .phone-pair { display: grid; justify-items: center; gap: var(--space-4); padding-block: var(--space-6); text-align: center; color: var(--text-secondary); font-size: var(--type-caption-size); }
+      @media (max-width: 560px) { [data-lattice-gateway="phone"] .settings-modal { width: calc(100vw - 16px); max-height: calc(100dvh - 16px); } }
+    `;
+
+    let open = null;
+    function close() {
+      open?.forEach((node) => node.remove());
+      open = null;
+    }
+
+    async function show() {
+      if (open) return;
+      if (!style.isConnected) document.head.append(style);
+      const T = {
+        title: "Phone and app",
+        intro: "Open this workspace on your phone, keep it on the home screen or in the Dock, and see which devices are paired.",
+        openGroup: "Open on your phone",
+        scan: "Scan with your phone",
+        scanTailnet: "A phone signed in to the same Tailscale account opens the workspace with no sign-in.",
+        scanPublic: "Opens the sign-in page. Let the phone in with a pairing code below.",
+        address: "Address",
+        copy: "Copy", copied: "Copied",
+        pairLabel: "Phone not on your tailnet",
+        pairHint: "A one-time code lets one more device in. It works once and expires in two minutes.",
+        pair: "Pair a device", pairScan: "Scan this code on the other device.", copyLink: "Copy link",
+        installGroup: "Install the app",
+        thisDevice: "This device",
+        platforms: [
+          ["ios", "iPhone and iPad", "In Safari: Share › Add to Home Screen."],
+          ["android", "Android", "In Chrome: ⋮ › Install app."],
+          ["mac", "Mac", "In Safari: File › Add to Dock. In Chrome: the install icon in the address bar."],
+          ["desktop", "Windows and Linux", "In Chrome or Edge: the install icon in the address bar."],
+        ],
+        install: "Install",
+        appNote: "The installed app keeps its own sign-in. On your tailnet it still opens directly; from the internet, pair it once.",
+        devicesGroup: "Paired devices",
+        noDevices: "No devices are paired yet.",
+        revoke: "Revoke",
+        paired: (date) => `Paired ${date}`,
+        close: "Close",
+        browserGroup: "This browser",
+        signedInHere: "Signed in with the access token",
+        signedInHint: "Sign out when this is not your own device.",
+        signOut: "Sign out",
+      };
+      const [phone, devices] = await Promise.all([
+        api("/__gateway/api/phone").catch(() => ({})),
+        api("/__gateway/api/devices").then((v) => v.devices).catch(() => []),
+      ]);
+      const address = `${phone.address || location.origin}/`;
+      const qr = (svgText, large) => el("img", { class: `phone-qr${large ? " large" : ""}`, alt: "", src: `data:image/svg+xml;charset=utf-8,${encodeURIComponent(svgText)}` });
+
+      const copyButton = button(T.copy, "secondary", async () => {
+        try { await navigator.clipboard.writeText(address); copyButton.textContent = T.copied; setTimeout(() => { copyButton.textContent = T.copy; }, 1500); } catch { /* clipboard refused */ }
+      });
+      let pairCode = null;
+      const pairButton = button(T.pair, "secondary", async () => {
+        pairButton.disabled = true;
+        try {
+          const { url, qrSvg } = await api("/__gateway/api/invites", {});
+          const next = el("div", { class: "phone-pair" }, qr(qrSvg, true), el("span", {}, T.pairScan),
+            button(T.copyLink, "secondary", () => navigator.clipboard.writeText(url).catch(() => {})));
+          if (pairCode) pairCode.replaceWith(next); else pairButton.closest(".ui-settings-row").after(next);
+          pairCode = next;
+        } finally { pairButton.disabled = false; }
+      });
+
+      const here = platform();
+      const installRows = T.platforms.map(([id, name, how]) => row(
+        el("span", {}, name, id === here ? el("span", { class: "phone-badge" }, T.thisDevice) : null), how,
+        id === here && installPrompt ? button(T.install, "tinted", async () => { installPrompt.prompt(); await installPrompt.userChoice.catch(() => {}); installPrompt = null; }) : null));
+
+      const deviceRows = devices.length
+        ? devices.map((device) => {
+          const revoke = button(T.revoke, "secondary", async () => {
+            revoke.disabled = true;
+            try { await api(`/__gateway/api/devices/${encodeURIComponent(device.id)}/revoke`, {}); deviceRow.remove(); } catch { revoke.disabled = false; }
+          });
+          const when = device.createdAt ? new Date(device.createdAt * 1000).toLocaleDateString(undefined, { month: "short", day: "numeric" }) : "";
+          const deviceRow = row(device.label, when ? T.paired(when) : "", revoke);
+          return deviceRow;
+        })
+        : [row(T.noDevices, "")];
+
+      const closeButton = el("button", { type: "button", class: "ui-icon-button settings-close", "data-slot": "icon-button", "data-size": "compact", "data-tone": "neutral", "aria-label": T.close, html: svg('<path d="M18 6 6 18"></path><path d="m6 6 12 12"></path>', 16), onclick: close });
+      const section = el("div", { class: "settings-section" },
+        el("div", { class: "ui-settings-section-header" }, el("div", { class: "ui-settings-section-header-copy" },
+          el("h2", { class: "ui-settings-section-header-title" }, T.title),
+          el("p", { class: "ui-settings-section-header-description" }, T.intro))),
+        group(T.openGroup,
+          row(T.scan, phone.tailnet ? T.scanTailnet : T.scanPublic, phone.qrSvg ? qr(phone.qrSvg) : null),
+          row(T.address, el("span", { class: "phone-address" }, address), copyButton),
+          row(T.pairLabel, T.pairHint, pairButton)),
+        group(T.installGroup, ...installRows, el("p", { class: "ui-settings-row-description" }, T.appNote)),
+        group(T.devicesGroup, ...deviceRows),
+        phone.signedIn ? group(T.browserGroup, row(T.signedInHere, T.signedInHint, button(T.signOut, "secondary", async () => {
+          await api("/__gateway/api/logout", {}).catch(() => {});
+          location.replace("/__gateway/login");
+        }))) : null);
+      const backdrop = el("div", { class: "modal-backdrop", "data-lattice-gateway": "phone-backdrop", onclick: close });
+      const dialog = el("div", { class: "modal-dialog-content", "data-lattice-gateway": "phone", role: "dialog", "aria-modal": "true", "aria-label": T.title, tabindex: "-1" },
+        el("div", { class: "settings-modal" }, closeButton, el("div", { class: "settings-content" }, section)));
+      document.body.append(backdrop, dialog);
+      open = [backdrop, dialog];
+      liftAboveCover();
+      dialog.focus({ preventScroll: true });
+      dialog.addEventListener("keydown", (event) => { if (event.key === "Escape") { event.stopPropagation(); close(); } });
+    }
+
+    // Lattice covers the page and makes the rest inert when this tab loses
+    // the workspace or its connection. The dialog needs neither, so it stays
+    // in front of that cover and usable: pairing a phone hands it the
+    // workspace, and the owner can still see and revoke it here.
+    function liftAboveCover() {
+      if (!open) return;
+      const cover = document.getElementById("lattice-browser-runtime-error");
+      for (const node of open) {
+        if (node.hasAttribute("inert")) node.removeAttribute("inert");
+        if (cover && (node.compareDocumentPosition(cover) & Node.DOCUMENT_POSITION_FOLLOWING)) document.body.append(node);
+      }
+    }
+    new MutationObserver(liftAboveCover).observe(document.documentElement, { childList: true, subtree: true, attributes: true, attributeFilter: ["inert"] });
+
+    openPhoneGuide = show;
+    // The plugin's command, the devices address and old links land here.
+    const params = new URLSearchParams(location.search);
+    const asked = params.get("lattice-gateway") === "phone";
+    if (asked) {
+      params.delete("lattice-gateway");
+      history.replaceState(null, "", `${location.pathname}${params.size ? `?${params}` : ""}${location.hash}`);
+    }
+    fetch("/__gateway/api/whoami", { credentials: "same-origin", cache: "no-store" })
+      .then((response) => response.json())
+      .then(async (me) => {
+        if (me.kind !== "owner") return;
+        if (asked) { setTimeout(show, 1500); return; }
+        // Once, on a computer, and not inside the installed app: point the owner at the phone setup.
+        const standalone = matchMedia("(display-mode: standalone)").matches || navigator.standalone === true;
+        if (innerWidth < 700 || standalone) return;
+        const phone = await api("/__gateway/api/phone").catch(() => null);
+        if (!phone || phone.hintDismissed) return;
+        setTimeout(() => {
+          if (toastApi.busy() || document.querySelector("[data-lattice-gateway=phone]")) return;
+          const dismiss = () => api("/__gateway/api/phone/hint", {}).catch(() => {});
+          toastApi.show({
+            title: "Use this workspace on your phone",
+            detail: "Scan a code to open it on your phone, and install it as an app.",
+            onClose: dismiss,
+            actions: [
+              { label: "Set up phone", run: () => { dismiss(); toastApi.close(); show(); } },
+              { label: "Don't show again", run: () => { dismiss(); toastApi.close(); } },
+            ],
+          });
+        }, 9000);
+      })
+      .catch(() => {});
   })();
 
 })();

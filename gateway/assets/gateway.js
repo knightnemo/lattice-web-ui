@@ -1,6 +1,7 @@
-// lattice-gateway's own pages: sign-in, pairing and Remote devices, nothing else.
+// lattice-gateway's own pages: sign-in and pairing, nothing else. Phone and app
+// is a dialog in the workspace (bridge.js).
 // They follow the v0.4.x remote-workspace pages
-// (src/platform/headless-login.ts, headless-devices.tsx): same layout, same copy.
+// (src/platform/headless-login.ts): same layout, same copy.
 // No framework and no third-party code.
 "use strict";
 
@@ -19,7 +20,6 @@ const T = zh ? {
   openWorkspace: "打开工作区",
   tokenLabel: "服务器访问令牌",
   connect: "连接",
-  tokenHint: "请输入托管此工作区的电脑上的访问令牌。",
   pairingHint: "在新设备上，请扫描工作区所有者提供的配对码，或打开对方发来的邀请链接。",
   ownerSignIn: "工作区所有者登录",
   connectionFailed: "连接失败。请检查服务器访问令牌后重试。",
@@ -27,26 +27,11 @@ const T = zh ? {
   deviceName: "设备名称",
   connectThisDevice: "连接此设备",
   invalidInvitation: "这个配对链接无效。请重新扫描二维码，或请所有者再发一次链接。",
-  remoteDevices: "远程设备",
-  scanHint: "用另一台设备扫描此二维码。二维码仅可使用一次，两分钟后失效。",
-  copyLink: "复制配对链接",
-  linkCopied: "已复制配对链接。",
-  copyFailed: "无法复制配对链接。",
-  revoke: "撤销",
-  refresh: "刷新设备列表",
-  pairDevice: "配对设备",
-  loadFailed: "无法加载已配对设备。",
-  inviteFailed: "无法生成配对码。",
-  revokeFailed: "无法撤销此设备的访问权限。",
-  noDevices: "还没有配对的设备。",
-  backToWorkspace: "返回工作区",
-  signOut: "退出登录",
   failed: "请求失败，请检查网络后重试。",
 } : {
   openWorkspace: "Open workspace",
   tokenLabel: "Server access token",
   connect: "Connect",
-  tokenHint: "Use the access token from the computer hosting this workspace.",
   pairingHint: "On a new device, scan the pairing code from the owner's workspace or open their invitation link.",
   ownerSignIn: "Workspace owner sign-in",
   connectionFailed: "Connection failed. Check the server access token and try again.",
@@ -54,20 +39,6 @@ const T = zh ? {
   deviceName: "Device name",
   connectThisDevice: "Connect this device",
   invalidInvitation: "This pairing link isn't valid. Scan the code again, or ask the owner for a new link.",
-  remoteDevices: "Remote devices",
-  scanHint: "Scan this code on your other device. It can be used once and expires in two minutes.",
-  copyLink: "Copy pairing link",
-  linkCopied: "Pairing link copied.",
-  copyFailed: "Could not copy the pairing link.",
-  revoke: "Revoke",
-  refresh: "Refresh devices",
-  pairDevice: "Pair a device",
-  loadFailed: "Could not load paired devices.",
-  inviteFailed: "Could not create a pairing code.",
-  revokeFailed: "Could not revoke this device.",
-  noDevices: "No devices are paired yet.",
-  backToWorkspace: "Back to workspace",
-  signOut: "Sign out",
   failed: "The request failed. Check the connection and try again.",
 };
 
@@ -124,10 +95,6 @@ function guessDeviceName() {
   return "Linux";
 }
 
-function backLink() {
-  return el("a", { class: "button ghost", href: "/" }, T.backToWorkspace);
-}
-
 function renderLogin() {
   const input = el("input", { id: "token", type: "password", autocomplete: "off", spellcheck: "false", required: true });
   const button = el("button", { type: "submit" }, T.connect);
@@ -179,67 +146,4 @@ function renderPair() {
   shell("", header(T.pairThisDevice), form);
 }
 
-async function renderDevices() {
-  const list = el("ul", { class: "headless-device-list" });
-  const code = el("div", { class: "headless-device-code", hidden: true });
-  const status = el("p", { role: "status" });
-  let busy = false;
-  let expiry;
-
-  async function refresh() {
-    try {
-      const { devices } = await call("/__gateway/api/devices");
-      list.replaceChildren(...devices.map((device) => el("li", {},
-        el("span", {}, device.label),
-        el("button", { class: "danger", onclick: (event) => revoke(device.id, event.currentTarget) }, T.revoke))));
-      if (!devices.length) list.replaceChildren(el("li", { class: "secondary-text" }, T.noDevices));
-    } catch {
-      status.textContent = T.loadFailed;
-    }
-  }
-  async function revoke(id, button) {
-    if (busy) return;
-    busy = true; button.disabled = true; status.textContent = "";
-    try { await call(`/__gateway/api/devices/${encodeURIComponent(id)}/revoke`, {}); await refresh(); }
-    catch { status.textContent = T.revokeFailed; button.disabled = false; }
-    busy = false;
-  }
-  async function invite() {
-    if (busy) return;
-    busy = true; pair.disabled = true; status.textContent = "";
-    clearTimeout(expiry);
-    try {
-      const { url, expiresIn, qrSvg } = await call("/__gateway/api/invites", {});
-      code.replaceChildren(
-        el("img", { alt: "", src: `data:image/svg+xml;charset=utf-8,${encodeURIComponent(qrSvg)}` }),
-        el("p", {}, T.scanHint),
-        el("button", { onclick: async () => {
-          try { await navigator.clipboard.writeText(url); status.textContent = T.linkCopied; }
-          catch { status.textContent = T.copyFailed; }
-        } }, T.copyLink));
-      code.hidden = false;
-      expiry = setTimeout(() => { code.hidden = true; refresh(); }, expiresIn * 1000);
-      // A device that pairs shows up in the list.
-      const poll = setInterval(refresh, 5000);
-      setTimeout(() => clearInterval(poll), expiresIn * 1000);
-    } catch {
-      status.textContent = T.inviteFailed;
-    }
-    busy = false; pair.disabled = false;
-  }
-  const pair = el("button", { class: "primary", onclick: invite }, T.pairDevice);
-  let me = {};
-  try { me = await call("/__gateway/api/whoami"); } catch { /* shown as the owner page anyway */ }
-  const leading = el("div", { class: "actions start" });
-  if (me.publicOrigin && location.origin === document.body.dataset.origin) {
-    leading.append(backLink(), el("button", { class: "ghost", onclick: async () => {
-      await call("/__gateway/api/logout", {}).catch(() => {});
-      location.replace("/__gateway/login");
-    } }, T.signOut));
-  }
-  shell("wide", header(T.remoteDevices), code, list, status,
-    el("div", { class: "actions" }, el("button", { class: "ghost", onclick: refresh }, T.refresh), pair), leading);
-  await refresh();
-}
-
-({ login: renderLogin, pair: renderPair, devices: renderDevices }[page] || renderLogin)();
+({ login: renderLogin, pair: renderPair }[page] || renderLogin)();

@@ -87,7 +87,7 @@ definePlugin({
         summary: "Devices",
         items: [{
           id: "remote-devices",
-          title: "Remote devices",
+          title: "Phone and app",
           subtitle: `${origin}/__gateway/devices`,
           actions: [{ type: "openUrl", url: `${origin}/__gateway/devices` }],
         }],

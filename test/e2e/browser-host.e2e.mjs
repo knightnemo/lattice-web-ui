@@ -99,13 +99,18 @@ test("the owner opens a project, edits it, and the edit reaches the disk", { ski
 test("a paired phone reaches Lattice, and revoking it cuts it off", async () => {
   const owner = await context();
   const ownerPage = await owner.newPage();
-  await signInAsOwner(ownerPage, "/__gateway/devices");
+  // The devices address opens Phone and app, a dialog in the workspace.
+  await signInAsOwner(ownerPage);
+  await ownerPage.goto(`${origin}/__gateway/devices`);
+  const dialog = ownerPage.locator("[data-lattice-gateway=phone]");
+  await dialog.locator(".ui-settings-group").first().waitFor({ timeout: 60_000 });
+  assert.equal(await dialog.locator(".ui-settings-section-header-title").textContent(), "Phone and app");
   const created = ownerPage.waitForResponse((response) => response.url().endsWith("/__gateway/api/invites"));
-  await ownerPage.getByRole("button", { name: "Pair a device" }).click();
+  await dialog.getByRole("button", { name: "Pair a device" }).click();
   const { url: link } = await (await created).json();
-  await ownerPage.locator(".headless-device-code img").waitFor();
+  await dialog.locator(".phone-pair img").waitFor();
   assert.match(link, new RegExp(`^${origin.replace(/[.]/g, "\\.")}/__gateway/pair#[0-9a-f]{48}$`));
-  await shot(ownerPage, "e2e-invite");
+  await shot(ownerPage, "e2e-phone-dialog");
 
   const phone = await context({ viewport: { width: 390, height: 844 }, isMobile: true, hasTouch: true, deviceScaleFactor: 2 });
   const phonePage = await phone.newPage();
@@ -123,8 +128,8 @@ test("a paired phone reaches Lattice, and revoking it cuts it off", async () => 
   await shot(phonePage, "e2e-phone");
 
   const closed = new Promise((resolve) => bridge.on("close", resolve));
-  await ownerPage.reload();
-  const row = ownerPage.locator("li", { hasText: label });
+  await ownerPage.goto(`${origin}/__gateway/devices`);
+  const row = ownerPage.locator("[data-lattice-gateway=phone] .ui-settings-row", { hasText: label });
   await row.getByRole("button", { name: "Revoke" }).click();
   await closed;
   const after = await phone.request.get(`${origin}/__lattice_session`);
@@ -256,7 +261,8 @@ test("on the tailnet the owner gets Lattice with no sign-in and no extra control
   await page.goto(`${tailnet}/`);
   assert.equal(new URL(page.url()).pathname, "/");
   await page.locator(".cm-content").first().waitFor({ timeout: 40_000 });
-  assert.equal(await page.locator("[data-lattice-gateway]").count(), 0, "the gateway adds nothing to Lattice's page");
+  // Only its name and icon (links, a style); no control of its own.
+  assert.equal(await page.locator("body [data-lattice-gateway]:not(link, meta, style)").count(), 0, "the gateway adds nothing to Lattice's page");
   await shot(page, "e2e-tailnet");
   await ctx.close();
 });

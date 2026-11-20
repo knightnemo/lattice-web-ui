@@ -65,15 +65,36 @@ checks its SHA-256, and starts three systemd user services:
   workspace**:
   - The owner signs in with the server access token, which is in
     `~/.local/share/lattice-host/access-token`.
-  - A new device scans a pairing QR code instead. The owner opens **Remote
-    devices** and selects **Pair a device**. The phone scans the code and
-    selects **Connect this device**. The code works once and expires after two
+  - A new device scans a pairing QR code instead. The owner opens **Phone and
+    app** and selects **Pair a device**. The phone scans the code and selects
+    **Connect this device**. The code works once and expires after two
     minutes. The device stays signed in for 90 days, and **Revoke** cuts it off
     at once.
-- **Remote devices** is at `/__gateway/devices`. Lattice-web-ui's plugin adds a
-  **Remote devices** command to Lattice's own command palette. Install the
-  plugin in the host's Lattice from Settings › Plugins, and in Lattice on your
-  Mac.
+
+## Phone and app
+
+**Phone and app** is a dialog in the workspace, made from Lattice's own
+Settings parts. It has three groups:
+
+- **Open on your phone.** A QR code for the workspace's address: a phone
+  signed in to the same Tailscale account goes straight in. It also offers a
+  one-time pairing code for any other phone.
+- **Install the app.** The steps for iPhone and iPad, Android, Mac, and
+  Windows or Linux, with the current device marked. Chrome and Edge get an
+  **Install** button.
+- **Paired devices.** Each device, with **Revoke**.
+
+How to open it:
+
+- **The plugin.** Lattice-web-ui's plugin adds a **Phone and app** command to
+  Lattice's command palette. Install the plugin in the host's Lattice from
+  Settings › Plugins.
+- **The address.** `/__gateway/devices` opens the dialog.
+- **A one-time hint.** The first time the owner opens the workspace on a
+  computer, a notification offers it.
+
+`./lattice-host phone` shows the address as a QR code on the host's terminal,
+as `install` does when it finishes.
 
 The gateway trusts Tailscale's identity headers only on its Unix sockets, and
 only from tailscaled (root, or `--ingress-uid` for a tailscaled running in a

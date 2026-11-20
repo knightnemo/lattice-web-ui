@@ -11,8 +11,10 @@ HTTPS address.
 2. Run **Lattice-web-ui: Open remote workspace** and select the result to open
    the workspace in your browser. The first time, sign in with the owner token
    or open a pairing link from the owner.
-3. Run **Lattice-web-ui: Remote devices** to open the device page. From
-   there you can show a pairing QR code for a phone, or revoke a device.
+3. Run **Lattice-web-ui: Phone and app** in the workspace. It opens a dialog
+   with a QR code for the workspace's address, the steps to install the
+   workspace as an app, a one-time pairing code for a phone outside your
+   tailnet, and the paired devices, each with Revoke.
 
 ## Permissions and data
 

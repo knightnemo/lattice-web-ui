@@ -89,6 +89,13 @@ pub struct Args {
 
 #[tokio::main]
 async fn main() {
+    // `lattice-gateway --print-qr <text>`: the code lattice-host shows on the
+    // host's terminal, so the host kit needs no QR library of its own.
+    let argv: Vec<String> = std::env::args().collect();
+    if argv.len() == 3 && argv[1] == "--print-qr" {
+        print!("{}", app::qr_text(&argv[2]));
+        return;
+    }
     let args = Args::parse();
     let app = match app::App::new(&args) {
         Ok(app) => Arc::new(app),

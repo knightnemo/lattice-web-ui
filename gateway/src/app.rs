@@ -91,6 +91,8 @@ pub struct App {
     /// session of its own resumes the workspace used last, on any device.
     last_workspace: LastWorkspace,
     updates: Option<crate::update::Updates>,
+    /// Present once the owner has answered the phone hint.
+    phone_hint: std::path::PathBuf,
 }
 
 /// The Lattice workspaces browser tabs hold through the gateway.
@@ -318,6 +320,7 @@ impl App {
             agent_bridge: Bridge::default(),
             last_workspace: LastWorkspace::default(),
             updates: args.update_dir.clone().map(crate::update::Updates::new),
+            phone_hint: args.state_dir.join("phone-hint-answered"),
             tex: args.tlmgr.clone().map(|tlmgr| crate::tex::Tex {
                 tlmgr,
                 dry_run: args.tlmgr_dry_run,
@@ -522,6 +525,21 @@ fn device_json(d: &store::Device) -> Value {
     json!({ "id": d.id, "label": d.label, "createdAt": d.created_at, "lastSeenAt": d.last_seen_at, "expiresAt": d.expires_at })
 }
 
+/// A QR code in half-block characters, light on a dark terminal.
+pub fn qr_text(text: &str) -> String {
+    use qrcode::render::unicode::Dense1x2;
+    qrcode::QrCode::new(text.as_bytes())
+        .map(|code| {
+            code.render::<Dense1x2>()
+                .dark_color(Dense1x2::Light)
+                .light_color(Dense1x2::Dark)
+                .quiet_zone(true)
+                .build()
+        })
+        .map(|art| format!("{art}\n"))
+        .unwrap_or_default()
+}
+
 fn qr_svg(text: &str) -> String {
     use qrcode::render::svg;
     qrcode::QrCode::new(text.as_bytes())
@@ -624,11 +642,12 @@ async fn handle(app: Arc<App>, entrance: Entrance, req: Request<Incoming>) -> Re
         (&Method::GET, "/__gateway/vendor/inter-latin-ext-wght-normal.woff2") => {
             return asset("font/woff2", INTER_LATIN_EXT)
         }
+        // Phone and app is a dialog in the workspace now; this address opens it there.
         (&Method::GET, "/__gateway/devices") => {
             return if principal == Some(Principal::Owner) {
-                page("devices", &origin)
+                redirect("/?lattice-gateway=phone")
             } else {
-                redirect("/__gateway/login?next=/__gateway/devices")
+                redirect("/__gateway/login?next=%2F%3Flattice-gateway%3Dphone")
             };
         }
         (&Method::GET, "/__gateway/api/config") => {
@@ -644,6 +663,25 @@ async fn handle(app: Arc<App>, entrance: Entrance, req: Request<Incoming>) -> Re
                 json!({
                     "agentOrigin": app.agent_origin,
                     "tex": app.tex.is_some(),
+                }),
+            );
+        }
+        (&Method::GET, "/__gateway/api/phone") => {
+            if principal != Some(Principal::Owner) {
+                return error(
+                    StatusCode::UNAUTHORIZED,
+                    "owner_required",
+                    "Sign in as the owner to set up a phone.",
+                );
+            }
+            return json_response(
+                StatusCode::OK,
+                json!({
+                    "address": app.public_origin,
+                    "qrSvg": qr_svg(&format!("{}/", app.public_origin)),
+                    "tailnet": !app.owner_logins.is_empty(),
+                    "signedIn": app.cookie(req.headers(), app.owner_cookie).is_some(),
+                    "hintDismissed": app.phone_hint.exists(),
                 }),
             );
         }
@@ -1055,6 +1093,14 @@ async fn api(
                 }
             }
         }
+        "/__gateway/api/phone/hint" if owner => match fs::write(&app.phone_hint, b"") {
+            Ok(()) => json_response(StatusCode::OK, json!({ "hintDismissed": true })),
+            Err(e) => error(
+                StatusCode::INTERNAL_SERVER_ERROR,
+                "write_failed",
+                &format!("The gateway could not record that: {e}"),
+            ),
+        },
         "/__gateway/api/update/start" | "/__gateway/api/update/dismiss" if owner => {
             let Some(updates) = &app.updates else {
                 return error(
