@@ -4,9 +4,62 @@
 //    the tab the person was just using claims it and follows it.
 // 2. A project picked on the gateway's Projects page is opened through Lattice's
 //    own "open project in a new window" command once the page is connected.
-// 3. A small link to the gateway's Projects and Devices pages.
+// 3. Lattice's Agent runs on its own loopback port. The gateway serves it on a
+//    second public origin; the address Lattice reports is swapped for that one.
+// 4. Lattice has no one-click TeX package install on Linux. For the owner, its
+//    install command is answered by the gateway, which runs tlmgr on the host.
+// 5. A small link to the gateway's Projects and Devices pages.
 (() => {
   "use strict";
+
+  const LOOPBACK_AGENT = /^http:\/\/127\.0\.0\.1:(\d{1,5})$/;
+  let agentConfig;
+  const agentOrigin = () => (agentConfig ??= fetch("/__gateway/api/config", { credentials: "same-origin", cache: "no-store" })
+    .then((r) => (r.ok ? r.json() : {})).then((c) => c.agentOrigin || null).catch(() => null));
+  async function publicAgent(info) {
+    const match = info && typeof info.origin === "string" && LOOPBACK_AGENT.exec(info.origin);
+    const origin = match && await agentOrigin();
+    if (!origin) return info;
+    const response = await fetch("/__gateway/api/agent-port", {
+      method: "POST", credentials: "same-origin", cache: "no-store",
+      headers: { "Content-Type": "application/json" }, body: JSON.stringify({ port: Number(match[1]) }),
+    });
+    return response.ok ? { ...info, origin } : info;
+  }
+  async function installTexDependency(args, fallback) {
+    const name = (args && (args.package || args.missingFile)) || "";
+    const response = await fetch("/__gateway/api/tex-install", {
+      method: "POST", credentials: "same-origin", cache: "no-store",
+      headers: { "Content-Type": "application/json" }, body: JSON.stringify({ name }),
+    });
+    // Not the owner, or no TeX the gateway may change: Lattice answers as it would.
+    if (response.status === 401 || response.status === 404) return fallback();
+    const value = await response.json().catch(() => ({}));
+    if (response.ok) return { kind: "installed" };
+    if (value?.error?.code === "choose_package") return { kind: "choosePackage", packages: value.error.packages };
+    throw new Error(value?.error?.message || "Installing the TeX package failed.");
+  }
+
+  // Lattice installs its IPC adapter on window.__TAURI_INTERNALS__; wrap its invoke as it arrives.
+  let internals;
+  Object.defineProperty(window, "__TAURI_INTERNALS__", {
+    configurable: true,
+    get: () => internals,
+    set(value) {
+      if (value && typeof value.invoke === "function" && !value.__latticeGateway) {
+        const invoke = value.invoke;
+        value.invoke = async (command, args, options) => {
+          if (command === "start_tex_dependency_install") {
+            return installTexDependency(args, () => invoke(command, args, options));
+          }
+          const result = await invoke(command, args, options);
+          return command === "synara_ensure_ready" ? publicAgent(result) : result;
+        };
+        value.__latticeGateway = true;
+      }
+      internals = value;
+    },
+  });
   let lastInput = 0;
   for (const type of ["pointerdown", "keydown"]) {
     addEventListener(type, () => { lastInput = Date.now(); }, { capture: true, passive: true });
@@ -58,7 +111,32 @@
     })();
   }
 
+  // The owner learns when Lattice opens a native window on the host, and can go use it.
+  async function watchHostWindows(banner) {
+    try {
+      const response = await fetch("/__gateway/api/screen/state", { credentials: "same-origin", cache: "no-store" });
+      if (response.status === 401 || response.status === 404) return; // not the owner, or not shared
+      const { windows } = await response.json();
+      banner.hidden = !windows;
+    } catch { /* retry */ }
+    setTimeout(() => watchHostWindows(banner), document.visibilityState === "visible" ? 2500 : 8000);
+  }
+
   addEventListener("DOMContentLoaded", () => {
+    const zhBanner = /^zh\b/i.test(navigator.language || "");
+    const banner = document.createElement("a");
+    banner.href = "/__gateway/screen";
+    banner.hidden = true;
+    banner.textContent = zhBanner ? "Lattice 在主机上打开了一个窗口，点这里使用它" : "Lattice opened a window on the host. Use it here";
+    banner.setAttribute("data-lattice-gateway", "");
+    banner.style.cssText = [
+      "position:fixed", "z-index:2147483001", "left:50%", "transform:translateX(-50%)",
+      "top:max(8px, env(safe-area-inset-top))", "padding:8px 14px", "border-radius:999px",
+      "font:600 13px/1.2 -apple-system, BlinkMacSystemFont, 'Segoe UI', system-ui, sans-serif",
+      "background:#556324", "color:#fff", "text-decoration:none", "box-shadow:0 2px 8px rgba(0,0,0,.25)",
+    ].join(";");
+    document.body.append(banner);
+    watchHostWindows(banner);
     const zh = /^zh\b/i.test(navigator.language || "");
     const link = document.createElement("a");
     link.href = "/__gateway/projects";

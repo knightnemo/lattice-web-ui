@@ -56,6 +56,8 @@ const MAX_REWRITE_BYTES: usize = 32 * 1024 * 1024;
 /// How the gateway adapts Lattice's page in transit.
 #[derive(Default)]
 pub struct Bridge {
+    /// Load the gateway's page script into Lattice's workspace page.
+    pub inject: bool,
     /// Rewrite the page's loopback-only expressions (see `bridge.rs`).
     pub rewrite: bool,
     pub counters: crate::bridge::Counters,
@@ -305,7 +307,8 @@ pub async fn forward(
                 .and_then(|v| v.to_str().ok())
                 .unwrap_or("")
                 .to_ascii_lowercase();
-            let html = kind.starts_with("text/html")
+            let html = bridge.inject
+                && kind.starts_with("text/html")
                 && (path == "/" || path.starts_with("/?") || path.starts_with("/index.html"));
             let script = bridge.rewrite && kind.contains("javascript");
             if parts.status != StatusCode::OK || !(html || script) {

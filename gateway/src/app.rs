@@ -32,12 +32,13 @@ const PAGE_JS: &str = include_str!("../assets/gateway.js");
 const BRIDGE_JS: &str = include_str!("../assets/bridge.js");
 /// How long an address Lattice asked to open waits for a tab to claim it.
 const OPEN_REQUEST_TTL: Duration = Duration::from_secs(60);
-const CSP: &str = "default-src 'none'; script-src 'self'; style-src 'self'; img-src 'self' data:; connect-src 'self'; base-uri 'none'; form-action 'none'; frame-ancestors 'none'";
+const CSP: &str = "default-src 'none'; script-src 'self'; style-src 'self'; img-src 'self' data: blob:; connect-src 'self'; base-uri 'none'; form-action 'none'; frame-ancestors 'none'";
 
 #[derive(Clone, Copy, PartialEq, Debug)]
 enum Entrance {
     Public,
     Owner,
+    Agent,
 }
 
 #[derive(Clone, Debug, PartialEq)]
@@ -71,6 +72,12 @@ pub struct App {
     bridge: Bridge,
     open_requests: Option<std::path::PathBuf>,
     projects_root: Option<std::path::PathBuf>,
+    screen: Option<crate::screen::Screen>,
+    agent_origin: Option<String>,
+    agent_marker: Option<std::path::PathBuf>,
+    agent_upstream: Mutex<Option<Arc<Upstream>>>,
+    agent_bridge: Bridge,
+    tex: Option<crate::tex::Tex>,
 }
 
 fn canonical_origin(value: &str, allow_http: bool) -> Result<String, String> {
@@ -140,6 +147,13 @@ impl App {
         if owner_origin.as_deref() == Some(public_origin.as_str()) {
             return Err("Give the owner page its own origin, separate from the public one.".into());
         }
+        if args.agent_listen.is_some() != args.agent_origin.is_some()
+            || args.agent_listen.is_some() != args.agent_process_marker.is_some()
+        {
+            return Err(
+                "--agent-listen, --agent-origin and --agent-process-marker go together.".into(),
+            );
+        }
         let owner_logins = match &args.owner_logins {
             Some(path) => fs::read_to_string(path)
                 .map_err(|e| format!("{}: {e}", path.display()))?
@@ -182,11 +196,34 @@ impl App {
             },
             secure,
             bridge: Bridge {
+                inject: true,
                 rewrite: args.rewrite_loopback_page,
                 ..Bridge::default()
             },
+            agent_origin: args
+                .agent_origin
+                .as_deref()
+                .map(|o| canonical_origin(o, args.insecure_dev_cookies))
+                .transpose()?,
+            agent_marker: args.agent_process_marker.clone(),
+            agent_upstream: Mutex::new(None),
+            agent_bridge: Bridge::default(),
+            tex: args.tlmgr.clone().map(|tlmgr| crate::tex::Tex {
+                tlmgr,
+                dry_run: args.tlmgr_dry_run,
+            }),
             open_requests: args.open_requests.clone(),
             projects_root: args.projects_root.clone(),
+            screen: match (&args.display_framebuffer, &args.xdotool) {
+                (Some(framebuffer), Some(xdotool)) => Some(crate::screen::Screen {
+                    framebuffer: framebuffer.clone(),
+                    xdotool: xdotool.clone(),
+                    display: args.display.clone(),
+                    library_path: args.xdotool_library_path.clone(),
+                }),
+                (None, None) => None,
+                _ => return Err("--display-framebuffer and --xdotool go together.".into()),
+            },
         })
     }
 
@@ -260,6 +297,7 @@ impl App {
     fn origin_for(&self, entrance: Entrance) -> &str {
         match entrance {
             Entrance::Public => &self.public_origin,
+            Entrance::Agent => self.agent_origin.as_deref().unwrap_or(&self.public_origin),
             Entrance::Owner => self.owner_origin.as_deref().unwrap_or(&self.public_origin),
         }
     }
@@ -397,6 +435,10 @@ async fn handle(app: Arc<App>, entrance: Entrance, req: Request<Incoming>) -> Re
     let principal = app.principal(entrance, req.headers());
     let origin = app.origin_for(entrance).to_string();
 
+    if entrance == Entrance::Agent {
+        return agent_request(app, principal, req).await;
+    }
+
     match (entrance, &method, path.as_str()) {
         (_, &Method::GET, "/__gateway/gateway.css") => {
             return asset("text/css; charset=utf-8", PAGE_CSS)
@@ -466,12 +508,87 @@ async fn handle(app: Arc<App>, entrance: Entrance, req: Request<Incoming>) -> Re
             let projects = list_projects(app.projects_root.as_deref());
             return json_response(StatusCode::OK, json!({ "projects": projects }));
         }
+        (&Method::GET, "/__gateway/screen") => {
+            return if principal == Some(Principal::Owner) {
+                page("screen", &origin)
+            } else {
+                redirect("/__gateway/login?next=/__gateway/screen")
+            };
+        }
+        (&Method::GET, "/__gateway/api/screen/state") => {
+            if principal != Some(Principal::Owner) {
+                return error(
+                    StatusCode::UNAUTHORIZED,
+                    "owner_required",
+                    "Sign in as the owner to see the host's windows.",
+                );
+            }
+            let open = app
+                .screen
+                .as_ref()
+                .and_then(|screen| screen.has_windows().ok())
+                .unwrap_or(false);
+            return json_response(
+                StatusCode::OK,
+                json!({ "shared": app.screen.is_some(), "windows": open }),
+            );
+        }
+        (&Method::GET, "/__gateway/tex") => {
+            return if principal == Some(Principal::Owner) {
+                page("tex", &origin)
+            } else {
+                redirect("/__gateway/login?next=/__gateway/tex")
+            };
+        }
+        (&Method::GET, "/__gateway/api/screen.png") => {
+            if principal != Some(Principal::Owner) {
+                return error(
+                    StatusCode::UNAUTHORIZED,
+                    "owner_required",
+                    "Sign in as the owner to see the host's windows.",
+                );
+            }
+            let Some(screen) = &app.screen else {
+                return error(
+                    StatusCode::NOT_FOUND,
+                    "no_screen",
+                    "This host does not share its display.",
+                );
+            };
+            return match screen.png() {
+                Ok((png, (x, y))) => {
+                    let mut response = Response::new(full(png));
+                    let headers = response.headers_mut();
+                    headers.insert(header::CONTENT_TYPE, HeaderValue::from_static("image/png"));
+                    headers.insert(header::CACHE_CONTROL, HeaderValue::from_static("no-store"));
+                    headers.insert(
+                        "x-screen-offset",
+                        HeaderValue::from_str(&format!("{x},{y}")).expect("digits"),
+                    );
+                    response
+                }
+                Err(message) => error(StatusCode::SERVICE_UNAVAILABLE, "no_screen", &message),
+            };
+        }
         (&Method::GET, "/__gateway/devices") => {
             return if principal == Some(Principal::Owner) {
                 page("devices", &origin)
             } else {
                 redirect("/__gateway/login?next=/__gateway/devices")
             };
+        }
+        (&Method::GET, "/__gateway/api/config") => {
+            if principal.is_none() {
+                return error(
+                    StatusCode::UNAUTHORIZED,
+                    "sign_in_required",
+                    "Pair this browser or sign in with the owner token.",
+                );
+            }
+            return json_response(
+                StatusCode::OK,
+                json!({ "agentOrigin": app.agent_origin, "tex": app.tex.is_some(), "screen": app.screen.is_some() }),
+            );
         }
         (&Method::GET, "/__gateway/api/whoami") => {
             return match &principal {
@@ -561,6 +678,59 @@ async fn handle(app: Arc<App>, entrance: Entrance, req: Request<Incoming>) -> Re
         principal.name(),
         app.revocations.subscribe(),
         &app.bridge,
+    )
+    .await
+}
+
+/// The Agent entrance: the same sign-in as the workspace (cookies are shared
+/// across ports of one host), then Synara on the port the workspace registered.
+async fn agent_request(
+    app: Arc<App>,
+    principal: Option<Principal>,
+    req: Request<Incoming>,
+) -> Response<Body> {
+    let Some(principal) = principal else {
+        return error(
+            StatusCode::UNAUTHORIZED,
+            "sign_in_required",
+            "Open the workspace and sign in first.",
+        );
+    };
+    let agent_origin = app.agent_origin.clone().unwrap_or_default();
+    if let Some(sent) = req
+        .headers()
+        .get(header::ORIGIN)
+        .and_then(|v| v.to_str().ok())
+    {
+        if !sent.eq_ignore_ascii_case(&agent_origin)
+            && !sent.eq_ignore_ascii_case(&app.public_origin)
+        {
+            return error(
+                StatusCode::FORBIDDEN,
+                "cross_origin",
+                "Requests from other sites cannot reach the Agent.",
+            );
+        }
+    }
+    let upstream = app
+        .agent_upstream
+        .lock()
+        .unwrap_or_else(|p| p.into_inner())
+        .clone();
+    let Some(upstream) = upstream else {
+        return error(
+            StatusCode::SERVICE_UNAVAILABLE,
+            "agent_not_started",
+            "Open the Agent panel in the workspace first.",
+        );
+    };
+    proxy::forward(
+        req,
+        &upstream,
+        &agent_origin,
+        principal.name(),
+        app.revocations.subscribe(),
+        &app.agent_bridge,
     )
     .await
 }
@@ -757,6 +927,43 @@ async fn api(
                 ),
             }
         }
+        "/__gateway/api/agent-port" if entrance == Entrance::Public && principal.is_some() => {
+            let (Some(agent_origin), Some(marker)) = (&app.agent_origin, &app.agent_marker) else {
+                return error(
+                    StatusCode::NOT_FOUND,
+                    "no_agent",
+                    "This host does not serve the Agent.",
+                );
+            };
+            let body = match read_json(req).await {
+                Ok(v) => v,
+                Err(r) => return *r,
+            };
+            let Some(port) = body
+                .get("port")
+                .and_then(Value::as_u64)
+                .and_then(|p| u16::try_from(p).ok())
+            else {
+                return error(
+                    StatusCode::BAD_REQUEST,
+                    "bad_port",
+                    "Send the Agent's loopback port.",
+                );
+            };
+            if !crate::agent::port_belongs_to_lattice(port, marker) {
+                return error(
+                    StatusCode::FORBIDDEN,
+                    "not_lattice",
+                    "That port is not Lattice's Agent.",
+                );
+            }
+            let upstream = Arc::new(Upstream::new(std::net::SocketAddr::from((
+                [127, 0, 0, 1],
+                port,
+            ))));
+            *app.agent_upstream.lock().unwrap_or_else(|p| p.into_inner()) = Some(upstream);
+            json_response(StatusCode::OK, json!({ "origin": agent_origin }))
+        }
         "/__gateway/api/open-request" if entrance == Entrance::Public && principal.is_some() => {
             match claim_open_request(app.open_requests.as_deref()) {
                 Some(url) => json_response(StatusCode::OK, json!({ "url": url })),
@@ -764,6 +971,96 @@ async fn api(
                     let mut response = Response::new(empty());
                     *response.status_mut() = StatusCode::NO_CONTENT;
                     response
+                }
+            }
+        }
+        "/__gateway/api/screen/input" if owner => {
+            let Some(screen) = &app.screen else {
+                return error(
+                    StatusCode::NOT_FOUND,
+                    "no_screen",
+                    "This host does not share its display.",
+                );
+            };
+            let body = match read_json(req).await {
+                Ok(v) => v,
+                Err(r) => return *r,
+            };
+            let input = match body.get("type").and_then(Value::as_str) {
+                Some("click") => match (
+                    body.get("x").and_then(Value::as_u64),
+                    body.get("y").and_then(Value::as_u64),
+                ) {
+                    (Some(x), Some(y)) if x < 8192 && y < 8192 => crate::screen::Input::Click {
+                        x: x as u32,
+                        y: y as u32,
+                    },
+                    _ => {
+                        return error(
+                            StatusCode::BAD_REQUEST,
+                            "bad_input",
+                            "A click needs x and y on the screen.",
+                        )
+                    }
+                },
+                Some("key") => crate::screen::Input::Key(
+                    body.get("key")
+                        .and_then(Value::as_str)
+                        .unwrap_or("")
+                        .to_string(),
+                ),
+                Some("text") => crate::screen::Input::Text(
+                    body.get("text")
+                        .and_then(Value::as_str)
+                        .unwrap_or("")
+                        .to_string(),
+                ),
+                _ => {
+                    return error(
+                        StatusCode::BAD_REQUEST,
+                        "bad_input",
+                        "Send a click, a key or text.",
+                    )
+                }
+            };
+            match screen.send(&input) {
+                Ok(()) => json_response(StatusCode::OK, json!({ "sent": true })),
+                Err(message) => error(StatusCode::BAD_REQUEST, "input_failed", &message),
+            }
+        }
+        "/__gateway/api/tex-install" if owner => {
+            let Some(tex) = &app.tex else {
+                return error(
+                    StatusCode::NOT_FOUND,
+                    "no_tex",
+                    "This host has no TeX installation the gateway may change.",
+                );
+            };
+            let body = match read_json(req).await {
+                Ok(v) => v,
+                Err(r) => return *r,
+            };
+            let name = body
+                .get("name")
+                .and_then(Value::as_str)
+                .unwrap_or("")
+                .trim()
+                .to_string();
+            match tex.install(&name).await {
+                Ok((package, output)) => json_response(
+                    StatusCode::OK,
+                    json!({ "package": package, "output": output }),
+                ),
+                Err(crate::tex::TexError::Choose(packages)) => json_response(
+                    StatusCode::CONFLICT,
+                    json!({ "error": {
+                        "code": "choose_package",
+                        "message": "Several packages provide this file.",
+                        "packages": packages,
+                    } }),
+                ),
+                Err(crate::tex::TexError::Failed(message)) => {
+                    error(StatusCode::BAD_REQUEST, "tex_install_failed", &message)
                 }
             }
         }
@@ -876,6 +1173,36 @@ pub async fn serve(app: Arc<App>, args: &Args) -> Result<(), String> {
                     });
                     let _ = http1::Builder::new()
                         .serve_connection(TokioIo::new(stream), service)
+                        .await;
+                });
+            }
+        });
+    }
+    if let Some(address) = args.agent_listen {
+        let listener = TcpListener::bind(address)
+            .await
+            .map_err(|e| format!("{address}: {e}"))?;
+        eprintln!("lattice-gateway: Agent entrance on {address}");
+        let app = app.clone();
+        tokio::spawn(async move {
+            loop {
+                let Ok((stream, _)) = listener.accept().await else {
+                    continue;
+                };
+                let _ = stream.set_nodelay(true);
+                let app = app.clone();
+                tokio::spawn(async move {
+                    let service = service_fn(move |req| {
+                        let app = app.clone();
+                        async move {
+                            Ok::<_, std::convert::Infallible>(
+                                handle(app, Entrance::Agent, req).await,
+                            )
+                        }
+                    });
+                    let _ = http1::Builder::new()
+                        .serve_connection(TokioIo::new(stream), service)
+                        .with_upgrades()
                         .await;
                 });
             }

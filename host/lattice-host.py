@@ -149,20 +149,46 @@ def find_xvfb(root: Path, given: str | None) -> Path:
 
 
 def fetch_xvfb(root: Path) -> Path:
-    """Unpack Ubuntu's xvfb package into the host directory, without root."""
+    """Unpack Ubuntu's xvfb and xdotool packages into the host directory, without root."""
     target = root / "xvfb"
     with tempfile.TemporaryDirectory() as temp:
-        subprocess.run(["apt", "download", "xvfb"], cwd=temp, check=True, stdout=subprocess.DEVNULL)
-        debs = glob.glob(f"{temp}/xvfb_*.deb")
-        if not debs:
+        subprocess.run(["apt", "download", "xvfb", "xdotool", "libxdo3"], cwd=temp, check=True,
+                       stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+        debs = glob.glob(f"{temp}/*.deb")
+        if not any(Path(deb).name.startswith("xvfb_") for deb in debs):
             raise HostError("apt download xvfb produced no package.")
         target.mkdir(parents=True, exist_ok=True)
-        subprocess.run(["dpkg", "-x", debs[0], str(target)], check=True)
+        for deb in debs:
+            subprocess.run(["dpkg", "-x", deb, str(target)], check=True)
     binary = target / "usr/bin/Xvfb"
     missing = [line for line in subprocess.run(["ldd", str(binary)], capture_output=True, text=True).stdout.splitlines() if "not found" in line]
     if missing:
         raise HostError("Xvfb needs libraries this host lacks: " + "; ".join(m.strip() for m in missing))
     return binary
+
+
+def find_xdotool(root: Path) -> tuple[str | None, str | None]:
+    """xdotool lets the owner use Lattice's native windows from the browser. Optional."""
+    system = shutil.which("xdotool")
+    if system:
+        return system, None
+    unpacked = root / "xvfb/usr/bin/xdotool"
+    if unpacked.is_file():
+        return str(unpacked), str(root / "xvfb/usr/lib/x86_64-linux-gnu")
+    return None, None
+
+
+def find_tlmgr(home: Path) -> str | None:
+    """tlmgr of a TeX tree the host user can write to (TinyTeX, or TeX Live in user mode)."""
+    candidates = [shutil.which("tlmgr")] + sorted(glob.glob(str(home / ".TinyTeX/bin/*/tlmgr")))
+    for candidate in filter(None, candidates):
+        real = Path(candidate).resolve()
+        tree = next((parent for parent in real.parents if (parent / "texmf-dist").is_dir()), None)
+        if tree and os.access(tree, os.W_OK) and os.access(tree / "texmf-dist", os.W_OK):
+            # tlmgr finds its tree from the bin/<platform>/tlmgr it is started as.
+            launchers = sorted(glob.glob(str(tree / "bin/*/tlmgr")))
+            return launchers[0] if launchers else candidate
+    return None
 
 
 def tool_path(home: Path) -> str:
@@ -241,6 +267,17 @@ def write_files(root: Path, config: dict) -> None:
         gateway_args.append("--rewrite-loopback-page")
     if config.get("projects_root"):
         gateway_args += ["--projects-root", config["projects_root"]]
+    if config.get("agent_origin"):
+        gateway_args += ["--agent-listen", f"127.0.0.1:{config['gateway_port'] + 1}",
+                         "--agent-origin", config["agent_origin"],
+                         "--agent-process-marker", str(root / "releases")]
+    if config.get("tlmgr"):
+        gateway_args += ["--tlmgr", config["tlmgr"]]
+    if config.get("xdotool"):
+        gateway_args += ["--display-framebuffer", str(root / "state" / "display" / "Xvfb_screen0"),
+                         "--display", f":{config['display']}", "--xdotool", config["xdotool"]]
+        if config.get("xdotool_library_path"):
+            gateway_args += ["--xdotool-library-path", config["xdotool_library_path"]]
     if config.get("owner_origin"):
         gateway_args += ["--owner-socket", str(root / "owner.sock"), "--owner-origin", config["owner_origin"], "--owner-logins", str(root / "owner-logins")]
         if config.get("ingress_uid") is not None:
@@ -252,7 +289,8 @@ def write_files(root: Path, config: dict) -> None:
 Description=Lattice private virtual display :{config['display']}
 
 [Service]
-ExecStart={config['xvfb']} :{config['display']} -screen 0 1920x1080x24 -nolisten tcp -noreset
+ExecStartPre=/bin/mkdir -p {root / 'state' / 'display'}
+ExecStart={config['xvfb']} :{config['display']} -screen 0 1920x1080x24 -nolisten tcp -noreset -br -fbdir {root / 'state' / 'display'}
 Restart=on-failure
 
 [Install]
@@ -460,7 +498,14 @@ def cmd_install(args: argparse.Namespace) -> None:
         "manifest": str(args.manifest.resolve()),
         "rewrite_page": bool(manifest["releases"][version].get("frontendRewrite")),
         "projects_root": str(Path(args.projects_root).expanduser()) if args.projects_root else None,
+        "agent_origin": args.agent_origin,
     }
+    config["xdotool"], config["xdotool_library_path"] = find_xdotool(root)
+    config["tlmgr"] = find_tlmgr(home)
+    if not config["tlmgr"]:
+        say("No TeX installation this user can write to, so the gateway will not install TeX packages. Install missing packages with your distribution.")
+    if not config["xdotool"]:
+        say("xdotool is not installed, so Lattice's native windows stay out of reach. `sudo apt install xdotool` or --fetch-xvfb adds it.")
     save_config(root, config)
     stage_release(root, manifest["releases"][version])
     point(root, "current", version)
@@ -471,7 +516,7 @@ def cmd_install(args: argparse.Namespace) -> None:
     systemctl("daemon-reload")
     systemctl("enable", "--now", *UNITS)
     # Re-running install changes settings: the gateway picks them up on restart.
-    systemctl("restart", "lattice-gateway.service")
+    systemctl("restart", "lattice-display.service", "lattice-browser-host.service", "lattice-gateway.service")
     if not lattice_healthy():
         raise HostError("Lattice did not start. See `journalctl --user -u lattice-browser-host`.")
     verify_page(manifest["releases"][version])
@@ -480,6 +525,8 @@ def cmd_install(args: argparse.Namespace) -> None:
     say(f"Expose it on your tailnet: tailscale serve --bg --https=443 http://127.0.0.1:{args.gateway_port}")
     if args.owner_origin:
         say(f"Owner page: tailscale serve --bg --https=<port> unix:{root / 'owner.sock'}")
+    if args.agent_origin:
+        say(f"Agent: tailscale serve --bg --https=<port of {args.agent_origin}> http://127.0.0.1:{args.gateway_port + 1}")
 
 
 def cmd_update(args: argparse.Namespace) -> None:
@@ -557,6 +604,8 @@ def parser() -> argparse.ArgumentParser:
     install.add_argument("--display", type=int, default=99)
     install.add_argument("--xvfb", help="path to Xvfb")
     install.add_argument("--fetch-xvfb", action="store_true", help="unpack Ubuntu's xvfb into the host directory (no sudo)")
+    install.add_argument("--agent-origin", help="second HTTPS origin (same host, another port) for Lattice's Agent; "
+                         "served by the gateway on --gateway-port + 1")
     install.add_argument("--projects-root", help="folder whose subfolders the gateway's Projects page offers to open")
     install.add_argument("--home", help="HOME for Lattice (default: yours, so agent CLIs keep their sign-in)")
     install.add_argument("--owner-origin", help="origin of the Tailscale owner page, e.g. https://host.example.ts.net:9443")
