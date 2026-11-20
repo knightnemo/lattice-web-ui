@@ -31,15 +31,17 @@ phone / laptop ── HTTPS ── lattice-gateway ── Lattice (browser-host 
   Lattice opens directly. From the internet, the owner signs in with the access
   token and phones pair by scanning a QR code.
 
-## Watch the setup film
+## Watch the film
 
-*The Line Stays* (5:59) follows one workspace from its Linux host to a second Mac
-and a paired iPhone. It shows how to install the plugin, add the web app to the
-Dock or Home Screen, and keep an unsaved edit when the phone unfolds.
+*One Lattice, Every Screen* (2:13) shows what the plugin is for. A paper is
+edited on a phone and compiled on the host. It shows the two ways in, all of
+Lattice in a browser tab, the one-panel layout on a phone, a second screen
+taking the workspace over, a paired screen revoked, and the host updated with
+one click.
 
-https://github.com/user-attachments/assets/8052b304-7d79-45c5-91cb-7ac2d459ffd0
+<!-- The film's attachment link goes on this line. -->
 
-[English transcript and film credits](https://github.com/lattice-writer/lattice-web-ui/blob/main/docs/the-line-stays.md)
+[English transcript and film credits](https://github.com/lattice-writer/lattice-web-ui/blob/main/docs/one-lattice-every-screen.md)
 
 ## Open a workspace
 
