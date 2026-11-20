@@ -39,7 +39,7 @@ Lattice in a browser tab, the one-panel layout on a phone, a second screen
 taking the workspace over, a paired screen revoked, and the host updated with
 one click.
 
-<!-- The film's attachment link goes on this line. -->
+https://github.com/user-attachments/assets/07c4b86b-2a65-447f-a107-54e75da1877e
 
 [English transcript and film credits](https://github.com/lattice-writer/lattice-web-ui/blob/main/docs/one-lattice-every-screen.md)
 
