@@ -3,7 +3,7 @@ import { pathToFileURL } from "node:url";
 import { currentPull, githubApi, parsePullRequest, pullFiles } from "./pr-github.mjs";
 
 const marker = "<!-- lattice-web-ui-advisory -->";
-const reviewable = /^(?:(?:plugin|scripts|automation|test|account-gateway|device-pairing)\/[\w./-]+|\.github\/workflows\/[\w.-]+\.ya?ml|README\.md|AGENTS\.md)$/;
+const reviewable = /^(?:(?:plugin|scripts|automation|test|gateway|host|account-gateway|device-pairing)\/[\w./-]+|\.github\/workflows\/[\w.-]+\.ya?ml|README\.md|AGENTS\.md)$/;
 const sensitivePath = /(?:^|\/)(?:\.env[^/]*|[^/]+\.(?:pem|p12|pfx|key)|credentials(?:\.[^/]*)?|secrets?(?:\.[^/]*)?)(?:$|\/)/i;
 const knownCredential = /-----BEGIN [A-Z ]*PRIVATE KEY-----|(?:gh[pousr]_|github_pat_|sk-proj-|sk-ant-|AKIA|xox[baprs]-)[a-z0-9_-]{12,}|https?:\/\/[^\s/:]+:[^\s/@]+@/i;
 const maximumPatchBytes = 24000;
