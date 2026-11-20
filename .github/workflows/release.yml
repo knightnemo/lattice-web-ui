@@ -50,7 +50,7 @@ jobs:
     name: Build and verify release packages
     if: (github.event_name == 'push' && github.ref_type == 'tag') || (github.event_name == 'workflow_dispatch' && inputs.action == 'verify')
     runs-on: ubuntu-24.04
-    timeout-minutes: 15
+    timeout-minutes: 25
     permissions:
       contents: read
     outputs:
@@ -88,23 +88,24 @@ jobs:
             tag="v$version"
           fi
           printf 'commit=%s\ntag=%s\n' "$commit" "$tag" >> "$GITHUB_OUTPUT"
-      - name: Test and package the plugin and pinned source kit
+      - name: Test and package the plugin and Linux host kit
         id: pack
         env:
           RELEASE_COMMIT: ${{ steps.target.outputs.commit }}
           RELEASE_TAG: ${{ steps.target.outputs.tag }}
         run: |
-          node automation/release-package.mjs verify-snapshot "$PWD"
-          node --test test/*.test.mjs
+          cargo test --locked --manifest-path gateway/Cargo.toml
+          cargo build --locked --release --manifest-path gateway/Cargo.toml
+          gateway="$PWD/gateway/target/release/lattice-gateway"
+          python3 test/host_kit.py
+          LATTICE_GATEWAY_BINARY="$gateway" node --test test/*.test.mjs
           out="$RUNNER_TEMP/lattice-pack"
-          bash scripts/package.sh "$PWD" "$out"
+          LATTICE_GATEWAY_BINARY="$gateway" bash scripts/package.sh "$out"
           version="${RELEASE_TAG#v}"
           unzip -tqq "$out/remote-workspace-$version.zip"
-          root="lattice-remote-source-$version"
-          tar -xOf "$out/$root.tar.gz" "$root/build-linux.sh" >/dev/null
-          tar -xOf "$out/$root.tar.gz" "$root/source/server/Cargo.lock" >/dev/null
-          tar -xOf "$out/$root.tar.gz" "$root/source-revision.txt" |
-            cmp - <(jq -r .originalCommit automation/release-source.json)
+          kit="lattice-remote-host-$version"
+          tar -xOzf "$out/$kit-linux-x86_64.tar.gz" "$kit/lattice-releases.json" | cmp - host/lattice-releases.json
+          tar -xOzf "$out/$kit-linux-x86_64.tar.gz" "$kit/release-version.txt" | grep -qx "$version"
           digest="$(node automation/release-package.mjs seal "$out" "$RELEASE_TAG" "$RELEASE_COMMIT")"
           files="$(node automation/release-package.mjs verify "$out" "$RELEASE_TAG" "$RELEASE_COMMIT" "$digest")"
           printf 'manifest_digest=%s\nartifact=release-%s-%s\n' "$digest" "$GITHUB_RUN_ID" "$GITHUB_RUN_ATTEMPT" >> "$GITHUB_OUTPUT"
@@ -199,7 +200,7 @@ jobs:
           version="${RELEASE_TAG#v}"
           gh release download "$RELEASE_TAG" --dir "$out" \
             --pattern "remote-workspace-$version.zip" \
-            --pattern "lattice-remote-source-$version.tar.gz" \
+            --pattern "lattice-remote-host-$version-linux-x86_64.tar.gz" \
             --pattern "SHA256SUMS-$RELEASE_TAG.txt" \
             --pattern "release-$RELEASE_TAG.json"
           node automation/release-package.mjs verify "$out" "$RELEASE_TAG" "$commit" "$digest"

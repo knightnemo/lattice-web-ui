@@ -7,13 +7,8 @@ import test from "node:test";
 import { fileURLToPath } from "node:url";
 
 const pluginFiles = ["LICENSE", "README.md", "lattice-plugin.mjs", "lattice-plugin.toml", "main.mjs"];
-const deploymentFiles = [
-  "account-gateway/Caddyfile", "account-gateway/README.md", "account-gateway/oauth2-proxy.toml",
-  "device-pairing/Caddyfile", "device-pairing/README.md",
-  "tailscale-owner/README.md", "tailscale-owner/gateway.py", "tailscale-owner/index.html",
-  "tailscale-owner/owner.css", "tailscale-owner/owner.js",
-];
-const packPlugin = fileURLToPath(new URL("../scripts/pack-plugin.mjs", import.meta.url));
+const repoRoot = fileURLToPath(new URL("..", import.meta.url));
+const packPlugin = join(repoRoot, "scripts/pack-plugin.mjs");
 
 function scratch(t) {
   const directory = mkdtempSync(join(tmpdir(), "lattice-pack-contents-"));
@@ -48,79 +43,41 @@ test("the plugin ZIP carries only regular launcher files and preserves the last 
   assert.deepEqual(readFileSync(archive), good);
 });
 
-test("both source and Linux host kits ship only the declared deployment templates", (t) => {
+test("the Linux host kit ships the gateway, lattice-host and the pinned releases, and nothing local", (t) => {
   const directory = scratch(t);
-  const repo = join(directory, "launcher");
-  const companion = join(directory, "companion");
-  const dist = join(directory, "out");
-  const version = "1.2.3";
-  for (const file of [
-    ...deploymentFiles, "README.md", "docs/releases.md", "docs/assets/lattice-web-ui.png",
-    "test/account-gateway.test.mjs", ...pluginFiles.map((name) => `plugin/${name}`),
-    "account-gateway/local.conf", "device-pairing/.local", "tailscale-owner/__pycache__/local.pyc",
-  ]) put(repo, file);
-  put(repo, "plugin/lattice-plugin.toml", `version = "${version}"\n`);
-  const updateFiles = ["check-host-update.py", "manage-host-update.py"];
-  for (const file of [
-    ...updateFiles.map((name) => `scripts/${name}`), "scripts/build-linux.sh", "scripts/copy-deployment-files.sh", "scripts/package.sh", "scripts/pack-plugin.mjs",
-    "automation/release-package.mjs", "automation/companion-source.mjs",
-  ]) {
-    mkdirSync(join(repo, dirname(file)), { recursive: true });
-    copyFileSync(new URL(`../${file}`, import.meta.url), join(repo, file));
+  const repo = join(directory, "repo");
+  const files = [
+    "scripts/package.sh", "scripts/pack-plugin.mjs", "automation/release-package.mjs",
+    "host/lattice-host.py", "host/lattice-releases.json", "host/README.md", "host/examples/Caddyfile",
+    ...pluginFiles.map((name) => `plugin/${name}`),
+  ];
+  for (const file of files) {
+    mkdirSync(dirname(join(repo, file)), { recursive: true });
+    copyFileSync(join(repoRoot, file), join(repo, file));
   }
-  for (const file of [
-    "server/Cargo.lock", "licenses/notice", "LICENSE", "NOTICE", "THIRD_PARTY_NOTICES.md",
-    "scripts/install-headless-service.py", "scripts/prepare-headless-agent.mjs", "scripts/patch-headless-agent.mjs",
-    "scripts/synara-runtime.json", "docs/headless-server.md", "docs/headless-agent.md", "docs/private-headless-deployment.md",
-  ]) put(companion, file);
-  const git = (...args) => run("git", ["-C", companion, ...args]).trim();
-  git("init", "-q");
-  git("add", ".");
-  const tree = git("write-tree");
-  const commit = git("-c", "user.name=Test", "-c", "user.email=test@example.test", "-c", "commit.gpgsign=false",
-    "commit-tree", tree, "-m", "fixture");
-  put(repo, "automation/release-source.json", JSON.stringify({
-    snapshotTag: "companion/v1.2.3", originalCommit: commit, snapshotCommit: commit, tree,
-  }));
-  run("bash", [join(repo, "scripts/package.sh"), companion, dist]);
-  run("shasum", ["-a", "256", "-c", "SHA256SUMS"], { cwd: dist });
+  put(repo, "host/local-notes.txt");
+  put(repo, "host/__pycache__/lattice-host.cpython-312.pyc");
+  const gateway = join(directory, "lattice-gateway");
+  put(gateway, "", "#!/bin/sh\necho lattice-gateway 0.5.0\n", 0o755);
+  const out = join(directory, "out");
+  const version = run(process.execPath, [join(repo, "automation/release-package.mjs"), "version", join(repo, "plugin/lattice-plugin.toml")]).trim();
+  const pack = () => run("bash", [join(repo, "scripts/package.sh"), out], { env: { ...process.env, LATTICE_GATEWAY_BINARY: gateway } });
+  pack();
 
-  const sourceKit = `lattice-remote-source-${version}`;
-  const sourceArchive = join(dist, `${sourceKit}.tar.gz`);
-  function checkTemplates(archive, prefix, caddyfile) {
-    const entries = run("tar", ["-tzf", archive]).trim().split("\n")
-      .map((path) => path.slice(prefix.length + 1))
-      .filter((path) => /^(account-gateway|device-pairing|tailscale-owner)\//.test(path) && !path.endsWith("/"));
-    assert.deepEqual(entries.sort(), deploymentFiles);
-    assert.equal(run("tar", ["-xOf", archive, `${prefix}/account-gateway/Caddyfile`]), caddyfile);
-    for (const file of updateFiles) {
-      assert.equal(
-        run("tar", ["-xOf", archive, `${prefix}/${file}`]),
-        readFileSync(join(repo, "scripts", file), "utf8"),
-      );
-    }
-  }
-  checkTemplates(sourceArchive, sourceKit, "account-gateway/Caddyfile");
-  run("tar", ["-xzf", sourceArchive, "-C", directory]);
-  const extracted = join(directory, sourceKit);
-  put(extracted, "account-gateway/Caddyfile", "locally edited Caddyfile");
-  put(extracted, "account-gateway/host-local.conf");
-  put(extracted, "device-pairing/.env");
-  put(extracted, "tailscale-owner/local.log");
+  const kit = `lattice-remote-host-${version}`;
+  const archive = join(out, `${kit}-linux-x86_64.tar.gz`);
+  const listed = run("tar", ["-tzf", archive]).trim().split("\n").filter((path) => !path.endsWith("/")).sort();
+  assert.deepEqual(listed, [
+    "LICENSE", "README.md", "bin/lattice-gateway", "examples/Caddyfile", "lattice-host", "lattice-releases.json", "release-version.txt",
+  ].map((name) => `${kit}/${name}`));
+  assert.equal(run("tar", ["-xOzf", archive, `${kit}/release-version.txt`]).trim(), version);
+  assert.equal(run("tar", ["-xOzf", archive, `${kit}/lattice-host`]), readFileSync(join(repo, "host/lattice-host.py"), "utf8"));
+  const modes = run("tar", ["-tvzf", archive]);
+  assert.match(modes, /^-rwxr-xr-x .* lattice-remote-host-[\d.]+\/bin\/lattice-gateway$/m);
+  assert.doesNotMatch(modes, /siqiao|runner/, "archive entries carry no local user names");
+  run("sha256sum", ["--check", "SHA256SUMS"], { cwd: out });
 
-  // Stub compilation so the portable test exercises the standalone host packager on macOS and Linux.
-  const bin = join(directory, "bin");
-  put(bin, "uname", "#!/bin/sh\necho Linux\n", 0o755);
-  put(bin, "pnpm", "#!/bin/sh\nmkdir -p dist && touch dist/index.html\n", 0o755);
-  put(bin, "cargo", '#!/bin/sh\nmkdir -p "$CARGO_TARGET_DIR/release" && touch "$CARGO_TARGET_DIR/release/lattice-server"\n', 0o755);
-  const archive = join(directory, "host.tar.gz");
-  const build = () => run("bash", [join(extracted, "build-linux.sh"), join(extracted, "source"), archive], {
-    env: { ...process.env, PATH: `${bin}:${process.env.PATH}` },
-  });
-  build();
-  checkTemplates(archive, "lattice-remote-host", "locally edited Caddyfile");
-
-  rmSync(join(extracted, "device-pairing/Caddyfile"));
-  symlinkSync(".env", join(extracted, "device-pairing/Caddyfile"));
-  assert.throws(build, /Expected regular deployment file/);
+  rmSync(gateway);
+  symlinkSync(join(repo, "host/README.md"), gateway);
+  assert.throws(pack, /Expected a regular lattice-gateway binary/);
 });

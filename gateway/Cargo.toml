@@ -1,0 +1,30 @@
+[package]
+name = "lattice-gateway"
+version = "0.5.0"
+edition = "2021"
+license = "MIT"
+description = "Access gateway that puts device pairing and owner sign-in in front of Lattice's browser host"
+publish = false
+
+[[bin]]
+name = "lattice-gateway"
+path = "src/main.rs"
+
+[dependencies]
+bytes = "1"
+clap = { version = "4", features = ["derive"] }
+getrandom = "0.2"
+http-body-util = "0.1"
+hyper = { version = "1", features = ["client", "server", "http1"] }
+hyper-util = { version = "0.1", features = ["client-legacy", "http1", "tokio", "server"] }
+libc = "0.2"
+regex = "1"
+qrcode = { version = "0.14", default-features = false, features = ["svg"] }
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+sha2 = "0.10"
+tokio = { version = "1", features = ["rt-multi-thread", "macros", "net", "io-util", "sync", "time", "signal", "fs"] }
+
+[profile.release]
+strip = true
+lto = "thin"
