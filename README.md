@@ -79,8 +79,9 @@ Open the HTTPS address shown by `tailscale serve status`. For the token-based
 sign-in, use the private `access-token` file in the companion's data directory.
 If you sign in with this token, sign in again after the companion restarts.
 
-Run `python3 ./check-host-update.py` from the installed Linux kit to look for a newer stable release.
-[Prepare a verified update](docs/releases.md#check-for-a-host-update)
+Add `--managed-updates` to this install command to show an **Update host**
+button in the web workspace when a stable Web UI release is ready.
+[Requirements and rollout behavior](docs/releases.md#enable-managed-host-updates)
 
 If the editor needs to be reachable without Tailscale, choose one of these setups.
 

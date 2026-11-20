@@ -16,6 +16,47 @@ from the release assets. GitHub Packages and GHCR publishing are not configured.
 
 ## Check for a host update
 
+### Enable managed host updates
+
+Start from a Linux host kit that includes `manage-host-update.py`. Add
+`--managed-updates` to the [user service install command](../README.md#run-your-own-workspace)
+and repeat your existing service name, workspace, data directory, ports, and
+authentication options. Managed updates need Python 3.11 or later, the Linux
+build prerequisites, and owner-token sign-in. Device pairing works with it.
+Use `--extra-path` for any user directories that provide Node, pnpm, or Cargo.
+Keep the service data directory outside the editable workspace.
+
+The separate `lattice-headless-updater.timer` checks this repository’s stable
+releases and downloads the source kit after validating its size and SHA-256.
+`lattice-headless` is the default service name. Native Lattice releases and
+Web UI prereleases do not trigger this check.
+
+When a release is ready, the owner gets a status bar above the workspace.
+**Update host** approves that version and builds it in the background.
+The service stays available while building and while waiting for active
+Overleaf requests, writes, and terminal or Agent sessions. Finish the work
+before closing terminal sessions or signing out of a browser session that
+owns an Agent. Open Agent sessions hold the update until they stop, including
+between turns.
+
+When idle, the updater changes the release pointer and restarts the service.
+The new release must answer on the configured loopback port with its version,
+web build stamp and entry assets. If the restart or health check fails, the
+updater switches the pointer back and verifies the previous release. Project
+files, persistent state, and gateway addresses stay in place. A browser with an
+old bundle can **Save and reload** once the new release is serving. Owner-token
+sessions require sign-in after the service restarts.
+
+```sh
+systemctl --user list-timers lattice-headless-updater.timer
+journalctl --user -u lattice-headless-updater.service
+```
+
+For deployments that manage their own containers or service lifecycle, use the
+manual instructions below.
+
+### Check manually
+
 Run the check from the extracted Linux host or source kit.
 
 ```sh

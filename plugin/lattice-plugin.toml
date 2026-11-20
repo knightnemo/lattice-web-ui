@@ -1,7 +1,7 @@
 schema = 1
 id = "io.github.knightnemo.lattice-remote"
 name = "Lattice-web-ui"
-version = "0.4.7"
+version = "0.4.8"
 api = 1
 license = "MIT"
 description = "Open your self-hosted Lattice workspace in the browser from the command palette."

@@ -40,10 +40,17 @@ done
 if [[ -f "$root/source-revision.txt" ]]; then
   cp "$root/source-revision.txt" "$kit/"
 fi
-if [[ ! -f "$root/check-host-update.py" || -L "$root/check-host-update.py" ]]; then
-  echo 'Expected a regular host update helper.' >&2
-  exit 1
-fi
+for file in check-host-update.py manage-host-update.py; do
+  helper="$root/$file"
+  if [[ ! -f "$helper" && -f "$root/../plugin/lattice-plugin.toml" ]]; then
+    helper="$root/../scripts/$file"
+  fi
+  if [[ ! -f "$helper" || -L "$helper" ]]; then
+    echo "Expected a regular host update helper: $file" >&2
+    exit 1
+  fi
+  cp "$helper" "$kit/"
+done
 if [[ -f "$root/release-version.txt" && ! -L "$root/release-version.txt" ]]; then
   kit_version="$(cat "$root/release-version.txt")"
   release_guide="$root/docs/releases.md"
@@ -60,7 +67,6 @@ if ! [[ "$kit_version" =~ ^(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)$ ]]
   exit 1
 fi
 printf '%s\n' "$kit_version" > "$kit/release-version.txt"
-cp "$root/check-host-update.py" "$kit/"
 if [[ ! -f "$release_guide" || -L "$release_guide" ]]; then
   echo 'Expected a regular host release guide.' >&2
   exit 1
