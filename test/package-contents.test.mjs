@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import { execFileSync } from "node:child_process";
-import { copyFileSync, existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
+import { copyFileSync, mkdirSync, mkdtempSync, readFileSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import test from "node:test";
@@ -60,11 +60,9 @@ test("both source and Linux host kits ship only the declared deployment template
     "account-gateway/local.conf", "device-pairing/.local", "tailscale-owner/__pycache__/local.pyc",
   ]) put(repo, file);
   put(repo, "plugin/lattice-plugin.toml", `version = "${version}"\n`);
-  const updateHelper = "scripts/check-host-update.py";
-  // This fixture runs both before and after the operator update helper is introduced.
-  const updateFiles = existsSync(new URL(`../${updateHelper}`, import.meta.url)) ? [updateHelper] : [];
+  const updateFiles = ["check-host-update.py", "manage-host-update.py"];
   for (const file of [
-    ...updateFiles, "scripts/build-linux.sh", "scripts/copy-deployment-files.sh", "scripts/package.sh", "scripts/pack-plugin.mjs",
+    ...updateFiles.map((name) => `scripts/${name}`), "scripts/build-linux.sh", "scripts/copy-deployment-files.sh", "scripts/package.sh", "scripts/pack-plugin.mjs",
     "automation/release-package.mjs", "automation/companion-source.mjs",
   ]) {
     mkdirSync(join(repo, dirname(file)), { recursive: true });
@@ -95,6 +93,12 @@ test("both source and Linux host kits ship only the declared deployment template
       .filter((path) => /^(account-gateway|device-pairing|tailscale-owner)\//.test(path) && !path.endsWith("/"));
     assert.deepEqual(entries.sort(), deploymentFiles);
     assert.equal(run("tar", ["-xOf", archive, `${prefix}/account-gateway/Caddyfile`]), caddyfile);
+    for (const file of updateFiles) {
+      assert.equal(
+        run("tar", ["-xOf", archive, `${prefix}/${file}`]),
+        readFileSync(join(repo, "scripts", file), "utf8"),
+      );
+    }
   }
   checkTemplates(sourceArchive, sourceKit, "account-gateway/Caddyfile");
   run("tar", ["-xzf", sourceArchive, "-C", directory]);

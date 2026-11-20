@@ -42,14 +42,14 @@ def fetch(url):
     return urlopen(request, timeout=30)
 
 
-def stage(release, tag, destination, open_url):
+def stage(release, tag, destination, open_url, *, max_size=None):
     name = f"lattice-remote-source-{tag[1:]}.tar.gz"
     sums = f"SHA256SUMS-{tag}.txt"
     available = {asset["name"]: asset for asset in release["assets"] if asset["state"] == "uploaded"}
     if name not in available or sums not in available:
         raise ValueError("This release is missing its source kit or checksum file.")
     size = available[name]["size"]
-    if type(size) is not int or size <= 0:
+    if type(size) is not int or size <= 0 or (max_size is not None and size > max_size):
         raise ValueError("The published source kit has an invalid size.")
     base = f"https://github.com/{REPOSITORY}/releases/download/{tag}"
     with open_url(f"{base}/{sums}") as response:
@@ -78,6 +78,7 @@ def stage(release, tag, destination, open_url):
         # Publish only complete bytes and refuse to replace a file created by another run.
         os.link(partial, final)
     print(f"Verified {final} (SHA-256 {matches[0]}).")
+    return matches[0]
 
 
 def atomic_write(path, text, mode):
@@ -97,24 +98,33 @@ def xdg(name, fallback):
     return directory if directory.is_absolute() else Path.home() / fallback
 
 
-def run(installed, destination=None, open_url=fetch, *, record_status=False, public_status_dir=None):
-    current = version_parts(installed)
-    latest = None
+def latest_stable(open_url=fetch):
     try:
         stream = open_url(LATEST)
     except HTTPError as error:
         if error.code != 404:
             raise
         error.close()
+        return None
+    with stream:
+        release = json.loads(read_metadata(stream, 1024 * 1024))
+    if release["draft"] is not False or release["prerelease"] is not False:
+        raise ValueError("GitHub did not return a published stable release.")
+    tag = release["tag_name"]
+    if not isinstance(tag, str) or not tag.startswith("v"):
+        raise ValueError("Unexpected official release tag.")
+    version_parts(tag[1:])
+    return release
+
+
+def run(installed, destination=None, open_url=fetch, *, record_status=False, public_status_dir=None):
+    current = version_parts(installed)
+    release = latest_stable(open_url)
+    latest = None
+    if release is None:
         print(f"Installed {installed}. GitHub has no published stable release.")
     else:
-        with stream:
-            release = json.loads(read_metadata(stream, 1024 * 1024))
-        if release["draft"] is not False or release["prerelease"] is not False:
-            raise ValueError("GitHub did not return a published stable release.")
         tag = release["tag_name"]
-        if not isinstance(tag, str) or not tag.startswith("v"):
-            raise ValueError("Unexpected official release tag.")
         latest = tag[1:]
         upstream = version_parts(latest)
         if upstream == current:

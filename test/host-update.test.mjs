@@ -7,3 +7,9 @@ test("host updates use stable releases and stage only verified source kits", () 
     stdio: ["ignore", "pipe", "pipe"],
   });
 });
+
+test("managed host updates switch only when idle and recover the previous release", () => {
+  execFileSync("python3", ["-B", fileURLToPath(new URL("./managed_host_update.py", import.meta.url))], {
+    stdio: ["ignore", "pipe", "pipe"],
+  });
+});
