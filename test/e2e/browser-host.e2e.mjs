@@ -163,6 +163,23 @@ test("two devices share the workspace: the one used last has it", { skip: !proje
   await phone.close();
 });
 
+test("another device opens the workspace used last, not the first one", { skip: !project && "set LATTICE_E2E_PROJECT" }, async () => {
+  const mac = await context();
+  const macPage = await mac.newPage();
+  await signInAsOwner(macPage);
+  const name = await openProject(macPage);
+  // A device with no session of its own: it lands where the Mac was.
+  const phone = await context({ viewport: { width: 390, height: 844 }, isMobile: true, hasTouch: true, deviceScaleFactor: 2 });
+  const phonePage = await phone.newPage();
+  await signInAsOwner(phonePage);
+  await phonePage.locator(".cm-content").first().waitFor({ timeout: 40_000 });
+  await phonePage.waitForTimeout(1500);
+  const title = await phonePage.evaluate(() => document.body.innerText.split("\n")[0].trim());
+  assert.equal(title, name);
+  await mac.close();
+  await phone.close();
+});
+
 test("the Agent loads from its own origin through the gateway", { skip: (!process.env.LATTICE_E2E_AGENT_ORIGIN || !project || !tailnet) && "set LATTICE_E2E_AGENT_ORIGIN, LATTICE_E2E_TAILNET_ORIGIN and LATTICE_E2E_PROJECT" }, async () => {
   const agentOrigin = process.env.LATTICE_E2E_AGENT_ORIGIN;
   const ctx = await context();

@@ -143,8 +143,10 @@
     let recent = [];
     try { recent = JSON.parse(stored || "[]"); } catch { return stored; }
     if (!Array.isArray(recent)) return stored;
-    const available = new Set(hostProjects.map((project) => project.path));
-    const kept = recent.filter((item) => item && typeof item.path === "string" && available.has(item.path));
+    // Lattice's own list comes first, in its order, with projects outside the
+    // projects folder too (an Overleaf project, say): its first entry is the
+    // project a new workspace opens.
+    const kept = recent.filter((item) => item && typeof item.path === "string");
     const known = new Set(kept.map((item) => item.path));
     const added = hostProjects.filter((project) => !known.has(project.path)).map(({ name, path }) => ({ name, path }));
     return JSON.stringify([...kept, ...added].slice(0, 8));
