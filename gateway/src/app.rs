@@ -30,21 +30,18 @@ const PAGE_HTML: &str = include_str!("../assets/page.html");
 const PAGE_CSS: &str = include_str!("../assets/gateway.css");
 const PAGE_JS: &str = include_str!("../assets/gateway.js");
 const BRIDGE_JS: &str = include_str!("../assets/bridge.js");
-const XTERM_JS: &str = include_str!("../assets/vendor/xterm.js");
-const XTERM_FIT_JS: &str = include_str!("../assets/vendor/addon-fit.js");
-const XTERM_CSS: &str = include_str!("../assets/vendor/xterm.css");
 const INTER_LATIN: &[u8] = include_bytes!("../assets/vendor/inter-latin-wght-normal.woff2");
 const INTER_LATIN_EXT: &[u8] = include_bytes!("../assets/vendor/inter-latin-ext-wght-normal.woff2");
-/// xterm.js sets styles on the elements it creates.
-const TERMINAL_CSP: &str = "default-src 'none'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data:; connect-src 'self'; font-src 'self' data:; base-uri 'none'; form-action 'none'; frame-ancestors 'none'";
 /// How long an address Lattice asked to open waits for a tab to claim it.
 const OPEN_REQUEST_TTL: Duration = Duration::from_secs(60);
+/// Set by the gateway on requests that tailscaled delivered over its socket;
+/// stripped from everything else, so only Tailscale can vouch for a login.
+const TAILNET_MARK: &str = "x-lattice-gateway-tailnet";
 const CSP: &str = "default-src 'none'; script-src 'self'; style-src 'self'; img-src 'self' data: blob:; font-src 'self'; connect-src 'self'; base-uri 'none'; form-action 'none'; frame-ancestors 'none'";
 
 #[derive(Clone, Copy, PartialEq, Debug)]
 enum Entrance {
     Public,
-    Owner,
     Agent,
 }
 
@@ -67,7 +64,6 @@ pub struct App {
     store: Store,
     upstream: Upstream,
     public_origin: String,
-    owner_origin: Option<String>,
     owner_logins: Vec<String>,
     token: String,
     owner_sessions: Mutex<HashMap<String, Instant>>,
@@ -79,13 +75,11 @@ pub struct App {
     bridge: Bridge,
     open_requests: Option<std::path::PathBuf>,
     projects_root: Option<std::path::PathBuf>,
-    screen: Option<crate::screen::Screen>,
     agent_origin: Option<String>,
     agent_marker: Option<std::path::PathBuf>,
     agent_upstream: Mutex<Option<Arc<Upstream>>>,
     agent_bridge: Bridge,
     tex: Option<crate::tex::Tex>,
-    terminal: Option<crate::terminal::Terminal>,
 }
 
 fn canonical_origin(value: &str, allow_http: bool) -> Result<String, String> {
@@ -142,24 +136,20 @@ fn read_or_create_token(path: &Path) -> Result<String, String> {
 impl App {
     pub fn new(args: &Args) -> Result<Self, String> {
         let public_origin = canonical_origin(&args.public_origin, args.insecure_dev_cookies)?;
-        let owner_origin = args
-            .owner_origin
-            .as_deref()
-            .map(|o| canonical_origin(o, args.insecure_dev_cookies))
-            .transpose()?;
-        if args.owner_socket.is_some() != owner_origin.is_some()
-            || args.owner_socket.is_some() != args.owner_logins.is_some()
-        {
-            return Err("--owner-socket, --owner-origin and --owner-logins go together.".into());
-        }
-        if owner_origin.as_deref() == Some(public_origin.as_str()) {
-            return Err("Give the owner page its own origin, separate from the public one.".into());
-        }
-        if args.agent_listen.is_some() != args.agent_origin.is_some()
-            || args.agent_listen.is_some() != args.agent_process_marker.is_some()
+        let agent_entrance = args.agent_listen.is_some() || args.agent_serve_socket.is_some();
+        if agent_entrance != args.agent_origin.is_some()
+            || agent_entrance != args.agent_process_marker.is_some()
         {
             return Err(
-                "--agent-listen, --agent-origin and --agent-process-marker go together.".into(),
+                "An Agent entrance (--agent-listen or --agent-serve-socket) needs --agent-origin and --agent-process-marker.".into(),
+            );
+        }
+        if (args.serve_socket.is_some() || args.agent_serve_socket.is_some())
+            && args.owner_logins.is_none()
+        {
+            return Err(
+                "A Tailscale socket needs --owner-logins: the logins it signs in as the owner."
+                    .into(),
             );
         }
         let owner_logins = match &args.owner_logins {
@@ -186,7 +176,6 @@ impl App {
             store: Store::open(state_dir)?,
             upstream: Upstream::new(args.upstream),
             public_origin,
-            owner_origin,
             owner_logins,
             token,
             owner_sessions: Mutex::new(HashMap::new()),
@@ -216,30 +205,12 @@ impl App {
             agent_marker: args.agent_process_marker.clone(),
             agent_upstream: Mutex::new(None),
             agent_bridge: Bridge::default(),
-            terminal: args.terminal.then(|| crate::terminal::Terminal {
-                shell: args.terminal_shell.clone(),
-                cwd: args
-                    .terminal_cwd
-                    .clone()
-                    .or_else(|| std::env::var_os("HOME").map(Into::into))
-                    .unwrap_or_else(|| "/".into()),
-            }),
             tex: args.tlmgr.clone().map(|tlmgr| crate::tex::Tex {
                 tlmgr,
                 dry_run: args.tlmgr_dry_run,
             }),
             open_requests: args.open_requests.clone(),
             projects_root: args.projects_root.clone(),
-            screen: match (&args.display_framebuffer, &args.xdotool) {
-                (Some(framebuffer), Some(xdotool)) => Some(crate::screen::Screen {
-                    framebuffer: framebuffer.clone(),
-                    xdotool: xdotool.clone(),
-                    display: args.display.clone(),
-                    library_path: args.xdotool_library_path.clone(),
-                }),
-                (None, None) => None,
-                _ => return Err("--display-framebuffer and --xdotool go together.".into()),
-            },
         })
     }
 
@@ -266,15 +237,21 @@ impl App {
     }
 
     fn principal(&self, entrance: Entrance, headers: &HeaderMap) -> Option<Principal> {
-        if entrance == Entrance::Owner {
-            let login = headers
+        let _ = entrance;
+        // On the tailnet, Tailscale tells us who is asking: the owner needs no sign-in.
+        if headers.contains_key(TAILNET_MARK) {
+            if let Some(login) = headers
                 .get("tailscale-user-login")
-                .and_then(|v| v.to_str().ok())?;
-            return self
-                .owner_logins
-                .iter()
-                .any(|l| l.eq_ignore_ascii_case(login))
-                .then_some(Principal::Owner);
+                .and_then(|v| v.to_str().ok())
+            {
+                if self
+                    .owner_logins
+                    .iter()
+                    .any(|l| l.eq_ignore_ascii_case(login))
+                {
+                    return Some(Principal::Owner);
+                }
+            }
         }
         if let Some(session) = self.cookie(headers, self.owner_cookie) {
             let mut sessions = self
@@ -314,7 +291,6 @@ impl App {
         match entrance {
             Entrance::Public => &self.public_origin,
             Entrance::Agent => self.agent_origin.as_deref().unwrap_or(&self.public_origin),
-            Entrance::Owner => self.owner_origin.as_deref().unwrap_or(&self.public_origin),
         }
     }
 
@@ -486,32 +462,12 @@ async fn handle(app: Arc<App>, entrance: Entrance, req: Request<Incoming>) -> Re
         _ => {}
     }
 
-    if entrance == Entrance::Owner {
-        if principal.is_none() {
-            return error(
-                StatusCode::FORBIDDEN,
-                "not_owner",
-                "This Tailscale login is not allowed to manage devices.",
-            );
-        }
-        if method == Method::GET && (path == "/" || path == "/__gateway/devices") {
-            return page("devices", &origin);
-        }
-    }
-
     match (&method, path.as_str()) {
         (&Method::GET, "/__gateway/login") if entrance == Entrance::Public => {
             return page("login", &origin)
         }
         (&Method::GET, "/__gateway/pair") if entrance == Entrance::Public => {
             return page("pair", &origin)
-        }
-        (&Method::GET, "/__gateway/projects") if entrance == Entrance::Public => {
-            return if principal.is_some() {
-                page("projects", &origin)
-            } else {
-                redirect("/__gateway/login?next=/__gateway/projects")
-            };
         }
         (&Method::GET, "/__gateway/api/projects") if entrance == Entrance::Public => {
             if principal.is_none() {
@@ -524,117 +480,11 @@ async fn handle(app: Arc<App>, entrance: Entrance, req: Request<Incoming>) -> Re
             let projects = list_projects(app.projects_root.as_deref());
             return json_response(StatusCode::OK, json!({ "projects": projects }));
         }
-        (&Method::GET, "/__gateway/screen") => {
-            return if principal == Some(Principal::Owner) {
-                page("screen", &origin)
-            } else {
-                redirect("/__gateway/login?next=/__gateway/screen")
-            };
-        }
-        (&Method::GET, "/__gateway/api/screen/state") => {
-            if principal != Some(Principal::Owner) {
-                return error(
-                    StatusCode::UNAUTHORIZED,
-                    "owner_required",
-                    "Sign in as the owner to see the host's windows.",
-                );
-            }
-            let open = app
-                .screen
-                .as_ref()
-                .and_then(|screen| screen.has_windows().ok())
-                .unwrap_or(false);
-            return json_response(
-                StatusCode::OK,
-                json!({ "shared": app.screen.is_some(), "windows": open }),
-            );
-        }
-        (&Method::GET, "/__gateway/vendor/xterm.js") => {
-            return asset("text/javascript; charset=utf-8", XTERM_JS)
-        }
-        (&Method::GET, "/__gateway/vendor/addon-fit.js") => {
-            return asset("text/javascript; charset=utf-8", XTERM_FIT_JS)
-        }
         (&Method::GET, "/__gateway/vendor/inter-latin-wght-normal.woff2") => {
             return asset("font/woff2", INTER_LATIN)
         }
         (&Method::GET, "/__gateway/vendor/inter-latin-ext-wght-normal.woff2") => {
             return asset("font/woff2", INTER_LATIN_EXT)
-        }
-        (&Method::GET, "/__gateway/vendor/xterm.css") => {
-            return asset("text/css; charset=utf-8", XTERM_CSS)
-        }
-        (&Method::GET, "/__gateway/terminal") => {
-            if principal != Some(Principal::Owner) {
-                return redirect("/__gateway/login?next=/__gateway/terminal");
-            }
-            if app.terminal.is_none() {
-                return error(
-                    StatusCode::NOT_FOUND,
-                    "no_terminal",
-                    "This host does not offer a terminal.",
-                );
-            }
-            let mut response = page("terminal", &origin);
-            response.headers_mut().insert(
-                "content-security-policy",
-                HeaderValue::from_static(TERMINAL_CSP),
-            );
-            return response;
-        }
-        (&Method::GET, "/__gateway/api/terminal") => {
-            if principal != Some(Principal::Owner) {
-                return error(
-                    StatusCode::UNAUTHORIZED,
-                    "owner_required",
-                    "Sign in as the owner to open a terminal.",
-                );
-            }
-            if app.terminal.is_none() {
-                return error(
-                    StatusCode::NOT_FOUND,
-                    "no_terminal",
-                    "This host does not offer a terminal.",
-                );
-            }
-            return terminal_upgrade(app.clone(), req);
-        }
-        (&Method::GET, "/__gateway/tex") => {
-            return if principal == Some(Principal::Owner) {
-                page("tex", &origin)
-            } else {
-                redirect("/__gateway/login?next=/__gateway/tex")
-            };
-        }
-        (&Method::GET, "/__gateway/api/screen.png") => {
-            if principal != Some(Principal::Owner) {
-                return error(
-                    StatusCode::UNAUTHORIZED,
-                    "owner_required",
-                    "Sign in as the owner to see the host's windows.",
-                );
-            }
-            let Some(screen) = &app.screen else {
-                return error(
-                    StatusCode::NOT_FOUND,
-                    "no_screen",
-                    "This host does not share its display.",
-                );
-            };
-            return match screen.png() {
-                Ok((png, (x, y))) => {
-                    let mut response = Response::new(full(png));
-                    let headers = response.headers_mut();
-                    headers.insert(header::CONTENT_TYPE, HeaderValue::from_static("image/png"));
-                    headers.insert(header::CACHE_CONTROL, HeaderValue::from_static("no-store"));
-                    headers.insert(
-                        "x-screen-offset",
-                        HeaderValue::from_str(&format!("{x},{y}")).expect("digits"),
-                    );
-                    response
-                }
-                Err(message) => error(StatusCode::SERVICE_UNAVAILABLE, "no_screen", &message),
-            };
         }
         (&Method::GET, "/__gateway/devices") => {
             return if principal == Some(Principal::Owner) {
@@ -656,8 +506,6 @@ async fn handle(app: Arc<App>, entrance: Entrance, req: Request<Incoming>) -> Re
                 json!({
                     "agentOrigin": app.agent_origin,
                     "tex": app.tex.is_some(),
-                    "screen": app.screen.is_some(),
-                    "terminal": app.terminal.is_some(),
                 }),
             );
         }
@@ -700,13 +548,6 @@ async fn handle(app: Arc<App>, entrance: Entrance, req: Request<Incoming>) -> Re
         _ => {}
     }
 
-    if entrance == Entrance::Owner {
-        return error(
-            StatusCode::NOT_FOUND,
-            "management_only",
-            "The owner address manages devices. Open the workspace at its public address.",
-        );
-    }
     let Some(principal) = principal else {
         if method == Method::GET && wants_html(req.headers()) {
             let next = req
@@ -806,53 +647,6 @@ async fn agent_request(
     .await
 }
 
-/// Accept the owner's terminal WebSocket. The Origin must be this page's.
-fn terminal_upgrade(app: Arc<App>, mut req: Request<Incoming>) -> Response<Body> {
-    let headers = req.headers();
-    let same_origin = headers
-        .get(header::ORIGIN)
-        .and_then(|v| v.to_str().ok())
-        .is_some_and(|o| o.eq_ignore_ascii_case(&app.public_origin));
-    let key = headers.get("sec-websocket-key").cloned();
-    let upgrade = headers
-        .get(header::UPGRADE)
-        .and_then(|v| v.to_str().ok())
-        .is_some_and(|v| v.eq_ignore_ascii_case("websocket"));
-    let (Some(key), true, true) = (key, upgrade, same_origin) else {
-        return error(
-            StatusCode::BAD_REQUEST,
-            "bad_upgrade",
-            "Open the terminal from the gateway's own page.",
-        );
-    };
-    let accept = tokio_tungstenite::tungstenite::handshake::derive_accept_key(key.as_bytes());
-    let on_upgrade = hyper::upgrade::on(&mut req);
-    tokio::spawn(async move {
-        let Ok(upgraded) = on_upgrade.await else {
-            return;
-        };
-        let socket = tokio_tungstenite::WebSocketStream::from_raw_socket(
-            TokioIo::new(upgraded),
-            tokio_tungstenite::tungstenite::protocol::Role::Server,
-            None,
-        )
-        .await;
-        if let Some(terminal) = &app.terminal {
-            crate::terminal::serve(terminal, socket).await;
-        }
-    });
-    let mut response = Response::new(empty());
-    *response.status_mut() = StatusCode::SWITCHING_PROTOCOLS;
-    let headers = response.headers_mut();
-    headers.insert(header::UPGRADE, HeaderValue::from_static("websocket"));
-    headers.insert(header::CONNECTION, HeaderValue::from_static("Upgrade"));
-    headers.insert(
-        "sec-websocket-accept",
-        HeaderValue::from_str(&accept).expect("base64"),
-    );
-    response
-}
-
 /// Subfolders of the projects folder, newest first. Symlinks and hidden folders are skipped.
 fn list_projects(root: Option<&Path>) -> Vec<Value> {
     let Some(root) = root else { return Vec::new() };
@@ -889,7 +683,7 @@ fn list_projects(root: Option<&Path>) -> Vec<Value> {
 /// Take the newest address Lattice asked to open in the last minute, if any.
 /// Only `http://127.0.0.1:18452/?entry=<nonce>` is accepted; it is handed back
 /// as a path on the public origin.
-fn claim_open_request(dir: Option<&Path>) -> Option<String> {
+fn claim_open_request(dir: Option<&Path>, public_origin: &str) -> Option<String> {
     let dir = dir?;
     let mut newest: Option<(std::time::SystemTime, std::path::PathBuf)> = None;
     for entry in fs::read_dir(dir).ok()?.filter_map(Result::ok) {
@@ -913,7 +707,12 @@ fn claim_open_request(dir: Option<&Path>) -> Option<String> {
     let (_, path) = newest?;
     let text = fs::read_to_string(&path).ok()?;
     let _ = fs::remove_file(&path);
-    let rest = text.trim().strip_prefix("http://127.0.0.1:18452/?entry=")?;
+    let text = text.trim();
+    // The plugin's "Remote devices" command opens the gateway's device page.
+    if text == format!("{public_origin}/__gateway/devices") {
+        return Some("/__gateway/devices".into());
+    }
+    let rest = text.strip_prefix("http://127.0.0.1:18452/?entry=")?;
     (!rest.is_empty()
         && rest.len() <= 128
         && rest
@@ -1083,67 +882,13 @@ async fn api(
             json_response(StatusCode::OK, json!({ "origin": agent_origin }))
         }
         "/__gateway/api/open-request" if entrance == Entrance::Public && principal.is_some() => {
-            match claim_open_request(app.open_requests.as_deref()) {
+            match claim_open_request(app.open_requests.as_deref(), &app.public_origin) {
                 Some(url) => json_response(StatusCode::OK, json!({ "url": url })),
                 None => {
                     let mut response = Response::new(empty());
                     *response.status_mut() = StatusCode::NO_CONTENT;
                     response
                 }
-            }
-        }
-        "/__gateway/api/screen/input" if owner => {
-            let Some(screen) = &app.screen else {
-                return error(
-                    StatusCode::NOT_FOUND,
-                    "no_screen",
-                    "This host does not share its display.",
-                );
-            };
-            let body = match read_json(req).await {
-                Ok(v) => v,
-                Err(r) => return *r,
-            };
-            let input = match body.get("type").and_then(Value::as_str) {
-                Some("click") => match (
-                    body.get("x").and_then(Value::as_u64),
-                    body.get("y").and_then(Value::as_u64),
-                ) {
-                    (Some(x), Some(y)) if x < 8192 && y < 8192 => crate::screen::Input::Click {
-                        x: x as u32,
-                        y: y as u32,
-                    },
-                    _ => {
-                        return error(
-                            StatusCode::BAD_REQUEST,
-                            "bad_input",
-                            "A click needs x and y on the screen.",
-                        )
-                    }
-                },
-                Some("key") => crate::screen::Input::Key(
-                    body.get("key")
-                        .and_then(Value::as_str)
-                        .unwrap_or("")
-                        .to_string(),
-                ),
-                Some("text") => crate::screen::Input::Text(
-                    body.get("text")
-                        .and_then(Value::as_str)
-                        .unwrap_or("")
-                        .to_string(),
-                ),
-                _ => {
-                    return error(
-                        StatusCode::BAD_REQUEST,
-                        "bad_input",
-                        "Send a click, a key or text.",
-                    )
-                }
-            };
-            match screen.send(&input) {
-                Ok(()) => json_response(StatusCode::OK, json!({ "sent": true })),
-                Err(message) => error(StatusCode::BAD_REQUEST, "input_failed", &message),
             }
         }
         "/__gateway/api/tex-install" if owner => {
@@ -1237,6 +982,56 @@ fn peer_uid(stream: &tokio::net::UnixStream) -> Option<u32> {
     stream.peer_cred().ok().map(|c| c.uid())
 }
 
+/// Tailscale Serve (and Funnel) can hand connections to a Unix socket. Only
+/// tailscaled (root, or `--ingress-uid` for a containerized one) may connect,
+/// so its identity headers can be trusted: requests are marked as such.
+fn listen_tailnet(
+    app: Arc<App>,
+    socket: &Path,
+    entrance: Entrance,
+    ingress_uid: Option<u32>,
+) -> Result<(), String> {
+    if socket.exists() {
+        let meta = fs::symlink_metadata(socket).map_err(|e| e.to_string())?;
+        use std::os::unix::fs::FileTypeExt;
+        if !meta.file_type().is_socket() {
+            return Err(format!("{} exists and is not a socket.", socket.display()));
+        }
+        fs::remove_file(socket).map_err(|e| e.to_string())?;
+    }
+    let listener = UnixListener::bind(socket).map_err(|e| format!("{}: {e}", socket.display()))?;
+    fs::set_permissions(socket, fs::Permissions::from_mode(0o660)).map_err(|e| e.to_string())?;
+    eprintln!(
+        "lattice-gateway: {entrance:?} entrance for Tailscale on {}",
+        socket.display()
+    );
+    tokio::spawn(async move {
+        loop {
+            let Ok((stream, _)) = listener.accept().await else {
+                continue;
+            };
+            let uid = peer_uid(&stream);
+            if !(uid == Some(0) || (ingress_uid.is_some() && uid == ingress_uid)) {
+                continue; // Only the Tailscale daemon may speak for a login.
+            }
+            let app = app.clone();
+            tokio::spawn(async move {
+                let service = service_fn(move |mut req: Request<Incoming>| {
+                    let app = app.clone();
+                    req.headers_mut()
+                        .insert(TAILNET_MARK, HeaderValue::from_static("1"));
+                    async move { Ok::<_, std::convert::Infallible>(handle(app, entrance, req).await) }
+                });
+                let _ = http1::Builder::new()
+                    .serve_connection(TokioIo::new(stream), service)
+                    .with_upgrades()
+                    .await;
+            });
+        }
+    });
+    Ok(())
+}
+
 pub async fn serve(app: Arc<App>, args: &Args) -> Result<(), String> {
     let public = TcpListener::bind(args.listen)
         .await
@@ -1254,47 +1049,13 @@ pub async fn serve(app: Arc<App>, args: &Args) -> Result<(), String> {
             }
         });
     }
-    if let Some(socket) = &args.owner_socket {
-        if socket.exists() {
-            let meta = fs::symlink_metadata(socket).map_err(|e| e.to_string())?;
-            use std::os::unix::fs::FileTypeExt;
-            if !meta.file_type().is_socket() {
-                return Err(format!("{} exists and is not a socket.", socket.display()));
-            }
-            fs::remove_file(socket).map_err(|e| e.to_string())?;
+    for (socket, entrance) in [
+        (&args.serve_socket, Entrance::Public),
+        (&args.agent_serve_socket, Entrance::Agent),
+    ] {
+        if let Some(socket) = socket {
+            listen_tailnet(app.clone(), socket, entrance, args.ingress_uid)?;
         }
-        let listener =
-            UnixListener::bind(socket).map_err(|e| format!("{}: {e}", socket.display()))?;
-        fs::set_permissions(socket, fs::Permissions::from_mode(0o660))
-            .map_err(|e| e.to_string())?;
-        let allowed = args.ingress_uid;
-        let app = app.clone();
-        eprintln!("lattice-gateway: owner page on {}", socket.display());
-        tokio::spawn(async move {
-            loop {
-                let Ok((stream, _)) = listener.accept().await else {
-                    continue;
-                };
-                let uid = peer_uid(&stream);
-                if !(uid == Some(0) || (allowed.is_some() && uid == allowed)) {
-                    continue; // Only the Tailscale daemon may speak for an owner login.
-                }
-                let app = app.clone();
-                tokio::spawn(async move {
-                    let service = service_fn(move |req| {
-                        let app = app.clone();
-                        async move {
-                            Ok::<_, std::convert::Infallible>(
-                                handle(app, Entrance::Owner, req).await,
-                            )
-                        }
-                    });
-                    let _ = http1::Builder::new()
-                        .serve_connection(TokioIo::new(stream), service)
-                        .await;
-                });
-            }
-        });
     }
     if let Some(address) = args.agent_listen {
         let listener = TcpListener::bind(address)
@@ -1310,8 +1071,9 @@ pub async fn serve(app: Arc<App>, args: &Args) -> Result<(), String> {
                 let _ = stream.set_nodelay(true);
                 let app = app.clone();
                 tokio::spawn(async move {
-                    let service = service_fn(move |req| {
+                    let service = service_fn(move |mut req: Request<Incoming>| {
                         let app = app.clone();
+                        req.headers_mut().remove(TAILNET_MARK);
                         async move {
                             Ok::<_, std::convert::Infallible>(
                                 handle(app, Entrance::Agent, req).await,
@@ -1335,8 +1097,9 @@ pub async fn serve(app: Arc<App>, args: &Args) -> Result<(), String> {
                 let _ = stream.set_nodelay(true);
                 let app = app.clone();
                 tokio::spawn(async move {
-                    let service = service_fn(move |req| {
+                    let service = service_fn(move |mut req: Request<Incoming>| {
                         let app = app.clone();
+                        req.headers_mut().remove(TAILNET_MARK);
                         async move { Ok::<_, std::convert::Infallible>(handle(app, Entrance::Public, req).await) }
                     });
                     let _ = http1::Builder::new().serve_connection(TokioIo::new(stream), service).with_upgrades().await;
@@ -1374,14 +1137,14 @@ mod tests {
         )
         .unwrap();
         assert_eq!(
-            claim_open_request(Some(&dir)).as_deref(),
+            claim_open_request(Some(&dir), "https://w.example").as_deref(),
             Some("/?entry=abc_DEF-123")
         );
-        assert_eq!(claim_open_request(Some(&dir)), None);
+        assert_eq!(claim_open_request(Some(&dir), "https://w.example"), None);
         fs::write(dir.join("2.url"), "https://evil.example/?entry=x").unwrap();
-        assert_eq!(claim_open_request(Some(&dir)), None);
+        assert_eq!(claim_open_request(Some(&dir), "https://w.example"), None);
         fs::write(dir.join("3.url"), "http://127.0.0.1:18452/?entry=a&b").unwrap();
-        assert_eq!(claim_open_request(Some(&dir)), None);
+        assert_eq!(claim_open_request(Some(&dir), "https://w.example"), None);
         fs::remove_dir_all(dir).unwrap();
     }
 

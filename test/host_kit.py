@@ -90,7 +90,7 @@ class HostKitTest(unittest.TestCase):
 
     def test_lattice_opener_forwards_only_entry_addresses(self):
         import subprocess
-        self.assertEqual(self.install("--projects-root", "~/papers", "--agent-origin", "https://w.example.ts.net:8444", "--enable-terminal"), 0)
+        self.assertEqual(self.install("--projects-root", "~/papers", "--agent-origin", "https://w.example.ts.net:10000"), 0)
         spool = self.root / "state/open-requests"
         self.assertEqual(stat.S_IMODE(spool.stat().st_mode), 0o700)
         bundled = self.root / "releases/0.18.0/squashfs-root/usr/bin/xdg-open"
@@ -106,10 +106,8 @@ class HostKitTest(unittest.TestCase):
         self.assertIn("--rewrite-loopback-page", unit)
         self.assertIn(f"--open-requests {spool}", unit)
         self.assertIn(f"--projects-root {Path('~/papers').expanduser()}", unit)
-        self.assertIn("--agent-listen 127.0.0.1:18491 --agent-origin https://w.example.ts.net:8444", unit)
+        self.assertIn("--agent-listen 127.0.0.1:18491 --agent-origin https://w.example.ts.net:10000", unit)
         self.assertIn(f"--agent-process-marker {self.root / 'releases'}", unit)
-        self.assertIn(f"--terminal --terminal-shell", unit)
-        self.assertIn(f"--terminal-cwd {Path('~/papers').expanduser()}", unit)
 
     def test_warns_about_projects_in_hidden_folders(self):
         home = Path(self.temp.name) / "home"
@@ -138,13 +136,15 @@ class HostKitTest(unittest.TestCase):
         self.assertEqual(os.readlink(self.root / "current"), "releases/0.18.0")
         self.assertEqual(self.run_tool("update", "--to", "9.9.9", "--no-start", "--manifest", str(self.manifest)), 1)
 
-    def test_owner_page_needs_a_login(self):
-        self.assertEqual(self.install("--owner-origin", "https://h.example.ts.net:9443"), 1)
-        self.assertEqual(self.install("--owner-origin", "https://h.example.ts.net:9443", "--owner-login", "me@example.com"), 0)
+    def test_tailscale_sockets_need_an_owner_login(self):
+        self.assertEqual(self.install("--tailscale"), 1)
+        self.assertEqual(self.install("--tailscale", "--owner-login", "me@github", "--agent-origin", "https://w.example.ts.net:10000"), 0)
         unit = (self.config_home / "systemd/user/lattice-gateway.service").read_text()
-        self.assertIn("--owner-socket", unit)
-        self.assertEqual((self.root / "owner-logins").read_text(), "me@example.com\n")
-
+        self.assertIn(f"--serve-socket {self.root / 'serve.sock'} --owner-logins {self.root / 'owner-logins'}", unit)
+        self.assertIn(f"--agent-serve-socket {self.root / 'agent.sock'}", unit)
+        self.assertEqual((self.root / "owner-logins").read_text(), "me@github\n")
+        opener = (self.root / "bin/xdg-open").read_text()
+        self.assertIn("https://w.example.ts.net/__gateway/devices) ;;", opener)
 
 if __name__ == "__main__":
     sys.exit(0 if unittest.main(exit=False, verbosity=2).result.wasSuccessful() else 1)

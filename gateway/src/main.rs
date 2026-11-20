@@ -14,9 +14,7 @@ mod agent;
 mod app;
 mod bridge;
 mod proxy;
-mod screen;
 mod store;
-mod terminal;
 mod tex;
 
 use clap::Parser;
@@ -42,16 +40,17 @@ pub struct Args {
     /// File holding the owner's recovery token (created if missing).
     #[arg(long)]
     pub token_file: PathBuf,
-    /// Unix socket for the owner page behind Tailscale Serve.
+    /// Unix socket for Tailscale Serve/Funnel in front of the workspace. Requests from
+    /// the tailnet whose login is in --owner-logins are the owner, with no sign-in.
     #[arg(long)]
-    pub owner_socket: Option<PathBuf>,
-    /// The origin of the owner page, e.g. https://host.example.ts.net:9443
+    pub serve_socket: Option<PathBuf>,
+    /// The same for the Agent entrance.
     #[arg(long)]
-    pub owner_origin: Option<String>,
-    /// File listing Tailscale logins allowed on the owner page, one per line.
+    pub agent_serve_socket: Option<PathBuf>,
+    /// File listing the Tailscale logins that are the owner, one per line.
     #[arg(long)]
     pub owner_logins: Option<PathBuf>,
-    /// UID allowed to connect to the owner socket besides root (tailscaled in a container).
+    /// UID allowed to connect to the Tailscale sockets besides root (tailscaled in a container).
     #[arg(long)]
     pub ingress_uid: Option<u32>,
     /// Rewrite the loopback-only expressions of Lattice's page so it runs at the public origin.
@@ -63,18 +62,6 @@ pub struct Args {
     /// Folder whose subfolders the Projects page offers to open in Lattice.
     #[arg(long)]
     pub projects_root: Option<PathBuf>,
-    /// Xvfb's framebuffer file (-fbdir), to show the owner the host's native windows.
-    #[arg(long)]
-    pub display_framebuffer: Option<PathBuf>,
-    /// The X display Lattice runs on, for input to its native windows.
-    #[arg(long, default_value = ":99")]
-    pub display: String,
-    /// xdotool, to deliver the owner's clicks and keys to native windows.
-    #[arg(long)]
-    pub xdotool: Option<PathBuf>,
-    /// LD_LIBRARY_PATH for an unpacked xdotool.
-    #[arg(long)]
-    pub xdotool_library_path: Option<PathBuf>,
     /// Second entrance that serves Lattice's Agent UI (Synara) on an origin of its own.
     #[arg(long)]
     pub agent_listen: Option<SocketAddr>,
@@ -84,15 +71,6 @@ pub struct Args {
     /// Only a port that a process under this path listens on is served as the Agent.
     #[arg(long)]
     pub agent_process_marker: Option<PathBuf>,
-    /// Offer the owner a shell on the host (Lattice keeps its own terminal to native windows).
-    #[arg(long)]
-    pub terminal: bool,
-    /// Shell for the owner's terminal.
-    #[arg(long, default_value = "/bin/bash")]
-    pub terminal_shell: PathBuf,
-    /// Folder the owner's terminal starts in (default: HOME).
-    #[arg(long)]
-    pub terminal_cwd: Option<PathBuf>,
     /// tlmgr of a TeX installation the host user can write to, for the owner's TeX page.
     #[arg(long)]
     pub tlmgr: Option<PathBuf>,

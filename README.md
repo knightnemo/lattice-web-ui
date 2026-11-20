@@ -19,21 +19,14 @@ itself, so it gets what Lattice offers on Linux, minus the
 phone / laptop ── HTTPS ── lattice-gateway ── Lattice (browser-host mode) on your Linux host
 ```
 
-- **Lattice, unmodified.** The host runs the Linux AppImage that Lattice publishes,
+- **Lattice, unmodified.** The host runs Lattice's own Linux AppImage,
   checked against a pinned SHA-256. A Lattice update reaches the browser
   without anyone porting code.
-- **You decide who connects.** `lattice-gateway` lets in the owner, signed in
-  with a recovery token or vouched for by Tailscale, and browsers paired with
-  a one-time QR code. Revoking a device cuts it off at once.
-- **The parts a headless host lacks.** The gateway:
-  - serves Lattice's Agent on an origin of its own;
-  - lets the owner use Lattice's native windows, such as Overleaf sign-in, from the browser;
-  - installs missing TeX packages with `tlmgr`;
-  - offers the owner a terminal;
-  - opens projects without the native folder dialog;
-  - gives phones a one-panel layout.
-- **A command in Lattice.** The plugin opens the workspace and its device page
-  from Lattice's command palette.
+- **One window, nothing added.** Every project opens in the same Lattice
+  window. Apart from sign-in, there is no page or control that is not Lattice.
+- **Sign-in as in v0.4.x.** On your tailnet, Tailscale vouches for you and
+  Lattice opens directly. From the internet, the owner signs in with the access
+  token and phones pair by scanning a QR code.
 
 ## Watch the setup film
 
@@ -74,14 +67,17 @@ HTTPS entrance such as Tailscale Serve. Download
 ```sh
 tar -xzf lattice-remote-host-X.Y.Z-linux-x86_64.tar.gz
 cd lattice-remote-host-X.Y.Z
-./lattice-host install --public-origin https://your-machine.example.ts.net
-tailscale serve --bg --https=443 http://127.0.0.1:18490
+./lattice-host install --tailscale --owner-login you@github \
+  --public-origin https://your-machine.example.ts.net:8443 \
+  --agent-origin https://your-machine.example.ts.net:10000 --projects-root ~/lattice-projects
+tailscale funnel --bg --https=8443  unix:$HOME/.local/share/lattice-host/serve.sock
+tailscale funnel --bg --https=10000 unix:$HOME/.local/share/lattice-host/agent.sock
 ```
 
-Then open the address, sign in with the token from
-`~/.local/share/lattice-host/access-token`, and pair your phone from
-**Devices**. The [host guide](host/README.md) covers the owner page on
-Tailscale, Caddy without Tailscale, updates and rollback.
+On your tailnet the address opens Lattice directly. From anywhere else, sign
+in with the token from `~/.local/share/lattice-host/access-token`, or pair a
+phone from **Remote devices**. The [host guide](host/README.md) covers Funnel
+and Serve, Overleaf, Caddy without Tailscale, updates and rollback.
 
 ## Contribute
 
@@ -97,8 +93,6 @@ rebuilt.
 ## License
 
 Everything in this repository is MIT-licensed ([plugin/LICENSE](plugin/LICENSE)).
-lattice-gateway embeds [xterm.js](https://github.com/xtermjs/xterm.js) 6.0.0 and its fit add-on, which are also MIT
-([gateway/assets/vendor/LICENSE-xterm](gateway/assets/vendor/LICENSE-xterm)), and the
-[Inter](https://github.com/rsms/inter) typeface, under the SIL Open Font License 1.1
+lattice-gateway embeds the [Inter](https://github.com/rsms/inter) typeface, under the SIL Open Font License 1.1
 ([gateway/assets/vendor/LICENSE-inter](gateway/assets/vendor/LICENSE-inter)).
 Lattice, which the host kit downloads at install time, keeps its own license.

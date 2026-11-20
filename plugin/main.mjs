@@ -87,7 +87,7 @@ definePlugin({
         summary: "Devices",
         items: [{
           id: "remote-devices",
-          title: "Pair or revoke devices",
+          title: "Remote devices",
           subtitle: `${origin}/__gateway/devices`,
           actions: [{ type: "openUrl", url: `${origin}/__gateway/devices` }],
         }],
