@@ -85,6 +85,9 @@ Pick a project from Lattice's own project menu, and it opens in the same tab.
 The gateway lists every project in `--projects-root` there, among the recent
 projects.
 
+Opening the workspace's address on a device or in a tab that has no workspace
+of its own shows the workspace you used last, on whichever device.
+
 You can keep the workspace open on several devices. Lattice gives it to one
 tab at a time, so the device you use last has it. The others keep showing the
 workspace, and take it back as soon as you switch to them, tap or type. The

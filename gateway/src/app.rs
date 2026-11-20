@@ -80,6 +80,53 @@ pub struct App {
     agent_upstream: Mutex<Option<Arc<Upstream>>>,
     agent_bridge: Bridge,
     tex: Option<crate::tex::Tex>,
+    /// Lattice gives "/" its first workspace; with this, a tab that has no
+    /// session of its own resumes the workspace used last, on any device.
+    last_workspace: LastWorkspace,
+}
+
+/// The Lattice session token of the workspace a browser tab attached to last.
+#[derive(Default)]
+struct LastWorkspace(Mutex<Option<String>>);
+
+impl LastWorkspace {
+    /// Remember the workspace a browser tab attaches to, and send a tab with
+    /// no session of its own (a new device, a new tab, a restarted browser)
+    /// to that workspace. Lattice ignores a token it no longer knows and then
+    /// picks a workspace as before.
+    fn follow(&self, uri: &mut hyper::Uri) {
+        let path = uri.path();
+        let query = uri.query().unwrap_or("");
+        let param = |name: &str| {
+            query
+                .split('&')
+                .filter_map(|pair| pair.split_once('='))
+                .find(|(key, _)| *key == name)
+                .map(|(_, value)| value.to_string())
+        };
+        if path == "/__lattice_bridge" {
+            if param("role").as_deref() == Some("browser") {
+                if let Some(token) = param("token").filter(|t| valid_session_token(t)) {
+                    *self.0.lock().unwrap() = Some(token);
+                }
+            }
+            return;
+        }
+        if path != "/__lattice_session" || param("token").is_some() || param("entry").is_some() {
+            return;
+        }
+        let Some(token) = self.0.lock().unwrap().clone() else {
+            return;
+        };
+        let joined = if query.is_empty() {
+            format!("{path}?token={token}")
+        } else {
+            format!("{path}?{query}&token={token}")
+        };
+        if let Ok(resumed) = joined.parse() {
+            *uri = resumed;
+        }
+    }
 }
 
 fn canonical_origin(value: &str, allow_http: bool) -> Result<String, String> {
@@ -205,6 +252,7 @@ impl App {
             agent_marker: args.agent_process_marker.clone(),
             agent_upstream: Mutex::new(None),
             agent_bridge: Bridge::default(),
+            last_workspace: LastWorkspace::default(),
             tex: args.tlmgr.clone().map(|tlmgr| crate::tex::Tex {
                 tlmgr,
                 dry_run: args.tlmgr_dry_run,
@@ -583,6 +631,8 @@ async fn handle(app: Arc<App>, entrance: Entrance, req: Request<Incoming>) -> Re
             );
         }
     }
+    let mut req = req;
+    app.last_workspace.follow(req.uri_mut());
     proxy::forward(
         req,
         &app.upstream,
@@ -648,6 +698,14 @@ async fn agent_request(
 }
 
 /// Subfolders of the projects folder, newest first. Symlinks and hidden folders are skipped.
+/// Lattice's session tokens are URL-safe; anything else is not remembered.
+fn valid_session_token(token: &str) -> bool {
+    (16..=128).contains(&token.len())
+        && token
+            .bytes()
+            .all(|b| b.is_ascii_alphanumeric() || b == b'-' || b == b'_')
+}
+
 fn list_projects(root: Option<&Path>) -> Vec<Value> {
     let Some(root) = root else { return Vec::new() };
     let Ok(entries) = fs::read_dir(root) else {
@@ -1116,6 +1174,42 @@ pub async fn serve(app: Arc<App>, args: &Args) -> Result<(), String> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn a_tab_without_a_session_resumes_the_workspace_used_last() {
+        let last = LastWorkspace::default();
+        let follow = |uri: &str| {
+            let mut uri: hyper::Uri = uri.parse().unwrap();
+            last.follow(&mut uri);
+            uri.to_string()
+        };
+        // Nothing remembered yet: Lattice picks as before.
+        assert_eq!(follow("/__lattice_session"), "/__lattice_session");
+        // The host's own role and malformed tokens are not remembered.
+        follow("/__lattice_bridge?token=0123456789abcdef0123456789abcdef&role=host");
+        follow("/__lattice_bridge?token=bad%20token&role=browser");
+        assert_eq!(follow("/__lattice_session"), "/__lattice_session");
+        follow("/__lattice_bridge?token=0123456789abcdef0123456789abcdef&role=browser");
+        assert_eq!(
+            follow("/__lattice_session"),
+            "/__lattice_session?token=0123456789abcdef0123456789abcdef"
+        );
+        // A tab's own session, and an explicit entry, are left alone.
+        assert_eq!(
+            follow("/__lattice_session?token=mine"),
+            "/__lattice_session?token=mine"
+        );
+        assert_eq!(
+            follow("/__lattice_session?entry=n"),
+            "/__lattice_session?entry=n"
+        );
+        // A later tab moves it.
+        follow("/__lattice_bridge?role=browser&token=fedcba9876543210fedcba9876543210");
+        assert_eq!(
+            follow("/__lattice_session"),
+            "/__lattice_session?token=fedcba9876543210fedcba9876543210"
+        );
+    }
 
     #[test]
     fn origins_must_be_canonical() {
