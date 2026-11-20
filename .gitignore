@@ -1,2 +1,4 @@
 /dist/
 /.tmp/
+/gateway/target/
+__pycache__/
