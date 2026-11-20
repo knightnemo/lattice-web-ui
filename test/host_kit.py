@@ -192,6 +192,18 @@ class HostKitTest(unittest.TestCase):
         self.assertIn(f"{self.root / 'kit/lattice-host'} --root {self.root} self-update", (units / "lattice-update.service").read_text())
         self.assertIn(f"--update-dir {self.root / 'state/update'}", (units / "lattice-gateway.service").read_text())
 
+    def test_phone_shows_the_address_as_a_code(self):
+        self.assertEqual(self.install("--tailscale", "--owner-login", "me@github"), 0)
+        (self.root / "bin/lattice-gateway").write_text('#!/bin/sh\n[ "$1" = --print-qr ] && echo "CODE FOR $2"\n')
+        import contextlib, io
+        out = io.StringIO()
+        with contextlib.redirect_stdout(out), contextlib.redirect_stderr(out):
+            self.assertEqual(self.run_tool("phone"), 0)
+        text = out.getvalue()
+        self.assertIn("CODE FOR https://w.example.ts.net/", text)
+        self.assertIn("same Tailscale account", text)
+        self.assertIn("Phone and app", text)
+
     def test_a_source_checkout_install_has_no_update_units(self):
         self.assertEqual(self.install(), 0)
         self.assertFalse((self.root / "kit").exists())

@@ -10,6 +10,7 @@ services, and updates or rolls back the release.
     lattice-host status
     lattice-host update --to 0.19.0
     lattice-host rollback
+    lattice-host phone
     lattice-host check-update
     lattice-host uninstall
 """
@@ -673,6 +674,7 @@ def cmd_install(args: argparse.Namespace) -> None:
     if args.agent_origin:
         target = f"unix:{root / 'agent.sock'}" if args.tailscale else f"http://127.0.0.1:{args.gateway_port + 1}"
         say(f"Agent: tailscale funnel --bg --https=<port of {args.agent_origin}> {target}")
+    show_phone(root, config)
 
 
 def cmd_update(args: argparse.Namespace) -> None:
@@ -716,6 +718,28 @@ def cmd_rollback(args: argparse.Namespace) -> None:
     version = Path(os.readlink(previous)).name
     entry = json.loads((root / "releases" / version / "release.json").read_text())
     switch_to(root, version, start=not args.no_start, entry=entry)
+
+
+def show_phone(root: Path, config: dict) -> None:
+    """The workspace address as a QR code on this terminal, and what to do with it."""
+    url = config["public_origin"].rstrip("/") + "/"
+    gateway = root / "bin/lattice-gateway"
+    code = ""
+    if gateway.is_file():
+        code = subprocess.run([str(gateway), "--print-qr", url], capture_output=True, text=True).stdout
+    say("Open the workspace on your phone:")
+    print()
+    print(code, end="")
+    print(f"  {url}")
+    print()
+    if config.get("tailscale"):
+        say("A phone signed in to the same Tailscale account goes straight in.")
+    say("Any other phone: in the workspace, open Phone and app and choose Pair a device.")
+    say("Then install it: in Safari, Share > Add to Home Screen; in Chrome, Install app.")
+
+
+def cmd_phone(args: argparse.Namespace) -> None:
+    show_phone(args.root, read_config(args.root))
 
 
 def cmd_check_update(args: argparse.Namespace) -> None:
@@ -953,6 +977,7 @@ def parser() -> argparse.ArgumentParser:
 
     sub.add_parser("status", help="show the release and service state").set_defaults(func=cmd_status)
 
+    sub.add_parser("phone", help="show the workspace address as a QR code to open on a phone").set_defaults(func=cmd_phone)
     sub.add_parser("check-update", help="look for a newer stable lattice-web-ui release (run by a timer)").set_defaults(func=cmd_check_update)
     self_update = sub.add_parser("self-update", help="update to the release the owner chose in the browser (run by a path unit)")
     self_update.add_argument("--to", help="version to update to (default: the one the owner requested)")

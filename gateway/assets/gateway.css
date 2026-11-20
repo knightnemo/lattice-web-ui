@@ -105,20 +105,5 @@ body { font: var(--type-body-size)/20px var(--ui-font); -webkit-font-smoothing: 
 .actions { display: flex; flex-wrap: wrap; gap: var(--space-4); justify-content: flex-end; }
 .actions.start { justify-content: flex-start; }
 
-/* v0.4.x "Remote devices". */
-.headless-device-code { display: grid; justify-items: center; gap: var(--space-5); text-align: center; }
-.headless-device-code img { width: 220px; height: 220px; background: #fff; border-radius: var(--radius-control); padding: var(--space-3); image-rendering: pixelated; }
-.headless-device-list { list-style: none; padding: 0; margin: 0; max-height: 40dvh; overflow: auto; }
-.headless-device-list li { display: flex; align-items: center; justify-content: space-between; gap: var(--space-5); padding: var(--space-3) 0; border-top: 1px solid var(--border-subtle); }
-.headless-device-list li:first-child { border-top: 0; }
-.headless-device-list li span { overflow-wrap: anywhere; }
-
-/* Host windows and the terminal. */
-.screen { max-width: 100%; height: auto; align-self: center; background: #000; border-radius: var(--radius-control); cursor: crosshair; touch-action: manipulation; }
-.keys { display: flex; flex-wrap: wrap; gap: var(--space-3); }
-.keys button { min-height: 32px; padding: var(--space-2) var(--space-6); font-size: 13px; }
-.terminal { --term-bg: #ffffff; height: min(70vh, 640px); border: 1px solid var(--border-subtle); border-radius: var(--radius-control); padding: var(--space-4); background: var(--term-bg); overflow: hidden; }
-.terminal .xterm, .terminal .xterm-viewport, .terminal .xterm-screen { background-color: var(--term-bg) !important; }
-@media (prefers-color-scheme: dark) { .terminal { --term-bg: #171718; } }
 .sr { position: absolute; width: 1px; height: 1px; overflow: hidden; clip: rect(0 0 0 0); }
 .error { color: var(--status-danger); }

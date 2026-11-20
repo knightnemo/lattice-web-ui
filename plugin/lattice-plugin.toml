@@ -1,7 +1,7 @@
 schema = 1
 id = "io.github.knightnemo.lattice-remote"
 name = "Lattice-web-ui"
-version = "0.9.3"
+version = "0.9.4"
 api = 1
 license = "MIT"
 description = "Open the Lattice running on your Linux host in the browser, and pair your other devices with it."
@@ -22,5 +22,5 @@ description = "Open your configured remote workspace in the browser."
 
 [[commands]]
 id = "devices"
-title = "Remote devices"
-description = "Pair a phone or another computer with the workspace, or revoke one."
+title = "Phone and app"
+description = "Open the workspace on a phone, install it as an app, and pair or revoke devices."

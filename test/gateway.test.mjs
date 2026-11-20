@@ -1,7 +1,7 @@
 // End-to-end checks of lattice-gateway in front of a stand-in browser host.
 // Build first: cargo build --manifest-path gateway/Cargo.toml
 import assert from "node:assert/strict";
-import { spawn } from "node:child_process";
+import { spawn, spawnSync } from "node:child_process";
 import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, statSync, writeFileSync } from "node:fs";
 import http from "node:http";
 import net from "node:net";
@@ -199,7 +199,7 @@ test("hands the address Lattice asked to open to one signed-in tab, once", { ski
   assert.equal((await fetch(`${base}/__gateway/api/projects`)).status, 401);
 });
 
-test("the gateway adds no pages beyond sign-in, pairing and devices", { skip }, async () => {
+test("the gateway adds no pages beyond sign-in and pairing", { skip }, async () => {
   const owner = cookieOf(await post("/__gateway/api/login", { token }));
   const config = await (await fetch(`${base}/__gateway/api/config`, { headers: { Cookie: owner } })).json();
   assert.deepEqual(config, { agentOrigin: null, tex: false });
@@ -249,4 +249,27 @@ test("only the owner sees the update on offer and starts it", { skip }, async ()
   assert.equal(statSync(join(update, "request")).mode & 0o777, 0o600);
   assert.equal((await get()).running, true);
   assert.equal((await post("/__gateway/api/update/start", { version: "99.0.0" }, owner)).status, 409, "one run at a time");
+});
+
+test("Phone and app: the owner's address code, the one-time hint, and the devices address", { skip }, async () => {
+  assert.equal((await fetch(`${base}/__gateway/api/phone`)).status, 401);
+  const owner = cookieOf(await post("/__gateway/api/login", { token }));
+  const get = async () => (await fetch(`${base}/__gateway/api/phone`, { headers: { Cookie: owner } })).json();
+  const phone = await get();
+  assert.equal(phone.address, origin);
+  assert.match(phone.qrSvg, /<svg/);
+  assert.equal(phone.signedIn, true, "signed in with the token, so the dialog offers Sign out");
+  assert.equal(phone.hintDismissed, false);
+  assert.equal((await post("/__gateway/api/phone/hint", {}, owner)).status, 200);
+  assert.equal((await get()).hintDismissed, true, "the hint is answered once, for good");
+
+  const asOwner = await fetch(`${base}/__gateway/devices`, { headers: { Cookie: owner }, redirect: "manual" });
+  assert.equal(asOwner.status, 303);
+  assert.equal(asOwner.headers.get("location"), "/?lattice-gateway=phone");
+  const stranger = await fetch(`${base}/__gateway/devices`, { redirect: "manual" });
+  assert.match(stranger.headers.get("location"), /^\/__gateway\/login\?next=/);
+
+  const printed = spawnSync(binary, ["--print-qr", "https://w.example.ts.net:8443/"], { encoding: "utf8" });
+  assert.equal(printed.status, 0);
+  assert.match(printed.stdout, /[█▀▄]/);
 });
