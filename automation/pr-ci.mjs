@@ -1,13 +1,12 @@
 import { appendFile } from "node:fs/promises";
 import { pathToFileURL } from "node:url";
-import { parseCompanionPin } from "./companion-source.mjs";
 import { currentPull, githubApi, parsePullRequest, pullFiles } from "./pr-github.mjs";
 
 export const checkName = "Lattice CI passed";
 const trustedRepository = "lattice-writer/lattice-web-ui";
 const trustedBranch = "main";
 const trustedRef = `refs/heads/${trustedBranch}`;
-const packagePaths = /^(?:plugin\/|scripts\/|gateway\/|host\/|account-gateway\/|device-pairing\/|tailscale-owner\/|automation\/|test\/|\.github\/|companion(?:\/|\.)|docs\/assets\/|docs\/releases\.md$|README\.md$|rust-toolchain\.toml$)/;
+const packagePaths = /^(?:plugin\/|scripts\/|gateway\/|host\/|account-gateway\/|device-pairing\/|tailscale-owner\/|automation\/|test\/|\.github\/|docs\/assets\/|docs\/releases\.md$|README\.md$|rust-toolchain\.toml$)/;
 
 export function needsPackaging(files, labels, complete) {
   return !complete || labels.some(({ name }) => name === "full-ci") ||
@@ -38,24 +37,6 @@ async function hostKitLayout(api, head) {
   return file?.type === "file";
 }
 
-async function companionSnapshot(api, head) {
-  const file = await api(`/contents/automation/release-source.json?ref=${head}`);
-  if (file.type !== "file" || file.encoding !== "base64" || typeof file.content !== "string" ||
-      !Number.isInteger(file.size) || file.size < 1 || file.size > 4096) {
-    throw new Error("The PR must provide a small companion pin JSON file.");
-  }
-  const pin = parseCompanionPin(Buffer.from(file.content, "base64").toString("utf8"));
-  const ref = await api(`/git/ref/tags/${pin.snapshotTag}`, { allowMissing: true });
-  if (ref?.object?.type !== "commit" || ref.object.sha !== pin.snapshotCommit) {
-    throw new Error("Companion tag is missing or does not point directly to the pinned commit.");
-  }
-  const commit = await api(`/git/commits/${pin.snapshotCommit}`);
-  if (commit.tree?.sha !== pin.tree) {
-    throw new Error("Companion commit has the wrong tree.");
-  }
-  return pin.snapshotCommit;
-}
-
 export async function plan(api, request, env) {
   if (!await isCurrentMain(api, env)) return;
   const pull = await currentGatePull(api, request);
@@ -65,22 +46,20 @@ export async function plan(api, request, env) {
     throw new Error("PR changed while planning.");
   }
   const packaging = needsPackaging(files, pull.labels, complete);
-  const layout = await hostKitLayout(api, request.head) ? "host-kit" : "companion";
-  const companionSha = packaging && layout === "companion" ? await companionSnapshot(api, request.head) : "";
+  if (!await hostKitLayout(api, request.head)) {
+    throw new Error("This PR predates the Linux host kit. Rebase it onto main.");
+  }
 
   await appendFile(env.GITHUB_OUTPUT, [
     `head=${request.head}`,
     `number=${request.number}`,
     `packaging=${packaging}`,
-    `companion_sha=${companionSha}`,
-    `layout=${layout}`,
+    "layout=host-kit",
     "",
   ].join("\n"));
-  const summary = !packaging
-    ? "Fast verification selected. No release inputs changed."
-    : layout === "host-kit"
-      ? "Plugin archive and Linux host kit packaging selected."
-      : `Plugin archive and full source-kit packaging selected. Companion \`${companionSha}\`.`;
+  const summary = packaging
+    ? "Plugin archive and Linux host kit packaging selected."
+    : "Fast verification selected. No release inputs changed.";
   await appendFile(env.GITHUB_STEP_SUMMARY, `### Test plan\n\n${summary}\n`);
 }
 

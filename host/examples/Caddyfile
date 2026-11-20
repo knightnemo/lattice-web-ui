@@ -1,0 +1,12 @@
+# A public HTTPS entrance without Tailscale: Caddy terminates TLS and hands
+# every request to lattice-gateway, which decides who gets through.
+# Set LATTICE_ORIGIN to the same origin you passed to `lattice-host install
+# --public-origin`, and LATTICE_GATEWAY_PORT if you changed --gateway-port.
+{$LATTICE_ORIGIN} {
+	header {
+		Cache-Control "private, no-store"
+		Referrer-Policy "no-referrer"
+		Strict-Transport-Security "max-age=31536000"
+	}
+	reverse_proxy 127.0.0.1:{$LATTICE_GATEWAY_PORT:18490}
+}

@@ -29,7 +29,7 @@ test("edits reject protected paths, ambiguous text, no-op output and oversized r
     "../README.md",
     ".github/workflows/pull-request.yml",
     "plugin/lattice-plugin.toml",
-    "account-gateway/oauth2-proxy.toml",
+    "host/lattice-releases.json",
   ];
   for (const path of paths) {
     assert.throws(() => applyEdits(textEdit(path, "abc abc", "example"), source), /allowlist/);

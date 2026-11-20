@@ -1,0 +1,5 @@
+# The same pinned release the Lattice repository uses, so local clippy and CI agree.
+[toolchain]
+channel = "1.99.1"
+profile = "minimal"
+components = ["clippy", "rustfmt"]

@@ -80,5 +80,18 @@ definePlugin({
     async open() {
       return workspaceResult(await readAddress(), "Remote workspace");
     },
+    async devices() {
+      const origin = await readAddress();
+      return {
+        kind: "items",
+        summary: "Devices",
+        items: [{
+          id: "remote-devices",
+          title: "Pair or revoke devices",
+          subtitle: `${origin}/__gateway/devices`,
+          actions: [{ type: "openUrl", url: `${origin}/__gateway/devices` }],
+        }],
+      };
+    },
   },
 });

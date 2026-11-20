@@ -6,8 +6,7 @@ import { pathToFileURL } from "node:url";
 
 export const EDITABLE_PATHS = Object.freeze([
   "README.md",
-  "account-gateway/README.md",
-  "device-pairing/README.md",
+  "host/README.md",
   "plugin/main.mjs",
   "test/plugin.test.mjs",
 ]);
