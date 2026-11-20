@@ -10,6 +10,7 @@ services, and updates or rolls back the release.
     lattice-host status
     lattice-host update --to 0.19.0
     lattice-host rollback
+    lattice-host check-update
     lattice-host uninstall
 """
 
@@ -20,9 +21,11 @@ import glob
 import hashlib
 import json
 import os
+import re
 import shutil
 import subprocess
 import sys
+import tarfile
 import tempfile
 import time
 import urllib.request
@@ -34,6 +37,13 @@ UNIT_DIR = Path(os.environ.get("XDG_CONFIG_HOME", Path.home() / ".config")) / "s
 UNITS = ("lattice-display.service", "lattice-browser-host.service", "lattice-gateway.service")
 LATTICE_PORT = 18452  # Fixed by Lattice: src-tauri/src/browser_host.rs PREFERRED_PORT.
 KEEP_RELEASES = 3
+# The owner's update prompt: a timer looks for a newer stable kit, and a path
+# unit runs the update when the owner selects Update in the browser.
+UPDATE_UNITS = ("lattice-update-check.timer", "lattice-update.path")
+UPDATE_FILES = ("lattice-update-check.service", "lattice-update-check.timer", "lattice-update.path", "lattice-update.service")
+UPDATE_REPO = "lattice-writer/lattice-web-ui"
+KEEP_KITS = 2
+VERSION_RE = re.compile(r"\d{1,6}\.\d{1,6}\.\d{1,6}")
 
 # Lattice hands "open this workspace in a browser" to xdg-open. On a headless
 # host there is no browser to open, so the address is dropped where the
@@ -274,6 +284,9 @@ def write_files(root: Path, config: dict) -> None:
                          "--agent-process-marker", str(root / "releases")]
     if config.get("tlmgr"):
         gateway_args += ["--tlmgr", config["tlmgr"]]
+    updates = (root / "kit").is_symlink()
+    if updates:
+        gateway_args += ["--update-dir", str(update_dir(root))]
     if config.get("tailscale"):
         # Tailscale Serve/Funnel hands connections to these sockets; on the tailnet the
         # owner's login is recognised, from the internet people pair or sign in.
@@ -323,6 +336,47 @@ RestartSec=2
 WantedBy=default.target
 """,
     }
+    if updates:
+        tool = f"/usr/bin/env python3 {shell_quote(str(root / 'kit/lattice-host'))} --root {shell_quote(str(root))}"
+        units.update({
+            "lattice-update-check.service": f"""[Unit]
+Description=Look for a newer stable lattice-web-ui release
+
+[Service]
+Type=oneshot
+ExecStart={tool} check-update
+""",
+            "lattice-update-check.timer": """[Unit]
+Description=Look for a newer stable lattice-web-ui release every six hours
+
+[Timer]
+OnBootSec=5min
+OnUnitActiveSec=6h
+RandomizedDelaySec=10min
+Persistent=true
+
+[Install]
+WantedBy=timers.target
+""",
+            "lattice-update.path": f"""[Unit]
+Description=Update lattice-web-ui when the owner asks from the browser
+
+[Path]
+PathExists={update_dir(root) / 'request'}
+Unit=lattice-update.service
+
+[Install]
+WantedBy=default.target
+""",
+            "lattice-update.service": f"""[Unit]
+Description=Update lattice-web-ui to the release the owner chose
+
+[Service]
+Type=oneshot
+TimeoutStartSec=20min
+ExecStart={tool} self-update
+""",
+        })
     for name, text in units.items():
         (UNIT_DIR / name).write_text(text)
 
@@ -426,6 +480,93 @@ def prune(root: Path) -> None:
             shutil.rmtree(release, ignore_errors=True)
 
 
+def kit_version(kit: Path) -> str | None:
+    """The lattice-web-ui version of an unpacked kit; None for a source checkout."""
+    try:
+        version = (kit / "release-version.txt").read_text().strip()
+    except OSError:
+        return None
+    return version if VERSION_RE.fullmatch(version) else None
+
+
+def version_key(version: str) -> tuple[int, ...]:
+    return tuple(int(part) for part in version.split("."))
+
+
+def adopt_kit(root: Path, config: dict) -> bool:
+    """Keep the kit being installed in the host directory, so that the host
+    can later update itself from the browser. A source checkout is not kept."""
+    version = kit_version(KIT)
+    if not version:
+        return False
+    kits = root / "kits"
+    kits.mkdir(parents=True, exist_ok=True)
+    target = kits / version
+    if KIT.resolve() != target.resolve():
+        temp = kits / f".{version}.{os.getpid()}"
+        shutil.rmtree(temp, ignore_errors=True)
+        shutil.copytree(KIT, temp, symlinks=True)
+        shutil.rmtree(target, ignore_errors=True)
+        temp.rename(target)
+    link = root / "kit"
+    temp_link = root / ".kit.new"
+    temp_link.unlink(missing_ok=True)
+    temp_link.symlink_to(Path("kits") / version)
+    temp_link.replace(link)
+    config["manifest"] = str(target / "lattice-releases.json")
+    return True
+
+
+def prune_kits(root: Path) -> None:
+    kits = root / "kits"
+    current = Path(os.readlink(root / "kit")).name if (root / "kit").is_symlink() else None
+    versions = sorted((k.name for k in kits.iterdir() if VERSION_RE.fullmatch(k.name)), key=version_key, reverse=True)
+    kept = [v for v in versions if v == current] + [v for v in versions if v != current][: KEEP_KITS - 1]
+    for version in versions:
+        if version not in kept:
+            shutil.rmtree(kits / version, ignore_errors=True)
+
+
+def update_dir(root: Path) -> Path:
+    path = root / "state" / "update"
+    path.mkdir(parents=True, exist_ok=True)
+    path.chmod(0o700)
+    return path
+
+
+def write_private_json(path: Path, value: dict) -> None:
+    temp = path.with_name(f".{path.name}.{os.getpid()}")
+    temp.write_text(json.dumps(value, indent=2) + "\n")
+    temp.chmod(0o600)
+    temp.replace(path)
+
+
+def enable_update_units(root: Path) -> None:
+    if (root / "kit").is_symlink():
+        systemctl("enable", "--now", *UPDATE_UNITS)
+
+
+def releases_api(repo: str) -> str:
+    # Tests point this at a local server.
+    return os.environ.get("LATTICE_HOST_RELEASES_API") or f"https://api.github.com/repos/{repo}"
+
+
+def fetch(url: str, limit: int = 4 << 20) -> bytes:
+    if not url.startswith("https://") and not os.environ.get("LATTICE_HOST_RELEASES_API"):
+        raise HostError(f"refusing to fetch {url}: only https:// addresses are used.")
+    request = urllib.request.Request(url, headers={"User-Agent": "lattice-host", "Accept": "application/vnd.github+json"})
+    with urllib.request.urlopen(request, timeout=60) as response:
+        return response.read(limit)
+
+
+def gateway_version(port: int) -> str | None:
+    try:
+        with urllib.request.urlopen(f"http://127.0.0.1:{port}/__gateway/health", timeout=3) as response:
+            return json.loads(response.read(1 << 16)).get("version")
+    except (OSError, ValueError):
+        return None
+
+
 def switch_to(root: Path, version: str, start: bool, entry: dict) -> None:
     old = current_version(root)
     if old and old != version:
@@ -506,6 +647,7 @@ def cmd_install(args: argparse.Namespace) -> None:
     config["tlmgr"] = find_tlmgr(home)
     if not config["tlmgr"]:
         say("No TeX installation this user can write to, so the gateway will not install TeX packages. Install missing packages with your distribution.")
+    adopt_kit(root, config)
     save_config(root, config)
     stage_release(root, manifest["releases"][version])
     point(root, "current", version)
@@ -515,6 +657,7 @@ def cmd_install(args: argparse.Namespace) -> None:
         return
     systemctl("daemon-reload")
     systemctl("enable", "--now", *UNITS)
+    enable_update_units(root)
     # Re-running install changes settings: the gateway picks them up on restart.
     systemctl("restart", "lattice-display.service", "lattice-browser-host.service", "lattice-gateway.service")
     if not lattice_healthy():
@@ -543,11 +686,17 @@ def cmd_update(args: argparse.Namespace) -> None:
     if str(manifest_path.resolve()) != config["manifest"]:
         config["manifest"] = str(manifest_path.resolve())
         save_config(root, config)
+    if adopt_kit(root, config):
+        save_config(root, config)
     kit_gateway = Path(args.gateway_binary) if args.gateway_binary else KIT / "bin/lattice-gateway"
     if kit_gateway.is_file() and install_gateway(root, kit_gateway):
         say("installed this kit's lattice-gateway.")
-        if not args.no_start:
-            systemctl("restart", "lattice-gateway.service")
+    # This kit's services may differ from the installed ones (new gateway options, update units).
+    write_files(root, config)
+    if not args.no_start:
+        systemctl("daemon-reload")
+        enable_update_units(root)
+        systemctl("restart", "lattice-gateway.service")
     version = args.to or manifest["default"]
     if version not in manifest["releases"]:
         raise HostError(f"Lattice {version} is not pinned in the manifest.")
@@ -569,11 +718,135 @@ def cmd_rollback(args: argparse.Namespace) -> None:
     switch_to(root, version, start=not args.no_start, entry=entry)
 
 
+def cmd_check_update(args: argparse.Namespace) -> None:
+    """Look for a newer stable kit; the gateway shows the owner what is found."""
+    root: Path = args.root
+    config = read_config(root)
+    current = kit_version(root / "kit")
+    if not current:
+        raise HostError("this host was not installed from a release kit, so it cannot update itself.")
+    release = json.loads(fetch(f"{releases_api(config.get('update_repo', UPDATE_REPO))}/releases/latest"))
+    tag = str(release.get("tag_name", ""))
+    if not (tag.startswith("v") and VERSION_RE.fullmatch(tag[1:])):
+        raise HostError(f"the latest release has an unexpected tag {tag!r}.")
+    latest = tag[1:]
+    names = {
+        "kit": f"lattice-remote-host-{latest}-linux-x86_64.tar.gz",
+        "sums": f"SHA256SUMS-{tag}.txt",
+        "release": f"release-{tag}.json",
+    }
+    urls = {asset.get("name"): asset.get("browser_download_url") for asset in release.get("assets", [])}
+    missing = [name for name in names.values() if not urls.get(name)]
+    if missing:
+        raise HostError(f"release {tag} lacks {', '.join(missing)}.")
+    meta = json.loads(fetch(urls[names["release"]]))
+    lattice_latest = (meta.get("lattice") or {}).get("default")
+    available = {
+        "latest": latest,
+        "tag": tag,
+        "current": current,
+        "lattice": {"current": config.get("version"), "latest": lattice_latest},
+        "assets": {key: urls[name] for key, name in names.items()},
+        "kitSha256": (meta.get("assets") or {}).get(names["kit"]),
+        "checkedAt": int(time.time()),
+    }
+    write_private_json(update_dir(root) / "available.json", available)
+    newer = version_key(latest) > version_key(current)
+    say(f"lattice-web-ui {latest} is available (this host runs {current})." if newer else f"lattice-web-ui {current} is the latest release.")
+
+
+class UpdateStatus:
+    """What the owner's page shows while an update runs."""
+
+    def __init__(self, root: Path, target: str):
+        self.path = update_dir(root) / "status.json"
+        self.value = {"target": target}
+
+    def set(self, phase: str, **extra) -> None:
+        self.value.update(extra, phase=phase, at=int(time.time()))
+        write_private_json(self.path, self.value)
+        say(f"update to {self.value['target']}: {phase}")
+
+
+def cmd_self_update(args: argparse.Namespace) -> None:
+    """Update to the release the owner chose: download and verify the kit, run
+    its `update`, and go back to the previous kit if the new one does not come up."""
+    root: Path = args.root
+    folder = update_dir(root)
+    request = folder / "request"
+    target = args.to or (request.read_text().strip() if request.exists() else "")
+    request.unlink(missing_ok=True)
+    status = UpdateStatus(root, target)
+    previous = kit_version(root / "kit")
+    installed = False
+    try:
+        config = read_config(root)
+        available = json.loads((folder / "available.json").read_text()) if (folder / "available.json").exists() else {}
+        if not VERSION_RE.fullmatch(target) or available.get("latest") != target:
+            raise HostError(f"{target or 'no version'} is not the update on offer.")
+        if previous and version_key(target) <= version_key(previous):
+            raise HostError(f"this host already runs {previous}.")
+        status.set("downloading", previous=previous)
+        kit_name = f"lattice-remote-host-{target}-linux-x86_64.tar.gz"
+        kits = root / "kits"
+        kits.mkdir(parents=True, exist_ok=True)
+        work = Path(tempfile.mkdtemp(prefix=f".download-{target}-", dir=kits))
+        try:
+            sums = fetch(available["assets"]["sums"]).decode()
+            expected = next((line.split()[0] for line in sums.splitlines()
+                             if len(line.split()) == 2 and line.split()[1] == kit_name), None)
+            if not expected or len(expected) != 64:
+                raise HostError(f"the release's checksums do not list {kit_name}.")
+            if available.get("kitSha256") and available["kitSha256"] != expected:
+                raise HostError("the release's two checksum lists disagree. Nothing was installed.")
+            archive = work / kit_name
+            download(available["assets"]["kit"], archive, expected)
+            status.set("installing")
+            prefix = f"lattice-remote-host-{target}"
+            with tarfile.open(archive) as tar:
+                for member in tar.getmembers():
+                    if member.name != prefix and not member.name.startswith(prefix + "/"):
+                        raise HostError(f"the kit holds an unexpected path {member.name!r}.")
+                tar.extractall(work / "x", filter="data")
+            unpacked = work / "x" / prefix
+            if kit_version(unpacked) != target:
+                raise HostError(f"the downloaded kit is not version {target}.")
+            destination = kits / target
+            shutil.rmtree(destination, ignore_errors=True)
+            unpacked.rename(destination)
+        finally:
+            shutil.rmtree(work, ignore_errors=True)
+        installed = True
+        result = subprocess.run([sys.executable, str(kits / target / "lattice-host"), "--root", str(root), "update"],
+                                capture_output=True, text=True)
+        if result.returncode != 0:
+            raise HostError(((result.stderr or result.stdout).strip().splitlines() or ["the new kit's update failed."])[-1])
+        status.set("restarting")
+        deadline = time.monotonic() + args.wait
+        while gateway_version(config["gateway_port"]) != target:
+            if time.monotonic() > deadline:
+                raise HostError(f"the {target} gateway did not answer within {args.wait} seconds.")
+            time.sleep(1)
+        status.set("done")
+        prune_kits(root)
+    except (HostError, OSError, ValueError, KeyError, tarfile.TarError, subprocess.SubprocessError) as error:
+        reason = str(error)
+        rolled_back = None
+        old_kit = root / "kits" / (previous or "") / "lattice-host"
+        if installed and previous and old_kit.is_file():
+            back = subprocess.run([sys.executable, str(old_kit), "--root", str(root), "update"], capture_output=True, text=True)
+            rolled_back = back.returncode == 0
+        message = reason + {True: f" Went back to {previous}.", False: f" Going back to {previous} failed too.", None: ""}[rolled_back]
+        status.set("failed", error=reason, rolledBack=rolled_back)
+        raise HostError(message) from None
+
+
 def cmd_status(args: argparse.Namespace) -> None:
     root: Path = args.root
     config = read_config(root)
     print(json.dumps({
         "lattice": current_version(root),
+        "kit": kit_version(root / "kit"),
         "previous": Path(os.readlink(root / "previous")).name if (root / "previous").is_symlink() else None,
         "publicOrigin": config["public_origin"],
         "services": {unit: systemctl("is-active", unit, check=False).stdout.strip() for unit in UNITS},
@@ -631,8 +904,8 @@ def cmd_overleaf_login(args: argparse.Namespace) -> None:
 
 
 def cmd_uninstall(args: argparse.Namespace) -> None:
-    systemctl("disable", "--now", *UNITS, check=False)
-    for unit in UNITS:
+    systemctl("disable", "--now", *UNITS, *UPDATE_UNITS, check=False)
+    for unit in (*UNITS, *UPDATE_FILES):
         (UNIT_DIR / unit).unlink(missing_ok=True)
     systemctl("daemon-reload", check=False)
     if args.purge:
@@ -679,6 +952,12 @@ def parser() -> argparse.ArgumentParser:
     rollback.set_defaults(func=cmd_rollback)
 
     sub.add_parser("status", help="show the release and service state").set_defaults(func=cmd_status)
+
+    sub.add_parser("check-update", help="look for a newer stable lattice-web-ui release (run by a timer)").set_defaults(func=cmd_check_update)
+    self_update = sub.add_parser("self-update", help="update to the release the owner chose in the browser (run by a path unit)")
+    self_update.add_argument("--to", help="version to update to (default: the one the owner requested)")
+    self_update.add_argument("--wait", type=int, default=90, help="seconds to wait for the new gateway")
+    self_update.set_defaults(func=cmd_self_update)
 
     overleaf = sub.add_parser("overleaf-login", help="sign Lattice in to Overleaf on the host, through a one-time VNC session")
     overleaf.add_argument("--port", type=int, default=5999)

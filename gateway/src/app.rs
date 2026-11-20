@@ -83,6 +83,7 @@ pub struct App {
     /// Lattice gives "/" its first workspace; with this, a tab that has no
     /// session of its own resumes the workspace used last, on any device.
     last_workspace: LastWorkspace,
+    updates: Option<crate::update::Updates>,
 }
 
 /// The Lattice session token of the workspace a browser tab attached to last.
@@ -253,6 +254,7 @@ impl App {
             agent_upstream: Mutex::new(None),
             agent_bridge: Bridge::default(),
             last_workspace: LastWorkspace::default(),
+            updates: args.update_dir.clone().map(crate::update::Updates::new),
             tex: args.tlmgr.clone().map(|tlmgr| crate::tex::Tex {
                 tlmgr,
                 dry_run: args.tlmgr_dry_run,
@@ -585,6 +587,20 @@ async fn handle(app: Arc<App>, entrance: Entrance, req: Request<Incoming>) -> Re
                 );
             }
             return api(app.clone(), entrance, principal, p.to_string(), req).await;
+        }
+        (&Method::GET, "/__gateway/api/update") => {
+            if principal != Some(Principal::Owner) {
+                return error(
+                    StatusCode::UNAUTHORIZED,
+                    "owner_required",
+                    "Only the owner updates this host.",
+                );
+            }
+            let state = match &app.updates {
+                Some(updates) => updates.state(env!("CARGO_PKG_VERSION")),
+                None => json!({ "current": env!("CARGO_PKG_VERSION"), "available": false }),
+            };
+            return json_response(StatusCode::OK, state);
         }
         (&Method::GET, "/__gateway/api/devices") => {
             if principal != Some(Principal::Owner) {
@@ -954,6 +970,46 @@ async fn api(
                     *response.status_mut() = StatusCode::NO_CONTENT;
                     response
                 }
+            }
+        }
+        "/__gateway/api/update/start" | "/__gateway/api/update/dismiss" if owner => {
+            let Some(updates) = &app.updates else {
+                return error(
+                    StatusCode::NOT_FOUND,
+                    "no_updates",
+                    "This host was installed without updates from the browser.",
+                );
+            };
+            let body = match read_json(req).await {
+                Ok(v) => v,
+                Err(r) => return *r,
+            };
+            let version = body.get("version").and_then(Value::as_str).unwrap_or("");
+            let result = if path.ends_with("/start") {
+                updates.request(version, env!("CARGO_PKG_VERSION"))
+            } else {
+                updates.dismiss(version)
+            };
+            match result {
+                Ok(()) => json_response(
+                    StatusCode::ACCEPTED,
+                    updates.state(env!("CARGO_PKG_VERSION")),
+                ),
+                Err(crate::update::Refusal::NotOffered) => error(
+                    StatusCode::CONFLICT,
+                    "not_offered",
+                    "That version is not the update on offer. Reload the page.",
+                ),
+                Err(crate::update::Refusal::Running) => error(
+                    StatusCode::CONFLICT,
+                    "running",
+                    "An update is already running.",
+                ),
+                Err(crate::update::Refusal::Io(reason)) => error(
+                    StatusCode::INTERNAL_SERVER_ERROR,
+                    "write_failed",
+                    &format!("The gateway could not record the request: {reason}"),
+                ),
             }
         }
         "/__gateway/api/tex-install" if owner => {

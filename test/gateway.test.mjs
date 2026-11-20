@@ -35,6 +35,7 @@ before(async () => {
   if (skip) return;
   dir = mkdtempSync(join(tmpdir(), "lattice-gateway-"));
   mkdirSync(join(dir, "open-requests"), { mode: 0o700 });
+  mkdirSync(join(dir, "update"), { mode: 0o700 });
   mkdirSync(join(dir, "projects/paper"), { recursive: true });
   writeFileSync(join(dir, "projects/paper/main.tex"), "");
   const upstreamPort = await freePort();
@@ -68,6 +69,7 @@ before(async () => {
     "--listen", `127.0.0.1:${port}`, "--public-origin", origin, "--upstream", `127.0.0.1:${upstreamPort}`,
     "--state-dir", join(dir, "state"), "--token-file", join(dir, "access-token"), "--insecure-dev-cookies",
     "--rewrite-loopback-page", "--open-requests", join(dir, "open-requests"), "--projects-root", join(dir, "projects"),
+    "--update-dir", join(dir, "update"),
   ], { stdio: ["ignore", "inherit", "inherit"] });
   await waitFor(`${base}/__gateway/health`);
   token = readFileSync(join(dir, "access-token"), "utf8").trim();
@@ -214,4 +216,37 @@ test("a forged Tailscale identity over TCP is ignored", { skip }, async () => {
     headers: { "Tailscale-User-Login": "owner@example.com", "X-Lattice-Gateway-Tailnet": "1" },
   });
   assert.deepEqual(await forged.json(), { kind: "anonymous" });
+});
+
+test("only the owner sees the update on offer and starts it", { skip }, async () => {
+  const update = join(dir, "update");
+  assert.equal((await fetch(`${base}/__gateway/api/update`)).status, 401);
+  const owner = cookieOf(await post("/__gateway/api/login", { token }));
+  const get = async (cookie = owner) => (await fetch(`${base}/__gateway/api/update`, { headers: { Cookie: cookie } })).json();
+  assert.equal((await get()).available, false, "nothing found yet");
+
+  writeFileSync(join(update, "available.json"), JSON.stringify({ latest: "99.0.0", tag: "v99.0.0", lattice: { current: "0.19.0", latest: "0.20.0" } }));
+  const state = await get();
+  assert.equal(state.available, true);
+  assert.equal(state.latest, "99.0.0");
+  assert.equal(state.lattice.latest, "0.20.0");
+
+  // A paired device cannot start or dismiss it.
+  const invite = await (await post("/__gateway/api/invites", {}, owner)).json();
+  const device = cookieOf(await post("/__gateway/api/redeem", { code: invite.url.split("#")[1], label: "Update phone" }));
+  assert.equal((await fetch(`${base}/__gateway/api/update`, { headers: { Cookie: device } })).status, 401);
+  assert.notEqual((await post("/__gateway/api/update/start", { version: "99.0.0" }, device)).status, 202);
+  assert.equal(existsSync(join(update, "request")), false);
+
+  // Another site cannot either, even with the owner's cookie.
+  assert.equal((await post("/__gateway/api/update/start", { version: "99.0.0" }, owner, "https://evil.example")).status, 403);
+
+  assert.equal((await post("/__gateway/api/update/dismiss", { version: "99.0.0" }, owner)).status, 202);
+  assert.equal((await get()).dismissed, true);
+  assert.equal((await post("/__gateway/api/update/start", { version: "98.0.0" }, owner)).status, 409, "only the version on offer");
+  assert.equal((await post("/__gateway/api/update/start", { version: "99.0.0" }, owner)).status, 202);
+  assert.equal(readFileSync(join(update, "request"), "utf8"), "99.0.0");
+  assert.equal(statSync(join(update, "request")).mode & 0o777, 0o600);
+  assert.equal((await get()).running, true);
+  assert.equal((await post("/__gateway/api/update/start", { version: "99.0.0" }, owner)).status, 409, "one run at a time");
 });
