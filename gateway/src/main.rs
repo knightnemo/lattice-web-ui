@@ -10,10 +10,13 @@
 //! An optional owner socket, meant for Tailscale Serve, serves only device
 //! management and trusts Serve's identity header for the configured logins.
 
+mod agent;
 mod app;
 mod bridge;
 mod proxy;
+mod screen;
 mod store;
+mod tex;
 
 use clap::Parser;
 use std::net::SocketAddr;
@@ -59,6 +62,33 @@ pub struct Args {
     /// Folder whose subfolders the Projects page offers to open in Lattice.
     #[arg(long)]
     pub projects_root: Option<PathBuf>,
+    /// Xvfb's framebuffer file (-fbdir), to show the owner the host's native windows.
+    #[arg(long)]
+    pub display_framebuffer: Option<PathBuf>,
+    /// The X display Lattice runs on, for input to its native windows.
+    #[arg(long, default_value = ":99")]
+    pub display: String,
+    /// xdotool, to deliver the owner's clicks and keys to native windows.
+    #[arg(long)]
+    pub xdotool: Option<PathBuf>,
+    /// LD_LIBRARY_PATH for an unpacked xdotool.
+    #[arg(long)]
+    pub xdotool_library_path: Option<PathBuf>,
+    /// Second entrance that serves Lattice's Agent UI (Synara) on an origin of its own.
+    #[arg(long)]
+    pub agent_listen: Option<SocketAddr>,
+    /// The HTTPS origin browsers use for the Agent entrance (same host, another port).
+    #[arg(long)]
+    pub agent_origin: Option<String>,
+    /// Only a port that a process under this path listens on is served as the Agent.
+    #[arg(long)]
+    pub agent_process_marker: Option<PathBuf>,
+    /// tlmgr of a TeX installation the host user can write to, for the owner's TeX page.
+    #[arg(long)]
+    pub tlmgr: Option<PathBuf>,
+    /// Tests only: run tlmgr install with --dry-run.
+    #[arg(long, hide = true)]
+    pub tlmgr_dry_run: bool,
     /// Plain-HTTP development only: cookies without Secure or the __Host- prefix.
     #[arg(long)]
     pub insecure_dev_cookies: bool,

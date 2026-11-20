@@ -38,6 +38,18 @@ const T = zh ? {
   noTex: "没有 .tex 文件",
   devices: "设备",
   backToWorkspace: "回到工作区",
+  screenTitle: "主机上的窗口",
+  screenHint: "Lattice 的原生窗口（选择文件夹、Overleaf 登录等）显示在主机的虚拟屏幕上。在这里点击和输入，就是在操作那些窗口。",
+  typeText: "输入文字",
+  send: "发送",
+  hostWindows: "主机窗口",
+  texTitle: "安装 TeX 宏包",
+  texHint: "Lattice 在 Linux 上还不能一键补包。输入编译报缺的文件（如 lipsum.sty）或宏包名，网关会在主机上用 tlmgr 安装。Lattice 里的“安装”按钮也会走这里。",
+  texName: "文件或宏包",
+  install: "安装",
+  installed: (p) => `已安装 ${p}。回到工作区重新编译即可。`,
+  choose: (list) => `有多个宏包提供这个文件：${list}。请输入其中一个宏包名。`,
+  texPackages: "TeX 宏包",
 } : {
   brand: "Lattice remote workspace",
   loginTitle: "Open this workspace",
@@ -73,6 +85,18 @@ const T = zh ? {
   noTex: "no .tex file",
   devices: "Devices",
   backToWorkspace: "Back to the workspace",
+  screenTitle: "Windows on the host",
+  screenHint: "Lattice's native windows, such as the folder picker and Overleaf sign-in, appear on the host's virtual screen. Click and type here to use them.",
+  typeText: "Type text",
+  send: "Send",
+  hostWindows: "Host windows",
+  texTitle: "Install a TeX package",
+  texHint: "Lattice has no one-click package install on Linux yet. Enter the file a build reported missing (such as lipsum.sty) or a package name, and the gateway installs it on the host with tlmgr. Lattice's own Install button uses this too.",
+  texName: "File or package",
+  install: "Install",
+  installed: (p) => `Installed ${p}. Build again in the workspace.`,
+  choose: (list) => `Several packages provide this file: ${list}. Enter one of them.`,
+  texPackages: "TeX packages",
 };
 document.documentElement.lang = zh ? "zh-CN" : "en";
 
@@ -288,8 +312,100 @@ async function renderProjects() {
     error.textContent = e.message;
   }
   const actions = el("div", { class: "row" }, el("a", { class: "button secondary", href: "/" }, T.backToWorkspace));
-  if (me.kind === "owner") actions.append(el("a", { class: "button secondary", href: "/__gateway/devices" }, T.devices));
+  if (me.kind === "owner") {
+    actions.append(el("a", { class: "button secondary", href: "/__gateway/devices" }, T.devices));
+    actions.append(el("a", { class: "button secondary", href: "/__gateway/screen" }, T.hostWindows));
+    actions.append(el("a", { class: "button secondary", href: "/__gateway/tex" }, T.texPackages));
+  }
   app.replaceChildren(brand(), el("h1", {}, T.projectsTitle), el("p", { class: "muted" }, T.projectsHint), list, actions, error);
 }
 
-({ login: renderLogin, pair: renderPair, devices: renderDevices, projects: renderProjects }[page] || renderLogin)();
+function renderScreen() {
+  app.classList.add("full");
+  const error = el("p", { class: "error", role: "alert" });
+  const image = el("img", { class: "screen", alt: T.screenTitle, draggable: "false" });
+  let lastInput = 0;
+  const send = async (input) => {
+    error.textContent = "";
+    lastInput = Date.now();
+    try { await call("/__gateway/api/screen/input", input); refresh(); } catch (e) { error.textContent = e.message; }
+  };
+  // A folder picked in Lattice's dialog opens in a new workspace; follow it from here.
+  (async function follow() {
+    if (Date.now() - lastInput < 60000) {
+      try {
+        const response = await fetch("/__gateway/api/open-request", { method: "POST", credentials: "same-origin", headers: { "Content-Type": "application/json" }, body: "{}" });
+        if (response.status === 200) {
+          const { url } = await response.json();
+          if (/^\/\?entry=[\w-]+$/.test(url)) { location.assign(url); return; }
+        }
+      } catch { /* retry */ }
+    }
+    setTimeout(follow, 1500);
+  })();
+  let offset = [0, 0];
+  image.addEventListener("click", (event) => {
+    const box = image.getBoundingClientRect();
+    const x = offset[0] + Math.round((event.clientX - box.left) * image.naturalWidth / box.width);
+    const y = offset[1] + Math.round((event.clientY - box.top) * image.naturalHeight / box.height);
+    send({ type: "click", x, y });
+  });
+  let timer;
+  let shown;
+  async function refresh() {
+    clearTimeout(timer);
+    try {
+      const response = await fetch(`/__gateway/api/screen.png?t=${Date.now()}`, { credentials: "same-origin", cache: "no-store" });
+      if (!response.ok) throw new Error(T.failed);
+      offset = (response.headers.get("x-screen-offset") || "0,0").split(",").map(Number);
+      const url = URL.createObjectURL(await response.blob());
+      image.src = url;
+      if (shown) URL.revokeObjectURL(shown);
+      shown = url;
+      schedule();
+    } catch (e) {
+      error.textContent = e.message;
+      schedule(2000);
+    }
+  }
+  function schedule(delay = 800) {
+    clearTimeout(timer);
+    timer = setTimeout(() => (document.visibilityState === "visible" ? refresh() : schedule()), delay);
+  }
+  const text = el("input", { id: "text", autocomplete: "off", spellcheck: "false" });
+  const keys = [["Return", "Enter"], ["Tab", "Tab"], ["Escape", "Esc"], ["BackSpace", "⌫"], ["Up", "↑"], ["Down", "↓"], ["ctrl+a", "Ctrl+A"]]
+    .map(([key, label]) => el("button", { class: "secondary", onclick: () => send({ type: "key", key }) }, label));
+  app.replaceChildren(
+    brand(), el("h1", {}, T.screenTitle), el("p", { class: "muted" }, T.screenHint), image,
+    el("form", { class: "row", onsubmit: (event) => { event.preventDefault(); if (text.value) send({ type: "text", text: text.value }); text.value = ""; } },
+      el("label", { for: "text", class: "sr" }, T.typeText), text, el("button", { type: "submit" }, T.send)),
+    el("div", { class: "row keys" }, ...keys),
+    el("div", { class: "row" }, el("a", { class: "button secondary", href: "/" }, T.backToWorkspace)),
+    error,
+  );
+  refresh();
+}
+
+function renderTex() {
+  const error = el("p", { class: "error", role: "alert" });
+  const result = el("p", { class: "muted", role: "status" });
+  const name = el("input", { id: "name", autocomplete: "off", spellcheck: "false", required: "", value: new URLSearchParams(location.search).get("name") || "" });
+  const submit = el("button", { type: "submit" }, T.install);
+  app.replaceChildren(brand(), el("h1", {}, T.texTitle), el("p", { class: "muted" }, T.texHint),
+    el("form", { onsubmit: async (event) => {
+      event.preventDefault();
+      submit.disabled = true; error.textContent = ""; result.textContent = "…";
+      try {
+        const response = await fetch("/__gateway/api/tex-install", { method: "POST", credentials: "same-origin", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ name: name.value.trim() }) });
+        const value = await response.json().catch(() => ({}));
+        if (response.ok) result.textContent = T.installed(value.package);
+        else if (value?.error?.code === "choose_package") { result.textContent = ""; error.textContent = T.choose(value.error.packages.join(", ")); }
+        else { result.textContent = ""; error.textContent = value?.error?.message || T.failed; }
+      } catch (e) { result.textContent = ""; error.textContent = e.message; }
+      submit.disabled = false;
+    } }, el("label", { for: "name" }, T.texName), name, submit),
+    result, error,
+    el("div", { class: "row" }, el("a", { class: "button secondary", href: "/" }, T.backToWorkspace)));
+}
+
+({ login: renderLogin, pair: renderPair, devices: renderDevices, projects: renderProjects, screen: renderScreen, tex: renderTex }[page] || renderLogin)();
