@@ -30,6 +30,11 @@ const PAGE_HTML: &str = include_str!("../assets/page.html");
 const PAGE_CSS: &str = include_str!("../assets/gateway.css");
 const PAGE_JS: &str = include_str!("../assets/gateway.js");
 const BRIDGE_JS: &str = include_str!("../assets/bridge.js");
+const XTERM_JS: &str = include_str!("../assets/vendor/xterm.js");
+const XTERM_FIT_JS: &str = include_str!("../assets/vendor/addon-fit.js");
+const XTERM_CSS: &str = include_str!("../assets/vendor/xterm.css");
+/// xterm.js sets styles on the elements it creates.
+const TERMINAL_CSP: &str = "default-src 'none'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data:; connect-src 'self'; font-src 'self' data:; base-uri 'none'; form-action 'none'; frame-ancestors 'none'";
 /// How long an address Lattice asked to open waits for a tab to claim it.
 const OPEN_REQUEST_TTL: Duration = Duration::from_secs(60);
 const CSP: &str = "default-src 'none'; script-src 'self'; style-src 'self'; img-src 'self' data: blob:; connect-src 'self'; base-uri 'none'; form-action 'none'; frame-ancestors 'none'";
@@ -78,6 +83,7 @@ pub struct App {
     agent_upstream: Mutex<Option<Arc<Upstream>>>,
     agent_bridge: Bridge,
     tex: Option<crate::tex::Tex>,
+    terminal: Option<crate::terminal::Terminal>,
 }
 
 fn canonical_origin(value: &str, allow_http: bool) -> Result<String, String> {
@@ -208,6 +214,14 @@ impl App {
             agent_marker: args.agent_process_marker.clone(),
             agent_upstream: Mutex::new(None),
             agent_bridge: Bridge::default(),
+            terminal: args.terminal.then(|| crate::terminal::Terminal {
+                shell: args.terminal_shell.clone(),
+                cwd: args
+                    .terminal_cwd
+                    .clone()
+                    .or_else(|| std::env::var_os("HOME").map(Into::into))
+                    .unwrap_or_else(|| "/".into()),
+            }),
             tex: args.tlmgr.clone().map(|tlmgr| crate::tex::Tex {
                 tlmgr,
                 dry_run: args.tlmgr_dry_run,
@@ -533,6 +547,50 @@ async fn handle(app: Arc<App>, entrance: Entrance, req: Request<Incoming>) -> Re
                 json!({ "shared": app.screen.is_some(), "windows": open }),
             );
         }
+        (&Method::GET, "/__gateway/vendor/xterm.js") => {
+            return asset("text/javascript; charset=utf-8", XTERM_JS)
+        }
+        (&Method::GET, "/__gateway/vendor/addon-fit.js") => {
+            return asset("text/javascript; charset=utf-8", XTERM_FIT_JS)
+        }
+        (&Method::GET, "/__gateway/vendor/xterm.css") => {
+            return asset("text/css; charset=utf-8", XTERM_CSS)
+        }
+        (&Method::GET, "/__gateway/terminal") => {
+            if principal != Some(Principal::Owner) {
+                return redirect("/__gateway/login?next=/__gateway/terminal");
+            }
+            if app.terminal.is_none() {
+                return error(
+                    StatusCode::NOT_FOUND,
+                    "no_terminal",
+                    "This host does not offer a terminal.",
+                );
+            }
+            let mut response = page("terminal", &origin);
+            response.headers_mut().insert(
+                "content-security-policy",
+                HeaderValue::from_static(TERMINAL_CSP),
+            );
+            return response;
+        }
+        (&Method::GET, "/__gateway/api/terminal") => {
+            if principal != Some(Principal::Owner) {
+                return error(
+                    StatusCode::UNAUTHORIZED,
+                    "owner_required",
+                    "Sign in as the owner to open a terminal.",
+                );
+            }
+            if app.terminal.is_none() {
+                return error(
+                    StatusCode::NOT_FOUND,
+                    "no_terminal",
+                    "This host does not offer a terminal.",
+                );
+            }
+            return terminal_upgrade(app.clone(), req);
+        }
         (&Method::GET, "/__gateway/tex") => {
             return if principal == Some(Principal::Owner) {
                 page("tex", &origin)
@@ -587,7 +645,12 @@ async fn handle(app: Arc<App>, entrance: Entrance, req: Request<Incoming>) -> Re
             }
             return json_response(
                 StatusCode::OK,
-                json!({ "agentOrigin": app.agent_origin, "tex": app.tex.is_some(), "screen": app.screen.is_some() }),
+                json!({
+                    "agentOrigin": app.agent_origin,
+                    "tex": app.tex.is_some(),
+                    "screen": app.screen.is_some(),
+                    "terminal": app.terminal.is_some(),
+                }),
             );
         }
         (&Method::GET, "/__gateway/api/whoami") => {
@@ -733,6 +796,53 @@ async fn agent_request(
         &app.agent_bridge,
     )
     .await
+}
+
+/// Accept the owner's terminal WebSocket. The Origin must be this page's.
+fn terminal_upgrade(app: Arc<App>, mut req: Request<Incoming>) -> Response<Body> {
+    let headers = req.headers();
+    let same_origin = headers
+        .get(header::ORIGIN)
+        .and_then(|v| v.to_str().ok())
+        .is_some_and(|o| o.eq_ignore_ascii_case(&app.public_origin));
+    let key = headers.get("sec-websocket-key").cloned();
+    let upgrade = headers
+        .get(header::UPGRADE)
+        .and_then(|v| v.to_str().ok())
+        .is_some_and(|v| v.eq_ignore_ascii_case("websocket"));
+    let (Some(key), true, true) = (key, upgrade, same_origin) else {
+        return error(
+            StatusCode::BAD_REQUEST,
+            "bad_upgrade",
+            "Open the terminal from the gateway's own page.",
+        );
+    };
+    let accept = tokio_tungstenite::tungstenite::handshake::derive_accept_key(key.as_bytes());
+    let on_upgrade = hyper::upgrade::on(&mut req);
+    tokio::spawn(async move {
+        let Ok(upgraded) = on_upgrade.await else {
+            return;
+        };
+        let socket = tokio_tungstenite::WebSocketStream::from_raw_socket(
+            TokioIo::new(upgraded),
+            tokio_tungstenite::tungstenite::protocol::Role::Server,
+            None,
+        )
+        .await;
+        if let Some(terminal) = &app.terminal {
+            crate::terminal::serve(terminal, socket).await;
+        }
+    });
+    let mut response = Response::new(empty());
+    *response.status_mut() = StatusCode::SWITCHING_PROTOCOLS;
+    let headers = response.headers_mut();
+    headers.insert(header::UPGRADE, HeaderValue::from_static("websocket"));
+    headers.insert(header::CONNECTION, HeaderValue::from_static("Upgrade"));
+    headers.insert(
+        "sec-websocket-accept",
+        HeaderValue::from_str(&accept).expect("base64"),
+    );
+    response
 }
 
 /// Subfolders of the projects folder, newest first. Symlinks and hidden folders are skipped.

@@ -151,3 +151,47 @@ test("host windows and TeX installs are for the owner only", async () => {
   await stranger.close();
   await ctx.close();
 });
+
+test("the owner's terminal runs a shell on the host", async () => {
+  const ctx = await context();
+  const page = await ctx.newPage();
+  await signInAsOwner(page);
+  const config = await (await ctx.request.get(`${origin}/__gateway/api/config`)).json();
+  if (!config.terminal) return; // not enabled on this host
+  await page.goto(`${origin}/__gateway/terminal`);
+  await page.locator(".xterm").waitFor({ timeout: 20_000 });
+  await page.waitForTimeout(1500);
+  await page.locator(".xterm").click();
+  await page.keyboard.type("echo gateway-$((6*7))");
+  await page.keyboard.press("Enter");
+  await page.locator(".xterm-rows", { hasText: "gateway-42" }).waitFor({ timeout: 15_000 });
+  await shot(page, "e2e-terminal");
+  const stranger = await context();
+  assert.equal((await stranger.request.get(`${origin}/__gateway/api/terminal`)).status(), 401);
+  await stranger.close();
+  await ctx.close();
+});
+
+test("on a phone, Lattice gets one panel with every view as a tab", { skip: !project && "set LATTICE_E2E_PROJECT" }, async () => {
+  const phone = await context({ viewport: { width: 390, height: 844 }, isMobile: true, hasTouch: true, deviceScaleFactor: 2 });
+  const page = await phone.newPage();
+  await signInAsOwner(page);
+  // The layout switch reloads the page once.
+  await page.waitForTimeout(12_000);
+  await page.locator(".cm-content").first().waitFor({ timeout: 30_000 });
+  const width = await page.locator(".cm-content").first().evaluate((node) => node.getBoundingClientRect().width);
+  assert.ok(width > 250, `the editor fills the phone (${Math.round(width)} px)`);
+  await shot(page, "e2e-phone-layout");
+  await phone.close();
+  // The desktop gets its own layout back.
+  const desk = await context();
+  const deskPage = await desk.newPage();
+  await signInAsOwner(deskPage);
+  await deskPage.waitForTimeout(12_000);
+  const panels = await deskPage.evaluate(() => {
+    const key = Object.keys(localStorage).find((k) => k.startsWith("lattice.trellis-layout.v1:"));
+    return key ? JSON.parse(localStorage.getItem(key)).document.root.kind : "none";
+  });
+  assert.notEqual(panels, "panel", "the wide layout is restored on a wide screen");
+  await desk.close();
+});

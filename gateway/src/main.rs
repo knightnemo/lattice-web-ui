@@ -16,6 +16,7 @@ mod bridge;
 mod proxy;
 mod screen;
 mod store;
+mod terminal;
 mod tex;
 
 use clap::Parser;
@@ -83,6 +84,15 @@ pub struct Args {
     /// Only a port that a process under this path listens on is served as the Agent.
     #[arg(long)]
     pub agent_process_marker: Option<PathBuf>,
+    /// Offer the owner a shell on the host (Lattice keeps its own terminal to native windows).
+    #[arg(long)]
+    pub terminal: bool,
+    /// Shell for the owner's terminal.
+    #[arg(long, default_value = "/bin/bash")]
+    pub terminal_shell: PathBuf,
+    /// Folder the owner's terminal starts in (default: HOME).
+    #[arg(long)]
+    pub terminal_cwd: Option<PathBuf>,
     /// tlmgr of a TeX installation the host user can write to, for the owner's TeX page.
     #[arg(long)]
     pub tlmgr: Option<PathBuf>,

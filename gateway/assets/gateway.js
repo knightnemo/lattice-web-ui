@@ -50,6 +50,11 @@ const T = zh ? {
   installed: (p) => `已安装 ${p}。回到工作区重新编译即可。`,
   choose: (list) => `有多个宏包提供这个文件：${list}。请输入其中一个宏包名。`,
   texPackages: "TeX 宏包",
+  terminalTitle: "主机终端",
+  terminal: "终端",
+  terminalHint: "在主机上以你的用户身份运行的 shell。Lattice 自己的终端只在原生窗口里可用；这是网关为 owner 提供的独立终端。",
+  terminalClosed: "终端已关闭。",
+  reconnect: "重新连接",
 } : {
   brand: "Lattice remote workspace",
   loginTitle: "Open this workspace",
@@ -97,6 +102,11 @@ const T = zh ? {
   installed: (p) => `Installed ${p}. Build again in the workspace.`,
   choose: (list) => `Several packages provide this file: ${list}. Enter one of them.`,
   texPackages: "TeX packages",
+  terminalTitle: "Terminal on the host",
+  terminal: "Terminal",
+  terminalHint: "A shell on the host, as your user. Lattice keeps its own terminal to its native window; this one is the gateway's, for the owner.",
+  terminalClosed: "The terminal closed.",
+  reconnect: "Reconnect",
 };
 document.documentElement.lang = zh ? "zh-CN" : "en";
 
@@ -316,6 +326,8 @@ async function renderProjects() {
     actions.append(el("a", { class: "button secondary", href: "/__gateway/devices" }, T.devices));
     actions.append(el("a", { class: "button secondary", href: "/__gateway/screen" }, T.hostWindows));
     actions.append(el("a", { class: "button secondary", href: "/__gateway/tex" }, T.texPackages));
+    const config = await call("/__gateway/api/config").catch(() => ({}));
+    if (config.terminal) actions.append(el("a", { class: "button secondary", href: "/__gateway/terminal" }, T.terminal));
   }
   app.replaceChildren(brand(), el("h1", {}, T.projectsTitle), el("p", { class: "muted" }, T.projectsHint), list, actions, error);
 }
@@ -408,4 +420,51 @@ function renderTex() {
     el("div", { class: "row" }, el("a", { class: "button secondary", href: "/" }, T.backToWorkspace)));
 }
 
-({ login: renderLogin, pair: renderPair, devices: renderDevices, projects: renderProjects, screen: renderScreen, tex: renderTex }[page] || renderLogin)();
+function load(tag, attributes) {
+  return new Promise((resolve, reject) => {
+    const node = Object.assign(document.createElement(tag), attributes);
+    node.onload = resolve;
+    node.onerror = reject;
+    document.head.append(node);
+  });
+}
+
+async function renderTerminal() {
+  app.classList.add("full");
+  const status = el("p", { class: "muted", role: "status" });
+  const host = el("div", { class: "terminal" });
+  const again = el("button", { class: "secondary", hidden: "" }, T.reconnect);
+  app.replaceChildren(brand(), el("h1", {}, T.terminalTitle), el("p", { class: "muted" }, T.terminalHint), host, status,
+    el("div", { class: "row" }, again, el("a", { class: "button secondary", href: "/" }, T.backToWorkspace)));
+  await load("link", { rel: "stylesheet", href: "/__gateway/vendor/xterm.css" });
+  await load("script", { src: "/__gateway/vendor/xterm.js" });
+  await load("script", { src: "/__gateway/vendor/addon-fit.js" });
+  const dark = matchMedia("(prefers-color-scheme: dark)").matches;
+  const term = new window.Terminal({
+    cursorBlink: true, fontSize: 13, scrollback: 5000,
+    fontFamily: "ui-monospace, SFMono-Regular, Menlo, 'DejaVu Sans Mono', monospace",
+    theme: dark ? { background: "#151713", foreground: "#e8eae3" } : { background: "#ffffff", foreground: "#1f231c", cursor: "#556324", selectionBackground: "#d9e2b8" },
+  });
+  const fit = new window.FitAddon.FitAddon();
+  term.loadAddon(fit);
+  term.open(host);
+  fit.fit();
+  let socket;
+  const send = (message) => { if (socket?.readyState === WebSocket.OPEN) socket.send(JSON.stringify(message)); };
+  term.onData((data) => send({ type: "input", data }));
+  const resize = () => { fit.fit(); send({ type: "resize", cols: term.cols, rows: term.rows }); };
+  addEventListener("resize", resize);
+  function connect() {
+    again.hidden = true;
+    status.textContent = "";
+    socket = new WebSocket(`${location.protocol === "https:" ? "wss:" : "ws:"}//${location.host}/__gateway/api/terminal`);
+    socket.binaryType = "arraybuffer";
+    socket.onopen = () => { resize(); term.focus(); };
+    socket.onmessage = (event) => term.write(typeof event.data === "string" ? event.data : new Uint8Array(event.data));
+    socket.onclose = () => { status.textContent = T.terminalClosed; again.hidden = false; };
+  }
+  again.addEventListener("click", () => { term.reset(); connect(); });
+  connect();
+}
+
+({ login: renderLogin, pair: renderPair, devices: renderDevices, projects: renderProjects, screen: renderScreen, tex: renderTex, terminal: renderTerminal }[page] || renderLogin)();

@@ -273,6 +273,9 @@ def write_files(root: Path, config: dict) -> None:
                          "--agent-process-marker", str(root / "releases")]
     if config.get("tlmgr"):
         gateway_args += ["--tlmgr", config["tlmgr"]]
+    if config.get("terminal"):
+        gateway_args += ["--terminal", "--terminal-shell", config.get("shell", "/bin/bash"),
+                         "--terminal-cwd", config.get("projects_root") or config["home"]]
     if config.get("xdotool"):
         gateway_args += ["--display-framebuffer", str(root / "state" / "display" / "Xvfb_screen0"),
                          "--display", f":{config['display']}", "--xdotool", config["xdotool"]]
@@ -499,6 +502,8 @@ def cmd_install(args: argparse.Namespace) -> None:
         "rewrite_page": bool(manifest["releases"][version].get("frontendRewrite")),
         "projects_root": str(Path(args.projects_root).expanduser()) if args.projects_root else None,
         "agent_origin": args.agent_origin,
+        "terminal": args.enable_terminal,
+        "shell": os.environ.get("SHELL") or "/bin/bash",
     }
     config["xdotool"], config["xdotool_library_path"] = find_xdotool(root)
     config["tlmgr"] = find_tlmgr(home)
@@ -606,6 +611,8 @@ def parser() -> argparse.ArgumentParser:
     install.add_argument("--fetch-xvfb", action="store_true", help="unpack Ubuntu's xvfb into the host directory (no sudo)")
     install.add_argument("--agent-origin", help="second HTTPS origin (same host, another port) for Lattice's Agent; "
                          "served by the gateway on --gateway-port + 1")
+    install.add_argument("--enable-terminal", action="store_true",
+                         help="offer the owner a shell on the host in the browser (Lattice's own terminal stays in native windows)")
     install.add_argument("--projects-root", help="folder whose subfolders the gateway's Projects page offers to open")
     install.add_argument("--home", help="HOME for Lattice (default: yours, so agent CLIs keep their sign-in)")
     install.add_argument("--owner-origin", help="origin of the Tailscale owner page, e.g. https://host.example.ts.net:9443")

@@ -20,6 +20,7 @@
   }
 }
 * { box-sizing: border-box; }
+[hidden] { display: none !important; }
 html, body { margin: 0; min-height: 100%; background: var(--bg); color: var(--fg); }
 body {
   display: grid; place-items: start center;
@@ -69,3 +70,6 @@ button:disabled { opacity: .55; cursor: default; }
 .countdown { font-variant-numeric: tabular-nums; }
 @media (max-width: 420px) { .sheet { margin-top: 2vh; padding: 22px 18px; } }
 @media (prefers-reduced-motion: no-preference) { button { transition: filter .12s; } button:hover:not(:disabled) { filter: brightness(1.06); } }
+.terminal { --term-bg: #ffffff; height: min(70vh, 640px); border: 1px solid var(--line); border-radius: 8px; padding: 8px; background: var(--term-bg); overflow: hidden; }
+.terminal .xterm, .terminal .xterm-viewport, .terminal .xterm-screen { background-color: var(--term-bg) !important; }
+@media (prefers-color-scheme: dark) { .terminal { --term-bg: #151713; } }

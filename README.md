@@ -25,10 +25,13 @@ phone / laptop ── HTTPS ── lattice-gateway ── Lattice (browser-host 
 - **You decide who connects.** `lattice-gateway` lets in the owner, signed in
   with a recovery token or vouched for by Tailscale, and browsers paired with
   a one-time QR code. Revoking a device cuts it off at once.
-- **The parts Linux lacks.** The gateway serves Lattice's Agent on an origin
-  of its own. It lets the owner use Lattice's native windows (Overleaf
-  sign-in) from the browser, installs missing TeX packages with `tlmgr`, and
-  opens projects without the native folder dialog.
+- **The parts a headless host lacks.** The gateway:
+  - serves Lattice's Agent on an origin of its own;
+  - lets the owner use Lattice's native windows, such as Overleaf sign-in, from the browser;
+  - installs missing TeX packages with `tlmgr`;
+  - offers the owner a terminal;
+  - opens projects without the native folder dialog;
+  - gives phones a one-panel layout.
 - **A command in Lattice.** The plugin opens the workspace and its device page
   from Lattice's command palette.
 
@@ -94,4 +97,6 @@ rebuilt.
 ## License
 
 Everything in this repository is MIT-licensed ([plugin/LICENSE](plugin/LICENSE)).
+lattice-gateway embeds [xterm.js](https://github.com/xtermjs/xterm.js) 6.0.0 and its fit add-on, which are also MIT
+([gateway/assets/vendor/LICENSE-xterm](gateway/assets/vendor/LICENSE-xterm)).
 Lattice, which the host kit downloads at install time, keeps its own license.
