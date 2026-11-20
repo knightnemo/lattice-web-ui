@@ -138,6 +138,24 @@ test("a paired phone reaches Lattice, and revoking it cuts it off", async () => 
   await phone.close();
 });
 
+test("the owner finds Phone and app in Lattice's Settings", async () => {
+  const ctx = await context();
+  const page = await ctx.newPage();
+  await signInAsOwner(page);
+  await page.locator(".cm-content, .welcome-screen").first().waitFor({ timeout: 60_000 });
+  await page.keyboard.press("Control+Comma");
+  const item = page.locator(".settings-modal .settings-nav [data-lattice-gateway=settings-item]");
+  await item.waitFor({ timeout: 60_000 });
+  assert.equal((await item.textContent()).trim(), "Phone and app");
+  assert.equal(await page.locator(".settings-nav > :last-child").getAttribute("data-lattice-gateway"), "settings-group", "after Lattice's own groups");
+  await shot(page, "e2e-settings-entry");
+  await item.click();
+  await page.locator("[data-lattice-gateway=phone] .ui-settings-group").first().waitFor({ timeout: 30_000 });
+  await page.waitForTimeout(800); // the dialog's rise
+  await shot(page, "e2e-settings-phone");
+  await ctx.close();
+});
+
 test("two devices share the workspace: the one used last has it", { skip: !project && "set LATTICE_E2E_PROJECT" }, async () => {
   const notice = "#lattice-browser-runtime-error";
   const mac = await context();

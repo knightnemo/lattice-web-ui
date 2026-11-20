@@ -86,6 +86,8 @@ Settings parts. It has three groups:
 
 How to open it:
 
+- **Lattice's Settings.** The sidebar ends with a **Lattice-web-ui** group
+  holding **Phone and app**.
 - **The plugin.** Lattice-web-ui's plugin adds a **Phone and app** command to
   Lattice's command palette. Install the plugin in the host's Lattice from
   Settings › Plugins.
